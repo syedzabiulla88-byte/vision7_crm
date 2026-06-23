@@ -41,16 +41,35 @@ const ICONS: Record<string, ComponentType<IconProps>> = {
   Settings,
 };
 
-/** Active when the pathname equals the href, or is nested under it (for non-root hrefs). */
-function isActive(pathname: string, href: string): boolean {
+/** True when pathname equals href or is nested under it (for non-root hrefs). */
+function matchesHref(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(href + "/");
+}
+
+/**
+ * The single active href for a pathname: the LONGEST nav href that matches.
+ * So /crm/board activates "Pipeline" (not also "Contacts"), while /crm/[id]
+ * activates "Contacts" (no more-specific nav item exists for it).
+ */
+function activeHrefFor(pathname: string, hrefs: string[]): string | null {
+  let best: string | null = null;
+  for (const href of hrefs) {
+    if (matchesHref(pathname, href) && (best === null || href.length > best.length)) {
+      best = href;
+    }
+  }
+  return best;
 }
 
 export function AppSidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
   const groups = navForPermissions(user?.permissions);
+  const activeHref = activeHrefFor(
+    pathname,
+    groups.flatMap((g) => g.items.map((i) => i.href)),
+  );
 
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r border-[#FFCF01]/15 bg-[#011b2b] text-white md:flex">
@@ -75,7 +94,7 @@ export function AppSidebar() {
             <ul className="space-y-0.5">
               {group.items.map((item) => {
                 const Icon = ICONS[item.icon];
-                const active = isActive(pathname, item.href);
+                const active = item.href === activeHref;
                 return (
                   <li key={item.href}>
                     <Link
