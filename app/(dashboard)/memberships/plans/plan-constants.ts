@@ -80,6 +80,8 @@ export interface Plan {
   isPublic?: boolean;
   sortOrder?: number | null;
   color?: string | null;
+  maxFreezeDays?: number | null;
+  requiresAthlete?: boolean | null;
 }
 
 export function formatSAR(n: number | string | null | undefined): string {

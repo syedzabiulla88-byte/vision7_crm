@@ -41,6 +41,8 @@ interface PlanFormState {
   isPublic: boolean;
   sortOrder: string;
   color: string;
+  maxFreezeDays: string;
+  requiresAthlete: boolean;
 }
 
 function emptyPlan(): PlanFormState {
@@ -58,6 +60,8 @@ function emptyPlan(): PlanFormState {
     isPublic: true,
     sortOrder: "0",
     color: "",
+    maxFreezeDays: "",
+    requiresAthlete: true,
   };
 }
 
@@ -77,6 +81,12 @@ function fromPlan(initial: Plan): PlanFormState {
     isPublic: initial.isPublic !== false,
     sortOrder: initial.sortOrder != null ? String(initial.sortOrder) : "0",
     color: initial.color || "",
+    maxFreezeDays:
+      initial.maxFreezeDays != null ? String(initial.maxFreezeDays) : "",
+    requiresAthlete:
+      initial.requiresAthlete != null
+        ? initial.requiresAthlete
+        : (initial.type as string) === "ACADEMY",
   };
 }
 
@@ -127,6 +137,9 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
         isPublic: form.isPublic,
         sortOrder: Number(form.sortOrder) || 0,
         color: form.color.trim() || undefined,
+        maxFreezeDays:
+          form.maxFreezeDays === "" ? null : Number(form.maxFreezeDays),
+        requiresAthlete: form.requiresAthlete,
       };
 
       if (editingId) {
@@ -385,6 +398,45 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
                   type="number"
                   value={form.sortOrder}
                   onChange={(e) => set("sortOrder", e.target.value)}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Membership rules</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="plan-max-freeze">Max freeze days</Label>
+                <Input
+                  id="plan-max-freeze"
+                  type="number"
+                  min="0"
+                  value={form.maxFreezeDays}
+                  onChange={(e) => set("maxFreezeDays", e.target.value)}
+                  placeholder="No cap"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Lifetime cap on freeze days per membership. Leave empty for no
+                  cap.
+                </p>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-0.5">
+                  <Label htmlFor="plan-requires-athlete">
+                    Requires athlete profile
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Academy plans: assigning this plan creates an athlete +
+                    platform login.
+                  </p>
+                </div>
+                <Switch
+                  id="plan-requires-athlete"
+                  checked={form.requiresAthlete}
+                  onCheckedChange={(v) => set("requiresAthlete", v)}
                 />
               </div>
             </CardContent>

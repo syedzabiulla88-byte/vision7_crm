@@ -1390,6 +1390,14 @@ function FreezeDialog({
   const [freezeDays, setFreezeDays] = useState("30");
   const [saving, setSaving] = useState(false);
 
+  // Lifetime freeze cap (null = unlimited) and how many days have already been
+  // used. The backend enforces the cap, but we surface it here so staff aren't
+  // surprised by a rejection.
+  const maxFreezeDays: number | null = membership.plan?.maxFreezeDays ?? null;
+  const usedFreezeDays = Number(membership.freezeDays) || 0;
+  const remainingDays =
+    maxFreezeDays != null ? Math.max(0, maxFreezeDays - usedFreezeDays) : null;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const days = Number(freezeDays);
@@ -1425,10 +1433,18 @@ function FreezeDialog({
               id="freeze-days"
               type="number"
               min={1}
+              max={remainingDays ?? undefined}
               value={freezeDays}
               onChange={(e) => setFreezeDays(e.target.value)}
               autoFocus
             />
+            {maxFreezeDays != null && (
+              <p className="text-xs text-muted-foreground">
+                Max {maxFreezeDays} freeze day{maxFreezeDays === 1 ? "" : "s"} for this plan
+                {usedFreezeDays > 0 ? ` · ${usedFreezeDays} already used` : ""}
+                {remainingDays != null ? ` · ${remainingDays} remaining` : ""}
+              </p>
+            )}
           </Field>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>

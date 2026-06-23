@@ -145,6 +145,12 @@ const PLAN_TYPES = [
   { value: "LEISURE", label: "Leisure" },
   { value: "PERSONAL_TRAINING", label: "Personal Training" },
 ];
+const ATHLETE_POSITIONS = [
+  { value: "GOALKEEPER", label: "Goalkeeper" },
+  { value: "DEFENDER", label: "Defender" },
+  { value: "MIDFIELDER", label: "Midfielder" },
+  { value: "FORWARD", label: "Forward" },
+];
 const ACTIVITY_TYPES = [
   { value: "NOTE", label: "Note" },
   { value: "CALL", label: "Call" },
@@ -1770,6 +1776,12 @@ function AssignPlanDialog({
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Athlete provisioning fields (only used for academy plans without a linked athlete).
+  const [athleteDob, setAthleteDob] = useState("");
+  const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
+  const [athleteJersey, setAthleteJersey] = useState("");
+  const [athleteNationality, setAthleteNationality] = useState("");
+
   // Load plans whenever the dialog opens; reset the form.
   useEffect(() => {
     if (!open) return;
@@ -1777,6 +1789,10 @@ function AssignPlanDialog({
     setStartDate(toDateInput(new Date().toISOString()));
     setEndDate("");
     setNotes("");
+    setAthleteDob(toDateInput(contact?.dob) || "");
+    setAthletePosition("MIDFIELDER");
+    setAthleteJersey("");
+    setAthleteNationality("");
     let cancelled = false;
     (async () => {
       setLoadingPlans(true);
@@ -1799,6 +1815,12 @@ function AssignPlanDialog({
   }, [open]);
 
   const selectedPlan = plans.find((p) => p.id === planId);
+
+  // Academy plans (requiresAthlete) must be tied to an athlete. If the contact
+  // already has one we reuse it; otherwise we provision a new athlete profile.
+  const requiresAthlete = selectedPlan?.requiresAthlete === true;
+  const linkedAthleteId = contact?.linkedAthleteId;
+  const needsAthleteDetails = requiresAthlete && !linkedAthleteId;
 
   // Auto-fill end date from the plan's durationDays when plan or start date changes.
   useEffect(() => {
@@ -1826,22 +1848,67 @@ function AssignPlanDialog({
       toast.error("Pick a plan to assign.");
       return;
     }
+    // Academy plans need a complete athlete profile when the contact has none yet.
+    if (needsAthleteDetails) {
+      if (!athleteDob) {
+        toast.error("Date of birth is required to create the athlete profile.");
+        return;
+      }
+      if (!athleteJersey.trim()) {
+        toast.error("Jersey number is required to create the athlete profile.");
+        return;
+      }
+      if (!athletePosition) {
+        toast.error("Pick a playing position for the athlete.");
+        return;
+      }
+    }
     setSaving(true);
     try {
-      await api.memberships.create({
-        crmContactId: contact.id,
-        planId,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-        notes: notes.trim() || undefined,
-      });
-      toast.success("Membership assigned — contact is now a Member");
-      // Academy plans need an athlete profile + app login to actually use the app.
-      if (String(selectedPlan?.type).toUpperCase() === "ACADEMY") {
-        toast.info(
-          "Academy member: create their athlete profile + app login from Members to finish onboarding.",
-          { duration: 8000 },
+      if (needsAthleteDetails) {
+        // 1. Provision the athlete (creates a user login + auto-links a CRM contact).
+        const athlete = await api.athletes.create({
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          email: contact.email,
+          phone: contact.phone,
+          dob: athleteDob,
+          position: athletePosition,
+          jerseyNumber: athleteJersey.trim(),
+          nationality: athleteNationality.trim() || undefined,
+          gender: contact.gender || undefined,
+        });
+        // 2. Tie the membership to the freshly created athlete.
+        await api.memberships.create({
+          athleteId: athlete.id,
+          planId,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          notes: notes.trim() || undefined,
+        });
+        toast.success(
+          "Athlete profile + membership created — they can now log into the platform",
         );
+      } else if (requiresAthlete && linkedAthleteId) {
+        // Academy plan, contact already has an athlete — assign via athleteId.
+        await api.memberships.create({
+          athleteId: linkedAthleteId,
+          planId,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          notes: notes.trim() || undefined,
+        });
+        toast.success("Membership assigned — contact is now a Member");
+      } else {
+        // Non-academy plan — assign directly to the CRM contact.
+        await api.memberships.create({
+          crmContactId: contact.id,
+          planId,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          notes: notes.trim() || undefined,
+        });
+        toast.success("Membership assigned — contact is now a Member");
       }
       onAssigned?.();
       onOpenChange(false);
@@ -1851,8 +1918,6 @@ function AssignPlanDialog({
       setSaving(false);
     }
   };
-
-  const isAcademy = String(selectedPlan?.type).toUpperCase() === "ACADEMY";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1933,18 +1998,75 @@ function AssignPlanDialog({
             />
           </div>
 
-          {isAcademy && (
-            <div className="rounded-md border border-[#FFCF01]/40 bg-[#FFCF01]/10 p-3 text-sm">
-              <p className="font-medium text-foreground">Academy plan selected</p>
-              <p className="mt-1 text-muted-foreground">
-                Academy members also need an athlete profile and an app login to train and book.
-                After assigning, finish onboarding from{" "}
-                <Link href="/members" className="font-medium text-primary hover:underline">
-                  Members
-                </Link>{" "}
-                (the academy register flow lives there).
-              </p>
+          {needsAthleteDetails && (
+            <div className="space-y-3 rounded-md border border-[#FFCF01]/40 bg-[#FFCF01]/10 p-3 text-sm">
+              <div>
+                <p className="font-medium text-foreground">Athlete details</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  This academy plan needs an athlete profile. We&apos;ll create one (with an app
+                  login) and tie the membership to it — all in one click.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="athlete-dob">Date of birth</Label>
+                  <Input
+                    id="athlete-dob"
+                    type="date"
+                    value={athleteDob}
+                    onChange={(e) => setAthleteDob(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="athlete-jersey">Jersey number</Label>
+                  <Input
+                    id="athlete-jersey"
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 10"
+                    value={athleteJersey}
+                    onChange={(e) => setAthleteJersey(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Position</Label>
+                  <Select
+                    items={ATHLETE_POSITIONS}
+                    value={athletePosition}
+                    onValueChange={(v) => setAthletePosition(v ?? "")}
+                  >
+                    <SelectTrigger className="w-full" aria-label="Position">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ATHLETE_POSITIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="athlete-nationality">Nationality (optional)</Label>
+                  <Input
+                    id="athlete-nationality"
+                    value={athleteNationality}
+                    placeholder="e.g. Saudi"
+                    onChange={(e) => setAthleteNationality(e.target.value)}
+                  />
+                </div>
+              </div>
             </div>
+          )}
+
+          {requiresAthlete && linkedAthleteId && (
+            <p className="text-xs text-muted-foreground">
+              Academy plan — this membership will be tied to the contact&apos;s existing athlete
+              profile.
+            </p>
           )}
 
           <DialogFooter>
@@ -1953,7 +2075,13 @@ function AssignPlanDialog({
             </Button>
             <Button type="submit" disabled={saving || !planId}>
               <UserAdd className="h-4 w-4" />
-              {saving ? "Assigning…" : "Assign plan"}
+              {saving
+                ? needsAthleteDetails
+                  ? "Creating…"
+                  : "Assigning…"
+                : needsAthleteDetails
+                  ? "Create athlete + assign"
+                  : "Assign plan"}
             </Button>
           </DialogFooter>
         </form>
