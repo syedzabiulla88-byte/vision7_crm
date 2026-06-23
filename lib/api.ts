@@ -201,6 +201,13 @@ export const api = {
     customers: (params?: Params) => apiFetch<any>(`/reports/customers${qs(params)}`),
     bookings: (params?: Params) => apiFetch<any>(`/reports/bookings${qs(params)}`),
     facilities: (params?: Params) => apiFetch<any>(`/reports/facilities${qs(params)}`),
+    // §control-plane — cross-app KPI bundle for the dashboard / single pane of glass
+    overview: () => apiFetch<any>(`/reports/overview`),
+  },
+
+  // §control-plane — audit trail (role/user/settings changes)
+  auditLogs: {
+    list: (params?: Params) => apiFetch<any>(`/audit-logs${qs(params)}`),
   },
 
   uploads: {
@@ -310,6 +317,11 @@ export const api = {
   settings: {
     public: () => apiFetch<Record<string, string>>(`/settings/public`),
     list: () => apiFetch<Record<string, string>>(`/settings`),
+    // §control-plane — typed settings catalog (namespaced keys + metadata)
+    catalog: () =>
+      apiFetch<Array<{ key: string; label: string; group: string; type: string; public: boolean; secret: boolean }>>(
+        `/settings/catalog`,
+      ),
     set: (key: string, value: string) =>
       apiFetch<any>(`/settings/${key}`, { method: "PATCH", body: JSON.stringify({ value }) }),
     bulkSet: (data: Record<string, string>) =>
