@@ -211,6 +211,21 @@ export const api = {
       folder?: string;
       size?: number;
     }) => apiFetch<PresignResult>(`/uploads/presign`, { method: "POST", body: JSON.stringify(data) }),
+    /**
+     * Convenience upload: presign → PUT to S3 → return the public URL only.
+     * Mirrors admin-api.js `uploads.file` so ported site pages keep working.
+     * For progress/metadata use the standalone `uploadFile` export below.
+     */
+    file: async (
+      file: File,
+      opts?: { category?: "image" | "pdf" | "video" | "file"; folder?: string },
+    ): Promise<string> => {
+      const { url } = await uploadFile(file, {
+        category: opts?.category || "file",
+        folder: opts?.folder || "members",
+      });
+      return url;
+    },
   },
 
   crm: {
@@ -299,6 +314,7 @@ export const api = {
       apiFetch<any>(`/settings/${key}`, { method: "PATCH", body: JSON.stringify({ value }) }),
     bulkSet: (data: Record<string, string>) =>
       apiFetch<Record<string, string>>(`/settings`, { method: "PATCH", body: JSON.stringify(data) }),
+    remove: (key: string) => apiFetch<any>(`/settings/${key}`, { method: "DELETE" }),
   },
 };
 
