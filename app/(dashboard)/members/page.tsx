@@ -643,6 +643,9 @@ interface NewMemberForm {
   notes: string;
   clientGoal: string;
   preferredLanguage: string;
+  planId: string;
+  startDate: string;
+  endDate: string;
 }
 
 const EMPTY_NEW_MEMBER: NewMemberForm = {
@@ -664,6 +667,9 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   notes: "",
   clientGoal: "",
   preferredLanguage: "",
+  planId: "",
+  startDate: toDateInput(new Date()),
+  endDate: "",
 };
 
 function NewMemberDialog({
@@ -677,9 +683,56 @@ function NewMemberDialog({
   const [form, setForm] = useState<NewMemberForm>(EMPTY_NEW_MEMBER);
   const [uploads, setUploads] = useState({ id: false, passport: false });
   const [saving, setSaving] = useState(false);
+  const [plans, setPlans] = useState<any[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
 
   const set = <K extends keyof NewMemberForm>(k: K, v: NewMemberForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  // Load plans once so a real plan can be attached at member creation.
+  useEffect(() => {
+    api.plans
+      .list({ limit: 1000 })
+      .then((res: any) => setPlans(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setPlans([]))
+      .finally(() => setPlansLoading(false));
+  }, []);
+
+  // Offer the relevant plans for the chosen side: academy plans for athletes,
+  // leisure / personal-training plans for leisure members (fall back to all if
+  // a plan has no type set).
+  const planOptions = useMemo(() => {
+    const visible = plans.filter((p) => {
+      const t = String(p.type || "").toUpperCase();
+      if (!t) return true;
+      return memberType === "ACADEMY" ? t === "ACADEMY" : t !== "ACADEMY";
+    });
+    return visible.map((p) => ({
+      value: p.id,
+      label: `${p.name}${p.price != null ? ` — ${formatSAR(p.price)}` : ""}`,
+    }));
+  }, [plans, memberType]);
+
+  // Clear a selected plan that isn't valid for the current side.
+  useEffect(() => {
+    if (form.planId && !planOptions.some((o) => o.value === form.planId)) {
+      setForm((f) => ({ ...f, planId: "" }));
+    }
+  }, [planOptions, form.planId]);
+
+  // Auto-fill the end date from the plan's durationDays when plan/start changes.
+  useEffect(() => {
+    if (!form.planId || !form.startDate) return;
+    const plan = plans.find((p) => p.id === form.planId);
+    if (plan?.durationDays) {
+      const start = new Date(form.startDate);
+      if (!Number.isNaN(start.getTime())) {
+        const end = new Date(start);
+        end.setDate(end.getDate() + Number(plan.durationDays));
+        setForm((f) => ({ ...f, endDate: toDateInput(end) }));
+      }
+    }
+  }, [form.planId, form.startDate, plans]);
 
   const handleUpload = async (which: "id" | "passport", file: File | undefined) => {
     if (!file) return;
@@ -725,12 +778,18 @@ function NewMemberDialog({
       toast.error("Date of birth is required for academy athletes");
       return;
     }
+    // A real member must have a plan — otherwise they never show in the
+    // membership-based Members directory. Require it before submit.
+    if (!form.planId) {
+      toast.error("Select a plan — every member needs one");
+      return;
+    }
 
     setSaving(true);
     try {
       if (memberType === "ACADEMY") {
         // Athlete = full academy record (creates linked User + CRM contact server-side)
-        await api.athletes.create({
+        const athlete = await api.athletes.create({
           firstName: form.firstName.trim(),
           lastName: form.lastName.trim(),
           email: form.email.trim(),
@@ -746,11 +805,18 @@ function NewMemberDialog({
           passportNumber: form.passportNumber.trim() || undefined,
           passportDocumentUrl: form.passportDocumentUrl || undefined,
         });
+        // Attach the plan so the athlete becomes a real member.
+        await api.memberships.create({
+          athleteId: athlete.id,
+          planId: form.planId,
+          startDate: form.startDate || undefined,
+          endDate: form.endDate || undefined,
+        });
         toast.success("Academy member created");
         onCreated({ type: "ACADEMY", email: form.email.trim() });
       } else {
         // Leisure = CRM contact with type=MEMBER + leisure tags + wellness profile
-        await api.crm.create({
+        const contact = await api.crm.create({
           firstName: form.firstName.trim(),
           lastName: form.lastName.trim() || undefined,
           email: form.email.trim(),
@@ -762,6 +828,14 @@ function NewMemberDialog({
           dob: form.dob ? new Date(form.dob).toISOString() : undefined,
           clientGoal: form.clientGoal || undefined,
           preferredLanguage: form.preferredLanguage || undefined,
+        });
+        // Attach the plan so the leisure contact becomes a real member and shows
+        // up in the membership-based Members directory.
+        await api.memberships.create({
+          crmContactId: contact.id,
+          planId: form.planId,
+          startDate: form.startDate || undefined,
+          endDate: form.endDate || undefined,
         });
         toast.success("Leisure member created");
         onCreated({ type: "LEISURE", email: form.email.trim() });
@@ -1022,6 +1096,40 @@ function NewMemberDialog({
                 </Field>
               </>
             )}
+
+            {/* Membership — shown for BOTH sides so every new member gets a real
+                plan and appears in the membership-based directory. */}
+            <div className="space-y-3 border-t pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Membership plan
+              </p>
+              <Field label="Plan *">
+                <SelectField
+                  value={form.planId}
+                  onChange={(v) => set("planId", v)}
+                  options={planOptions}
+                  placeholder={plansLoading ? "Loading plans…" : "Select plan…"}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Start date" htmlFor="nm-start">
+                  <Input
+                    id="nm-start"
+                    type="date"
+                    value={form.startDate}
+                    onChange={(e) => set("startDate", e.target.value)}
+                  />
+                </Field>
+                <Field label="End date" htmlFor="nm-end">
+                  <Input
+                    id="nm-end"
+                    type="date"
+                    value={form.endDate}
+                    onChange={(e) => set("endDate", e.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
           </div>
 
           <DialogFooter className="border-t p-4">

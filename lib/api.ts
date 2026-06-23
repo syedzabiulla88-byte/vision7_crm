@@ -280,6 +280,10 @@ export const api = {
     updateFamily: (id: string, data: any) =>
       apiFetch<any>(`/family/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     deleteFamily: (id: string) => apiFetch<any>(`/family/${id}`, { method: "DELETE" }),
+    // Deduplication — likely-duplicate groups (shared phone) + merge source→target
+    duplicates: () => apiFetch<any>(`/crm/duplicates`),
+    merge: (targetId: string, sourceId: string) =>
+      apiFetch<any>(`/crm/contacts/${targetId}/merge`, { method: "POST", body: JSON.stringify({ sourceId }) }),
   },
 
   // Dynamic roles / permissions

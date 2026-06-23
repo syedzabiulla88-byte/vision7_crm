@@ -65,6 +65,8 @@ import {
   ArrowRight,
   ChevronDown,
   Chat,
+  UserAdd,
+  Award,
 } from "@/lib/icons";
 
 // ─── Option lists (ported from site/src/app/admin/crm/[id]/page.js) ─────────────
@@ -364,6 +366,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
   const [activityBusy, setActivityBusy] = useState(false);
 
   const [emailOpen, setEmailOpen] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -554,6 +557,15 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
           <div className="flex flex-wrap gap-2">
             {!editing ? (
               <>
+                <Button
+                  className="bg-[#FFCF01] text-[#011b2b] hover:bg-[#FFCF01]/90"
+                  onClick={() => setAssignOpen(true)}
+                >
+                  <UserAdd className="h-4 w-4" />{" "}
+                  {String(contact.type).toUpperCase() === "MEMBER"
+                    ? "Assign plan"
+                    : "Convert to member"}
+                </Button>
                 <Button onClick={() => setEmailOpen(true)}>
                   <Send className="h-4 w-4" /> Send Email
                 </Button>
@@ -1001,6 +1013,14 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         onOpenChange={setEmailOpen}
         contact={contact}
         onSent={load}
+      />
+
+      {/* Assign plan / convert to member dialog */}
+      <AssignPlanDialog
+        open={assignOpen}
+        onOpenChange={setAssignOpen}
+        contact={contact}
+        onAssigned={load}
       />
 
       {/* Delete confirm */}
@@ -1722,6 +1742,218 @@ function SendEmailDialog({
             <Button type="submit" disabled={sending || !subject.trim() || !body.trim()}>
               <Send className="h-4 w-4" />
               {sending ? "Sending…" : "Send email"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Assign a membership plan to this contact (a.k.a. convert to member). */
+function AssignPlanDialog({
+  open,
+  onOpenChange,
+  contact,
+  onAssigned,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  contact: any;
+  onAssigned: () => void;
+}) {
+  const [plans, setPlans] = useState<any[]>([]);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [planId, setPlanId] = useState("");
+  const [startDate, setStartDate] = useState(() => toDateInput(new Date().toISOString()));
+  const [endDate, setEndDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Load plans whenever the dialog opens; reset the form.
+  useEffect(() => {
+    if (!open) return;
+    setPlanId("");
+    setStartDate(toDateInput(new Date().toISOString()));
+    setEndDate("");
+    setNotes("");
+    let cancelled = false;
+    (async () => {
+      setLoadingPlans(true);
+      try {
+        const res = await api.plans.list({ limit: 1000 });
+        if (cancelled) return;
+        const rows = Array.isArray(res) ? res : (res as any)?.data || [];
+        setPlans(rows.filter((p: any) => p.active !== false));
+      } catch (err) {
+        if (!cancelled) {
+          toast.error(err instanceof Error ? err.message : "Failed to load plans");
+        }
+      } finally {
+        if (!cancelled) setLoadingPlans(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const selectedPlan = plans.find((p) => p.id === planId);
+
+  // Auto-fill end date from the plan's durationDays when plan or start date changes.
+  useEffect(() => {
+    if (!selectedPlan?.durationDays || !startDate) return;
+    const start = new Date(startDate);
+    if (Number.isNaN(start.getTime())) return;
+    const end = new Date(start);
+    end.setDate(end.getDate() + Number(selectedPlan.durationDays));
+    setEndDate(toDateInput(end.toISOString()));
+  }, [planId, startDate, selectedPlan]);
+
+  const planOptions: Option[] = plans.map((p) => {
+    const typeLabel = labelFor(PLAN_TYPES, p.type);
+    return {
+      value: p.id,
+      label: `${p.name}${p.price != null ? ` — ${formatSAR(p.price)}` : ""}${
+        typeLabel ? ` · ${typeLabel}` : ""
+      }`,
+    };
+  });
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!planId) {
+      toast.error("Pick a plan to assign.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.memberships.create({
+        crmContactId: contact.id,
+        planId,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        notes: notes.trim() || undefined,
+      });
+      toast.success("Membership assigned — contact is now a Member");
+      // Academy plans need an athlete profile + app login to actually use the app.
+      if (String(selectedPlan?.type).toUpperCase() === "ACADEMY") {
+        toast.info(
+          "Academy member: create their athlete profile + app login from Members to finish onboarding.",
+          { duration: 8000 },
+        );
+      }
+      onAssigned?.();
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to assign membership");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isAcademy = String(selectedPlan?.type).toUpperCase() === "ACADEMY";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Award className="h-4 w-4" /> Assign plan
+          </DialogTitle>
+          <DialogDescription>
+            Assign a membership plan to {contact.firstName} {contact.lastName || ""}.{" "}
+            {String(contact.type).toUpperCase() !== "MEMBER" && (
+              <>This converts them into a Member.</>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Plan</Label>
+            <Select
+              items={planOptions}
+              value={planId}
+              onValueChange={(v) => setPlanId(v ?? "")}
+              disabled={loadingPlans}
+            >
+              <SelectTrigger className="w-full" aria-label="Plan">
+                <SelectValue
+                  placeholder={loadingPlans ? "Loading plans…" : "Select a plan…"}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {planOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!loadingPlans && plans.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                No plans available.{" "}
+                <Link href="/memberships/plans" className="text-primary hover:underline">
+                  Create one →
+                </Link>
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="assign-start">Start date</Label>
+              <Input
+                id="assign-start"
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="assign-end">End date (optional)</Label>
+              <Input
+                id="assign-end"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="assign-notes">Notes (optional)</Label>
+            <Textarea
+              id="assign-notes"
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Anything to record about this membership…"
+            />
+          </div>
+
+          {isAcademy && (
+            <div className="rounded-md border border-[#FFCF01]/40 bg-[#FFCF01]/10 p-3 text-sm">
+              <p className="font-medium text-foreground">Academy plan selected</p>
+              <p className="mt-1 text-muted-foreground">
+                Academy members also need an athlete profile and an app login to train and book.
+                After assigning, finish onboarding from{" "}
+                <Link href="/members" className="font-medium text-primary hover:underline">
+                  Members
+                </Link>{" "}
+                (the academy register flow lives there).
+              </p>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving || !planId}>
+              <UserAdd className="h-4 w-4" />
+              {saving ? "Assigning…" : "Assign plan"}
             </Button>
           </DialogFooter>
         </form>

@@ -104,6 +104,7 @@ interface CrmContact {
   stage?: string;
   source?: string | null;
   tags?: string[];
+  enquiryCount?: number;
   lastContactAt?: string | null;
   createdAt?: string;
   _count?: { activities?: number; bookings?: number; invoices?: number };
@@ -321,6 +322,7 @@ export default function CrmContactsPage() {
                     const activities = c._count?.activities ?? 0;
                     const bookings = c._count?.bookings ?? 0;
                     const invoices = c._count?.invoices ?? 0;
+                    const enquiries = c.enquiryCount ?? 0;
                     const tags = c.tags || [];
                     return (
                       <TableRow key={c.id}>
@@ -335,9 +337,19 @@ export default function CrmContactsPage() {
                               </AvatarFallback>
                             </Avatar>
                             <div className="min-w-0">
-                              <p className="font-medium">
-                                {c.firstName} {c.lastName || ""}
-                              </p>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="font-medium">
+                                  {c.firstName} {c.lastName || ""}
+                                </p>
+                                {enquiries > 0 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-amber-500/10 text-amber-700 border-amber-500/30 text-[10px] dark:text-amber-400"
+                                  >
+                                    {enquiries} {enquiries === 1 ? "enquiry" : "enquiries"}
+                                  </Badge>
+                                )}
+                              </div>
                               {activities > 0 && (
                                 <p className="flex items-center gap-1 text-xs text-muted-foreground">
                                   <Chat className="h-3 w-3" />
