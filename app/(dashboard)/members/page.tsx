@@ -1630,9 +1630,17 @@ function AssignMembershipDialog({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [athletes, setAthletes] = useState<any[]>([]);
+  // Which side are we assigning to?
+  const [subjectType, setSubjectType] = useState<"ACADEMY" | "LEISURE">("ACADEMY");
+
+  // Searchable subject picker state
+  const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<any[]>([]);
+  // Selected subject (athlete or crm contact); { id, name, sub } where sub = email/phone
+  const [subject, setSubject] = useState<{ id: string; name: string; sub?: string } | null>(null);
+
   const [plans, setPlans] = useState<any[]>([]);
-  const [athleteId, setAthleteId] = useState("");
   const [planId, setPlanId] = useState("");
   const [startDate, setStartDate] = useState(toDateInput(new Date()));
   const [endDate, setEndDate] = useState("");
@@ -1641,22 +1649,56 @@ function AssignMembershipDialog({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Load plans once (few of them — fine to fetch all).
   useEffect(() => {
     (async () => {
       try {
-        const [aRes, pRes] = await Promise.all([
-          api.athletes.list({ limit: 1000 }),
-          api.plans.list({ limit: 1000 }),
-        ]);
-        setAthletes(Array.isArray(aRes) ? aRes : (aRes as any)?.data || []);
+        const pRes = await api.plans.list({ limit: 1000 });
         setPlans(Array.isArray(pRes) ? pRes : (pRes as any)?.data || []);
       } catch (err: any) {
-        toast.error(err?.message || "Failed to load");
+        toast.error(err?.message || "Failed to load plans");
       } finally {
         setLoading(false);
       }
     })();
   }, []);
+
+  // Reset the picker whenever the subject type toggles.
+  useEffect(() => {
+    setSubject(null);
+    setSearch("");
+    setResults([]);
+  }, [subjectType]);
+
+  // Debounced server-side search (~300ms) for the active subject type.
+  useEffect(() => {
+    const term = search.trim();
+    if (!term) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        let list: any[] = [];
+        if (subjectType === "ACADEMY") {
+          const res = await api.athletes.list({ search: term, limit: 20 });
+          list = Array.isArray(res) ? res : (res as any)?.data || [];
+        } else {
+          const res = await api.crm.list({ q: term, limit: 20 });
+          list = Array.isArray(res) ? res : (res as any)?.data || [];
+        }
+        setResults(list);
+      } catch (err: any) {
+        toast.error(err?.message || "Search failed");
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [search, subjectType]);
 
   // Auto-fill end date when plan changes if it has durationDays
   useEffect(() => {
@@ -1672,16 +1714,32 @@ function AssignMembershipDialog({
     }
   }, [planId, startDate, plans]);
 
+  const subjectLabel = (r: any) => {
+    const name = `${r.firstName || ""} ${r.lastName || ""}`.trim() || r.name || "(unnamed)";
+    const sub = r.email || r.phone || "";
+    return { name, sub };
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!athleteId || !planId) {
-      toast.error("Athlete and plan are required");
+    if (!subject?.id) {
+      toast.error(
+        subjectType === "ACADEMY"
+          ? "Select an academy athlete"
+          : "Select a leisure member",
+      );
+      return;
+    }
+    if (!planId) {
+      toast.error("Plan is required");
       return;
     }
     setSaving(true);
     try {
       await api.memberships.create({
-        athleteId,
+        ...(subjectType === "ACADEMY"
+          ? { athleteId: subject.id }
+          : { crmContactId: subject.id }),
         planId,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
@@ -1697,12 +1755,6 @@ function AssignMembershipDialog({
     }
   };
 
-  const athleteOptions = athletes.map((a) => ({
-    value: a.id,
-    label:
-      `${a.firstName || ""} ${a.lastName || ""}`.trim() +
-      (a.email ? ` · ${a.email}` : "") || "(unnamed)",
-  }));
   const planOptions = plans.map((p) => ({
     value: p.id,
     label: `${p.name}${p.price != null ? ` — ${formatSAR(p.price)}` : ""}`,
@@ -1714,20 +1766,107 @@ function AssignMembershipDialog({
         <form onSubmit={submit} className="flex max-h-[90vh] flex-col">
           <DialogHeader className="border-b p-6">
             <DialogTitle>Assign Membership</DialogTitle>
-            <DialogDescription>Link an academy athlete to a plan.</DialogDescription>
+            <DialogDescription>
+              Assign a plan to an academy athlete or a leisure member.
+            </DialogDescription>
           </DialogHeader>
 
           {loading ? (
             <div className="p-10 text-center text-muted-foreground">Loading…</div>
           ) : (
             <div className="flex-1 space-y-5 overflow-y-auto p-6">
-              <Field label="Athlete *">
-                <SelectField
-                  value={athleteId}
-                  onChange={setAthleteId}
-                  options={athleteOptions}
-                  placeholder="Select athlete…"
-                />
+              {/* Subject type toggle */}
+              <Field label="Assign to *">
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      { v: "ACADEMY", label: "Academy (athlete)" },
+                      { v: "LEISURE", label: "Leisure (member)" },
+                    ] as const
+                  ).map((t) => (
+                    <Button
+                      key={t.v}
+                      type="button"
+                      size="sm"
+                      variant={subjectType === t.v ? "default" : "outline"}
+                      onClick={() => setSubjectType(t.v)}
+                    >
+                      {t.label}
+                    </Button>
+                  ))}
+                </div>
+              </Field>
+
+              {/* Searchable subject picker */}
+              <Field
+                label={subjectType === "ACADEMY" ? "Athlete *" : "Member / contact *"}
+                htmlFor="am-subject-search"
+              >
+                {subject ? (
+                  <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{subject.name}</p>
+                      {subject.sub ? (
+                        <p className="truncate text-xs text-muted-foreground">{subject.sub}</p>
+                      ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setSubject(null);
+                        setSearch("");
+                        setResults([]);
+                      }}
+                    >
+                      Change
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Input
+                      id="am-subject-search"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder={
+                        subjectType === "ACADEMY"
+                          ? "Search athletes by name or email…"
+                          : "Search members by name, email or phone…"
+                      }
+                      autoComplete="off"
+                    />
+                    {search.trim() ? (
+                      <div className="max-h-48 overflow-y-auto rounded-md border">
+                        {searching ? (
+                          <p className="px-3 py-2 text-sm text-muted-foreground">Searching…</p>
+                        ) : results.length === 0 ? (
+                          <p className="px-3 py-2 text-sm text-muted-foreground">No matches.</p>
+                        ) : (
+                          results.map((r) => {
+                            const { name, sub } = subjectLabel(r);
+                            return (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => {
+                                  setSubject({ id: r.id, name, sub });
+                                  setResults([]);
+                                }}
+                                className="flex w-full flex-col items-start gap-0.5 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/50"
+                              >
+                                <span className="text-sm font-medium">{name}</span>
+                                {sub ? (
+                                  <span className="text-xs text-muted-foreground">{sub}</span>
+                                ) : null}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
               </Field>
 
               <Field label="Plan *">
