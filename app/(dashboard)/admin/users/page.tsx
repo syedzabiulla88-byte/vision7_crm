@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PermissionGate } from "@/components/shared/permission-gate";
+import { Pagination } from "@/components/shared/pagination";
 import { usePermissions } from "@/components/hooks/use-permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,6 +98,8 @@ const STATUS_OPTIONS = [
 // Sentinel for "no custom role" — base-ui Select can't use "" as an item value.
 const NO_CUSTOM_ROLE = "__none";
 
+const PAGE_SIZE = 20;
+
 function roleBadgeClass(r?: string): string {
   switch (String(r || "").toUpperCase()) {
     case "ADMIN":
@@ -183,6 +186,9 @@ export default function UsersDirectoryPage() {
   const [status, setStatus] = useState("ALL");
   const [roleId, setRoleId] = useState<string>(NO_CUSTOM_ROLE); // ALL custom roles default
 
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState<{ total: number; page: number; limit: number; totalPages: number } | null>(null);
+
   // Create/edit dialog
   const [editing, setEditing] = useState<AppUser | null | "new">(null);
 
@@ -204,16 +210,18 @@ export default function UsersDirectoryPage() {
         status: status === "ALL" ? undefined : status,
         roleId: roleId === NO_CUSTOM_ROLE ? undefined : roleId,
         search: q || undefined,
-        limit: 1000,
+        page,
+        limit: PAGE_SIZE,
       });
       const rows: AppUser[] = Array.isArray(res) ? res : res?.data || [];
       setUsers(rows);
+      setMeta(Array.isArray(res) ? null : res?.meta ?? null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load users");
     } finally {
       setLoading(false);
     }
-  }, [segment, role, status, roleId, q]);
+  }, [segment, role, status, roleId, q, page]);
 
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
@@ -290,13 +298,13 @@ export default function UsersDirectoryPage() {
       />
 
       <div className="grid grid-cols-3 gap-4">
-        <StatCard label="Total users" value={loading ? "—" : counts.ALL} hue="navy" icon={<UsersIcon className="h-5 w-5" />} />
+        <StatCard label="Total users" value={loading ? "—" : (meta?.total ?? counts.ALL)} hue="navy" icon={<UsersIcon className="h-5 w-5" />} />
         <StatCard label="Staff" value={loading ? "—" : counts.staff} hue="yellow" icon={<Shield className="h-5 w-5" />} />
         <StatCard label="App users" value={loading ? "—" : counts.app} hue="emerald" icon={<UsersIcon className="h-5 w-5" />} />
       </div>
 
       {/* Segment tabs */}
-      <Tabs value={segment} onValueChange={(v) => setSegment((v as string) ?? "ALL")}>
+      <Tabs value={segment} onValueChange={(v) => { setPage(1); setSegment((v as string) ?? "ALL"); }}>
         <TabsList>
           {SEGMENTS.map((s) => (
             <TabsTrigger key={s.value} value={s.value}>
@@ -314,13 +322,13 @@ export default function UsersDirectoryPage() {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => { setPage(1); setQ(e.target.value); }}
                 placeholder="Name, email, phone…"
                 className="pl-9"
                 aria-label="Search users"
               />
             </div>
-            <Select items={ROLE_FILTERS} value={role} onValueChange={(v) => setRole(v ?? "ALL")}>
+            <Select items={ROLE_FILTERS} value={role} onValueChange={(v) => { setPage(1); setRole(v ?? "ALL"); }}>
               <SelectTrigger className="w-full lg:w-40" aria-label="Filter by role">
                 <SelectValue />
               </SelectTrigger>
@@ -332,7 +340,7 @@ export default function UsersDirectoryPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select items={STATUS_FILTERS} value={status} onValueChange={(v) => setStatus(v ?? "ALL")}>
+            <Select items={STATUS_FILTERS} value={status} onValueChange={(v) => { setPage(1); setStatus(v ?? "ALL"); }}>
               <SelectTrigger className="w-full lg:w-40" aria-label="Filter by status">
                 <SelectValue />
               </SelectTrigger>
@@ -345,7 +353,7 @@ export default function UsersDirectoryPage() {
               </SelectContent>
             </Select>
             {roles.length > 0 && (
-              <Select value={roleId} onValueChange={(v) => setRoleId(v ?? NO_CUSTOM_ROLE)}>
+              <Select value={roleId} onValueChange={(v) => { setPage(1); setRoleId(v ?? NO_CUSTOM_ROLE); }}>
                 <SelectTrigger className="w-full lg:w-48" aria-label="Filter by custom role">
                   <SelectValue />
                 </SelectTrigger>
@@ -494,6 +502,14 @@ export default function UsersDirectoryPage() {
               </TableBody>
             </Table>
           </div>
+
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={meta?.total ?? users.length}
+            totalPages={meta?.totalPages ?? 1}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
 

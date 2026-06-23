@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { api, uploadFile } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { Pagination } from "@/components/shared/pagination";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -55,6 +56,8 @@ import {
 // ─── Domain constants (ported from site/src/app/admin/members/page.js) ──────────
 
 const STATUS_LIST = ["ALL", "ACTIVE", "PENDING", "EXPIRED", "SUSPENDED", "FROZEN", "CANCELLED"] as const;
+
+const PAGE_SIZE = 20;
 
 const LANGUAGE_OPTIONS = [
   { value: "ARABIC", label: "Arabic" },
@@ -173,6 +176,13 @@ export default function MembersPage() {
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [typeFilter, setTypeFilter] = useState<"ALL" | "ACADEMY" | "LEISURE">("ALL");
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState<{
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  } | null>(null);
 
   const [showAssign, setShowAssign] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
@@ -186,16 +196,17 @@ export default function MembersPage() {
   // §3 — server-side search. The search term is debounced and passed to
   // api.memberships.list({ search }), which matches name / phone / ID across
   // the linked athlete, user AND crmContact.
-  const load = useCallback(async (search = "") => {
+  const load = useCallback(async (search = "", pageArg = 1) => {
     setLoading(true);
     setError(null);
     try {
-      const params: Record<string, unknown> = { limit: 1000 };
+      const params: Record<string, unknown> = { page: pageArg, limit: PAGE_SIZE };
       const term = search.trim();
       if (term) params.search = term;
       const result = await api.memberships.list(params);
       const rows = Array.isArray(result) ? result : result?.data || [];
       setMemberships(rows);
+      setMeta(Array.isArray(result) ? null : result?.meta ?? null);
     } catch (err: any) {
       setError(err?.message || "Failed to load memberships");
       toast.error(err?.message || "Failed to load memberships");
@@ -205,15 +216,16 @@ export default function MembersPage() {
     }
   }, []);
 
-  // Debounce the search term (~300ms) and re-query the server when it changes.
+  // Debounce the search term (~300ms) and re-query the server when it (or the
+  // page) changes.
   useEffect(() => {
-    const t = setTimeout(() => load(query), 300);
+    const t = setTimeout(() => load(query, page), 300);
     return () => clearTimeout(t);
-  }, [query, load]);
+  }, [query, page, load]);
 
-  // Re-query keeping the current search term so the list doesn't reset after
-  // create / edit / freeze actions.
-  const reload = useCallback(() => load(query), [load, query]);
+  // Re-query keeping the current search term + page so the list doesn't reset
+  // after create / edit / freeze actions.
+  const reload = useCallback(() => load(query, page), [load, query, page]);
 
   // Status + side (academy/leisure) filtering stays client-side on the
   // server-searched result set.
@@ -301,7 +313,10 @@ export default function MembersPage() {
             key={t.v}
             size="sm"
             variant={typeFilter === t.v ? "default" : "outline"}
-            onClick={() => setTypeFilter(t.v)}
+            onClick={() => {
+              setTypeFilter(t.v);
+              setPage(1);
+            }}
           >
             {t.label}
             <span className="opacity-70">· {t.count}</span>
@@ -317,7 +332,10 @@ export default function MembersPage() {
               key={s}
               size="sm"
               variant={statusFilter === s ? "default" : "outline"}
-              onClick={() => setStatusFilter(s)}
+              onClick={() => {
+                setStatusFilter(s);
+                setPage(1);
+              }}
             >
               {s}
             </Button>
@@ -327,7 +345,10 @@ export default function MembersPage() {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
             placeholder="Search by name, phone or ID"
             className="pl-9"
             aria-label="Search members"
@@ -489,6 +510,14 @@ export default function MembersPage() {
           </TableBody>
         </Table>
       </div>
+
+      <Pagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={meta?.total ?? filtered.length}
+        totalPages={meta?.totalPages ?? 1}
+        onPageChange={setPage}
+      />
 
       {/* Dialogs */}
       {showAssign && (

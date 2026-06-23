@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Pagination } from "@/components/shared/pagination";
 import { Plus, Eye, Pencil, Trash, FileText } from "@/lib/icons";
 import {
   INVOICE_STATUSES,
@@ -50,6 +51,8 @@ function recipientName(inv: Invoice): { name: string; walkIn: boolean } {
   return { name: "—", walkIn: false };
 }
 
+const PAGE_SIZE = 20;
+
 export default function InvoicesPage() {
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -58,41 +61,40 @@ export default function InvoicesPage() {
   const [toDate, setToDate] = useState("");
   const [deleting, setDeleting] = useState<Invoice | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState<{
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await api.invoices.list({ limit: 1000 });
+      const params: Record<string, unknown> = { page, limit: PAGE_SIZE };
+      if (statusFilter !== "ALL") params.status = statusFilter;
+      if (fromDate) params.from = fromDate;
+      if (toDate) params.to = toDate;
+      const result = await api.invoices.list(params);
       const rows: Invoice[] = Array.isArray(result) ? result : result?.data || [];
       setInvoices(rows);
+      setMeta(Array.isArray(result) ? null : result?.meta ?? null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load invoices");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, statusFilter, fromDate, toDate]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const filtered = useMemo(() => {
-    return invoices.filter((inv) => {
-      if (statusFilter !== "ALL" && String(inv.status || "").toUpperCase() !== statusFilter) {
-        return false;
-      }
-      const issued = inv.issueDate ? new Date(inv.issueDate) : null;
-      if (fromDate && issued && issued < new Date(fromDate)) return false;
-      if (toDate && issued) {
-        const end = new Date(toDate);
-        end.setHours(23, 59, 59, 999);
-        if (issued > end) return false;
-      }
-      return true;
-    });
-  }, [invoices, statusFilter, fromDate, toDate]);
+  // Filters are applied server-side; render the returned page directly.
+  const filtered = invoices;
 
-  // Totals reflect the current filter so the cards stay meaningful.
+  // Totals reflect the current page so the cards stay meaningful.
   const totals = useMemo(() => {
     let total = 0;
     let paid = 0;
@@ -100,8 +102,13 @@ export default function InvoicesPage() {
       total += getTotal(inv);
       paid += getPaid(inv);
     }
-    return { total, paid, outstanding: Math.max(total - paid, 0), count: filtered.length };
-  }, [filtered]);
+    return {
+      total,
+      paid,
+      outstanding: Math.max(total - paid, 0),
+      count: meta?.total ?? filtered.length,
+    };
+  }, [filtered, meta]);
 
   const handleDelete = async () => {
     if (!deleting) return;
@@ -146,7 +153,13 @@ export default function InvoicesPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-end">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Status</Label>
-              <Select value={statusFilter} onValueChange={(v) => setStatusFilter((v as string) ?? "ALL")}>
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter((v as string) ?? "ALL");
+                  setPage(1);
+                }}
+              >
                 <SelectTrigger className="w-full md:w-44">
                   <SelectValue />
                 </SelectTrigger>
@@ -167,7 +180,10 @@ export default function InvoicesPage() {
                 id="from-date"
                 type="date"
                 value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={(e) => {
+                  setFromDate(e.target.value);
+                  setPage(1);
+                }}
                 className="w-full md:w-44"
               />
             </div>
@@ -179,7 +195,10 @@ export default function InvoicesPage() {
                 id="to-date"
                 type="date"
                 value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={(e) => {
+                  setToDate(e.target.value);
+                  setPage(1);
+                }}
                 className="w-full md:w-44"
               />
             </div>
@@ -190,6 +209,7 @@ export default function InvoicesPage() {
                   setStatusFilter("ALL");
                   setFromDate("");
                   setToDate("");
+                  setPage(1);
                 }}
               >
                 Clear filters
@@ -318,6 +338,14 @@ export default function InvoicesPage() {
               </TableBody>
             </Table>
           </div>
+
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={meta?.total ?? filtered.length}
+            totalPages={meta?.totalPages ?? 1}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
 

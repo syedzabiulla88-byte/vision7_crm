@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Pagination } from "@/components/shared/pagination";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Table,
@@ -116,6 +117,8 @@ interface CrmOverview {
   withBookings?: number;
 }
 
+const PAGE_SIZE = 20;
+
 export default function CrmContactsPage() {
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState<CrmContact[]>([]);
@@ -124,6 +127,13 @@ export default function CrmContactsPage() {
   const [type, setType] = useState("ALL");
   const [stage, setStage] = useState("ALL");
   const [source, setSource] = useState("ALL");
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState<{
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,13 +146,15 @@ export default function CrmContactsPage() {
             type: type === "ALL" ? undefined : type,
             stage: stage === "ALL" ? undefined : stage,
             source: source === "ALL" ? undefined : source,
-            limit: 200,
+            page,
+            limit: PAGE_SIZE,
           }),
           api.crm.overview().catch(() => null),
         ]);
         if (cancelled) return;
         const rows: CrmContact[] = Array.isArray(list) ? list : list?.data || [];
         setContacts(rows);
+        setMeta(Array.isArray(list) ? null : list?.meta ?? null);
         setOverview(ov);
       } catch (err) {
         if (!cancelled) {
@@ -157,7 +169,7 @@ export default function CrmContactsPage() {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [q, type, stage, source]);
+  }, [q, type, stage, source, page]);
 
   const hasFilters = useMemo(
     () => Boolean(q) || type !== "ALL" || stage !== "ALL" || source !== "ALL",
@@ -195,13 +207,23 @@ export default function CrmContactsPage() {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPage(1);
+                }}
                 placeholder="Name, email, phone, ID number…"
                 className="pl-9"
                 aria-label="Search contacts"
               />
             </div>
-            <Select items={TYPE_FILTERS} value={type} onValueChange={(v) => setType(v ?? "ALL")}>
+            <Select
+              items={TYPE_FILTERS}
+              value={type}
+              onValueChange={(v) => {
+                setType(v ?? "ALL");
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-full md:w-44" aria-label="Filter by type">
                 <SelectValue />
               </SelectTrigger>
@@ -213,7 +235,14 @@ export default function CrmContactsPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select items={STAGE_FILTERS} value={stage} onValueChange={(v) => setStage(v ?? "ALL")}>
+            <Select
+              items={STAGE_FILTERS}
+              value={stage}
+              onValueChange={(v) => {
+                setStage(v ?? "ALL");
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-full md:w-40" aria-label="Filter by stage">
                 <SelectValue />
               </SelectTrigger>
@@ -225,7 +254,14 @@ export default function CrmContactsPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select items={SOURCE_FILTERS} value={source} onValueChange={(v) => setSource(v ?? "ALL")}>
+            <Select
+              items={SOURCE_FILTERS}
+              value={source}
+              onValueChange={(v) => {
+                setSource(v ?? "ALL");
+                setPage(1);
+              }}
+            >
               <SelectTrigger className="w-full md:w-44" aria-label="Filter by source">
                 <SelectValue />
               </SelectTrigger>
@@ -379,6 +415,14 @@ export default function CrmContactsPage() {
               </TableBody>
             </Table>
           </div>
+
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={meta?.total ?? contacts.length}
+            totalPages={meta?.totalPages ?? 1}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
     </div>
