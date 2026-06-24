@@ -1751,6 +1751,7 @@ function AssignPlanDialog({
   // Billing — every paid membership is invoiced; collect now or issue an open invoice.
   const [payNow, setPayNow] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [paymentReference, setPaymentReference] = useState("");
   // ID capture — recorded onto the subject (athlete or CRM contact) when provided.
   const [idType, setIdType] = useState("NATIONAL_ID");
   const [idNumber, setIdNumber] = useState("");
@@ -1779,6 +1780,7 @@ function AssignPlanDialog({
     setAthleteNationality("");
     setIdType(contact?.idType || "NATIONAL_ID");
     setIdNumber(contact?.nationalId || "");
+    setPaymentReference("");
     let cancelled = false;
     (async () => {
       setLoadingPlans(true);
@@ -1901,6 +1903,7 @@ function AssignPlanDialog({
           notes: notes.trim() || undefined,
           payNow: planPrice > 0 ? payNow : true,
           paymentMethod,
+          paymentReference: paymentReference.trim() || undefined,
         });
         toast.success(
           res?.membership?.status === "ACTIVE"
@@ -1920,6 +1923,7 @@ function AssignPlanDialog({
           notes: notes.trim() || undefined,
           payNow: planPrice > 0 ? payNow : true,
           paymentMethod,
+          paymentReference: paymentReference.trim() || undefined,
         });
         toast.success(billingToast(res?.membership?.status));
       } else {
@@ -1935,6 +1939,7 @@ function AssignPlanDialog({
           notes: notes.trim() || undefined,
           payNow: planPrice > 0 ? payNow : true,
           paymentMethod,
+          paymentReference: paymentReference.trim() || undefined,
         });
         toast.success(billingToast(res?.membership?.status));
       }
@@ -2095,17 +2100,25 @@ function AssignPlanDialog({
                       </button>
                     </div>
                     {payNow ? (
-                      <SelectField
-                        label="Payment method"
-                        value={paymentMethod}
-                        onChange={(v) => setPaymentMethod(v || "cash")}
-                        options={[
-                          { value: "cash", label: "Cash" },
-                          { value: "card", label: "Card" },
-                          { value: "bank-transfer", label: "Bank transfer" },
-                          { value: "cheque", label: "Cheque" },
-                        ]}
-                      />
+                      <>
+                        <SelectField
+                          label="Payment method"
+                          value={paymentMethod}
+                          onChange={(v) => setPaymentMethod(v || "cash")}
+                          options={[
+                            { value: "cash", label: "Cash" },
+                            { value: "card", label: "Card" },
+                            { value: "bank-transfer", label: "Bank transfer" },
+                            { value: "cheque", label: "Cheque" },
+                          ]}
+                        />
+                        <TextField
+                          label="Reference / Transaction ID"
+                          value={paymentReference}
+                          onChange={setPaymentReference}
+                          placeholder="Transaction ID, cheque no., bank ref…"
+                        />
+                      </>
                     ) : (
                       <p className="text-xs text-muted-foreground">
                         An invoice will be issued. The member stays <strong>pending</strong> (no access) until it&apos;s paid.

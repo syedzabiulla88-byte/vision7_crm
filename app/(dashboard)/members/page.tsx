@@ -831,6 +831,7 @@ interface NewMemberForm {
   endDate: string;
   payNow: boolean;
   paymentMethod: string;
+  paymentReference: string;
 }
 
 const EMPTY_NEW_MEMBER: NewMemberForm = {
@@ -857,6 +858,7 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   endDate: "",
   payNow: true,
   paymentMethod: "cash",
+  paymentReference: "",
 };
 
 function NewMemberDialog({
@@ -1015,6 +1017,7 @@ function NewMemberDialog({
           endDate: form.endDate || undefined,
           payNow: planPrice > 0 ? form.payNow : true,
           paymentMethod: form.paymentMethod,
+          paymentReference: form.paymentReference.trim() || undefined,
         });
         toast.success(billingToast(res?.membership?.status, "Academy member created"));
         onCreated({ type: "ACADEMY", email: form.email.trim() });
@@ -1043,6 +1046,7 @@ function NewMemberDialog({
           endDate: form.endDate || undefined,
           payNow: planPrice > 0 ? form.payNow : true,
           paymentMethod: form.paymentMethod,
+          paymentReference: form.paymentReference.trim() || undefined,
         });
         toast.success(billingToast(res?.membership?.status, "Leisure member created"));
         onCreated({ type: "LEISURE", email: form.email.trim() });
@@ -1389,18 +1393,28 @@ function NewMemberDialog({
                           </button>
                         </div>
                         {form.payNow ? (
-                          <Field label="Payment method">
-                            <SelectField
-                              value={form.paymentMethod}
-                              onChange={(v) => set("paymentMethod", v)}
-                              options={[
-                                { value: "cash", label: "Cash" },
-                                { value: "card", label: "Card" },
-                                { value: "bank-transfer", label: "Bank transfer" },
-                                { value: "cheque", label: "Cheque" },
-                              ]}
-                            />
-                          </Field>
+                          <>
+                            <Field label="Payment method">
+                              <SelectField
+                                value={form.paymentMethod}
+                                onChange={(v) => set("paymentMethod", v)}
+                                options={[
+                                  { value: "cash", label: "Cash" },
+                                  { value: "card", label: "Card" },
+                                  { value: "bank-transfer", label: "Bank transfer" },
+                                  { value: "cheque", label: "Cheque" },
+                                ]}
+                              />
+                            </Field>
+                            <Field label="Reference / Transaction ID" htmlFor="nm-payment-ref">
+                              <Input
+                                id="nm-payment-ref"
+                                value={form.paymentReference}
+                                onChange={(e) => set("paymentReference", e.target.value)}
+                                placeholder="Transaction ID, cheque no., bank ref…"
+                              />
+                            </Field>
+                          </>
                         ) : (
                           <p className="text-xs text-muted-foreground">
                             An invoice will be issued. The member stays <strong>pending</strong> (no access) until it&rsquo;s paid.
@@ -2171,6 +2185,7 @@ function AssignMembershipDialog({
   // Billing — every paid membership is invoiced; collect now or issue an open invoice.
   const [payNow, setPayNow] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [paymentReference, setPaymentReference] = useState("");
   // Optional ID capture — writes back to the selected subject before assigning.
   const [idType, setIdType] = useState("NATIONAL_ID");
   const [idNumber, setIdNumber] = useState("");
@@ -2334,6 +2349,7 @@ function AssignMembershipDialog({
         autoRenew: !!autoRenew,
         payNow: price > 0 ? payNow : true,
         paymentMethod,
+        paymentReference: paymentReference.trim() || undefined,
       });
       const memStatus = res?.membership?.status;
       if (price <= 0) toast.success("Free plan assigned — membership activated");
@@ -2582,18 +2598,28 @@ function AssignMembershipDialog({
                           </button>
                         </div>
                         {payNow ? (
-                          <Field label="Payment method">
-                            <SelectField
-                              value={paymentMethod}
-                              onChange={setPaymentMethod}
-                              options={[
-                                { value: "cash", label: "Cash" },
-                                { value: "card", label: "Card" },
-                                { value: "bank-transfer", label: "Bank transfer" },
-                                { value: "cheque", label: "Cheque" },
-                              ]}
-                            />
-                          </Field>
+                          <>
+                            <Field label="Payment method">
+                              <SelectField
+                                value={paymentMethod}
+                                onChange={setPaymentMethod}
+                                options={[
+                                  { value: "cash", label: "Cash" },
+                                  { value: "card", label: "Card" },
+                                  { value: "bank-transfer", label: "Bank transfer" },
+                                  { value: "cheque", label: "Cheque" },
+                                ]}
+                              />
+                            </Field>
+                            <Field label="Reference / Transaction ID" htmlFor="assign-payment-ref">
+                              <Input
+                                id="assign-payment-ref"
+                                value={paymentReference}
+                                onChange={(e) => setPaymentReference(e.target.value)}
+                                placeholder="Transaction ID, cheque no., bank ref…"
+                              />
+                            </Field>
+                          </>
                         ) : (
                           <p className="text-xs text-muted-foreground">
                             An invoice will be issued. The member stays <strong>pending</strong> (no access) until it&rsquo;s paid.
