@@ -662,6 +662,8 @@ interface NewMemberForm {
   planId: string;
   startDate: string;
   endDate: string;
+  payNow: boolean;
+  paymentMethod: string;
 }
 
 const EMPTY_NEW_MEMBER: NewMemberForm = {
@@ -686,6 +688,8 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   planId: "",
   startDate: toDateInput(new Date()),
   endDate: "",
+  payNow: true,
+  paymentMethod: "cash",
 };
 
 function NewMemberDialog({
@@ -802,6 +806,13 @@ function NewMemberDialog({
     }
 
     setSaving(true);
+    const planPrice = Number(plans.find((p) => p.id === form.planId)?.price) || 0;
+    const billingToast = (status: string | undefined, label: string) =>
+      planPrice <= 0
+        ? `${label} — activated (free plan)`
+        : status === "ACTIVE"
+          ? `${label} — payment recorded, membership active`
+          : `${label} — invoice raised, membership pending until paid`;
     try {
       if (memberType === "ACADEMY") {
         // Athlete = full academy record (creates linked User + CRM contact server-side)
@@ -821,14 +832,16 @@ function NewMemberDialog({
           passportNumber: form.passportNumber.trim() || undefined,
           passportDocumentUrl: form.passportDocumentUrl || undefined,
         });
-        // Attach the plan so the athlete becomes a real member.
-        await api.memberships.create({
+        // Bill for the plan: PENDING membership + invoice; payNow records payment & activates.
+        const res = await api.memberships.assign({
           athleteId: athlete.id,
           planId: form.planId,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
+          payNow: planPrice > 0 ? form.payNow : true,
+          paymentMethod: form.paymentMethod,
         });
-        toast.success("Academy member created");
+        toast.success(billingToast(res?.membership?.status, "Academy member created"));
         onCreated({ type: "ACADEMY", email: form.email.trim() });
       } else {
         // Leisure = CRM contact with type=MEMBER + leisure tags + wellness profile
@@ -845,15 +858,16 @@ function NewMemberDialog({
           clientGoal: form.clientGoal || undefined,
           preferredLanguage: form.preferredLanguage || undefined,
         });
-        // Attach the plan so the leisure contact becomes a real member and shows
-        // up in the membership-based Members directory.
-        await api.memberships.create({
+        // Bill for the plan: PENDING membership + invoice; payNow records payment & activates.
+        const res = await api.memberships.assign({
           crmContactId: contact.id,
           planId: form.planId,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
+          payNow: planPrice > 0 ? form.payNow : true,
+          paymentMethod: form.paymentMethod,
         });
-        toast.success("Leisure member created");
+        toast.success(billingToast(res?.membership?.status, "Leisure member created"));
         onCreated({ type: "LEISURE", email: form.email.trim() });
       }
     } catch (err: any) {
@@ -1145,6 +1159,60 @@ function NewMemberDialog({
                   />
                 </Field>
               </div>
+
+              {/* Billing — every membership is billed; no free passes. */}
+              {form.planId
+                ? (() => {
+                    const sp = plans.find((p) => p.id === form.planId);
+                    const price = Number(sp?.price) || 0;
+                    if (price <= 0) {
+                      return (
+                        <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                          Free plan — no payment required. The membership activates immediately.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="space-y-3 rounded-md border p-3">
+                        <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => set("payNow", true)}
+                            className={`rounded-md border px-3 py-2 text-sm ${form.payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                          >
+                            Collect payment now
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => set("payNow", false)}
+                            className={`rounded-md border px-3 py-2 text-sm ${!form.payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                          >
+                            Invoice — pay later
+                          </button>
+                        </div>
+                        {form.payNow ? (
+                          <Field label="Payment method">
+                            <SelectField
+                              value={form.paymentMethod}
+                              onChange={(v) => set("paymentMethod", v)}
+                              options={[
+                                { value: "cash", label: "Cash" },
+                                { value: "card", label: "Card" },
+                                { value: "bank-transfer", label: "Bank transfer" },
+                                { value: "cheque", label: "Cheque" },
+                              ]}
+                            />
+                          </Field>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            An invoice will be issued. The member stays <strong>pending</strong> (no access) until it&rsquo;s paid.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()
+                : null}
             </div>
           </div>
 
@@ -1898,6 +1966,9 @@ function AssignMembershipDialog({
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
   const [autoRenew, setAutoRenew] = useState(false);
+  // Billing — every paid membership is invoiced; collect now or issue an open invoice.
+  const [payNow, setPayNow] = useState(true);
+  const [paymentMethod, setPaymentMethod] = useState("cash");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -1986,9 +2057,13 @@ function AssignMembershipDialog({
       toast.error("Plan is required");
       return;
     }
+    const selectedPlan = plans.find((p) => p.id === planId);
+    const price = Number(selectedPlan?.price) || 0;
     setSaving(true);
     try {
-      await api.memberships.create({
+      // Route through billing: creates a PENDING membership + an invoice, and
+      // (payNow) records the payment which activates it. Free plans auto-activate.
+      const res = await api.memberships.assign({
         ...(subjectType === "ACADEMY"
           ? { athleteId: subject.id }
           : { crmContactId: subject.id }),
@@ -1997,8 +2072,13 @@ function AssignMembershipDialog({
         endDate: endDate || undefined,
         notes: notes?.trim() || undefined,
         autoRenew: !!autoRenew,
+        payNow: price > 0 ? payNow : true,
+        paymentMethod,
       });
-      toast.success("Membership assigned");
+      const memStatus = res?.membership?.status;
+      if (price <= 0) toast.success("Free plan assigned — membership activated");
+      else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
+      else toast.success("Invoice raised — membership pending until paid");
       onCreated();
     } catch (err: any) {
       toast.error(err?.message || "Failed to assign membership");
@@ -2163,6 +2243,60 @@ function AssignMembershipDialog({
                 <Switch id="am-autorenew" checked={autoRenew} onCheckedChange={(v) => setAutoRenew(!!v)} />
                 <Label htmlFor="am-autorenew">Auto-renew at end date</Label>
               </div>
+
+              {/* Billing — every membership is billed; no free passes. */}
+              {planId
+                ? (() => {
+                    const sp = plans.find((p) => p.id === planId);
+                    const price = Number(sp?.price) || 0;
+                    if (price <= 0) {
+                      return (
+                        <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                          Free plan — no payment required. The membership activates immediately.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="space-y-3 rounded-md border p-3">
+                        <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPayNow(true)}
+                            className={`rounded-md border px-3 py-2 text-sm ${payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                          >
+                            Collect payment now
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPayNow(false)}
+                            className={`rounded-md border px-3 py-2 text-sm ${!payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                          >
+                            Invoice — pay later
+                          </button>
+                        </div>
+                        {payNow ? (
+                          <Field label="Payment method">
+                            <SelectField
+                              value={paymentMethod}
+                              onChange={setPaymentMethod}
+                              options={[
+                                { value: "cash", label: "Cash" },
+                                { value: "card", label: "Card" },
+                                { value: "bank-transfer", label: "Bank transfer" },
+                                { value: "cheque", label: "Cheque" },
+                              ]}
+                            />
+                          </Field>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            An invoice will be issued. The member stays <strong>pending</strong> (no access) until it&rsquo;s paid.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()
+                : null}
             </div>
           )}
 

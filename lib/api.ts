@@ -128,6 +128,10 @@ export const api = {
     get: (id: string) => apiFetch<any>(`/memberships/${id}`),
     create: (data: any) =>
       apiFetch<any>(`/memberships`, { method: "POST", body: JSON.stringify(data) }),
+    // Assign a membership AND bill for it (membership PENDING + invoice; payNow
+    // records payment and activates, else issued/owed until paid). Returns { membership, invoice }.
+    assign: (data: any) =>
+      apiFetch<any>(`/invoices/assign-membership`, { method: "POST", body: JSON.stringify(data) }),
     update: (id: string, data: any) =>
       apiFetch<any>(`/memberships/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     delete: (id: string) => apiFetch<any>(`/memberships/${id}`, { method: "DELETE" }),
