@@ -1862,7 +1862,7 @@ function AssignPlanDialog({
           phone: contact.phone,
           dob: athleteDob,
           position: athletePosition,
-          jerseyNumber: athleteJersey.trim(),
+          jerseyNumber: Number(athleteJersey) || 0,
           nationality: athleteNationality.trim() || undefined,
           gender: contact.gender || undefined,
           idType,
