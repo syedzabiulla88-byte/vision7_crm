@@ -233,6 +233,24 @@ export const api = {
     list: (params?: Params) => apiFetch<any>(`/audit-logs${qs(params)}`),
   },
 
+  // Tours — facility tour bookings + daily slot config.
+  tours: {
+    list: (params?: Params) => apiFetch<any>(`/tours${qs(params)}`),
+    overview: () => apiFetch<any>(`/tours/overview`),
+    get: (id: string) => apiFetch<any>(`/tours/${id}`),
+    create: (data: any) => apiFetch<any>(`/tours`, { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: any) => apiFetch<any>(`/tours/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    remove: (id: string) => apiFetch<any>(`/tours/${id}`, { method: "DELETE" }),
+    convert: (id: string) => apiFetch<any>(`/tours/${id}/convert`, { method: "POST" }),
+    availability: (date: string) => apiFetch<any>(`/tours/availability${qs({ date })}`),
+    slots: () => apiFetch<any>(`/tours/slots`),
+    createSlot: (data: any) => apiFetch<any>(`/tours/slots`, { method: "POST", body: JSON.stringify(data) }),
+    updateSlot: (id: string, data: any) => apiFetch<any>(`/tours/slots/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    deleteSlot: (id: string) => apiFetch<any>(`/tours/slots/${id}`, { method: "DELETE" }),
+    getConfig: () => apiFetch<any>(`/tours/config`),
+    updateConfig: (data: any) => apiFetch<any>(`/tours/config`, { method: "PATCH", body: JSON.stringify(data) }),
+  },
+
   uploads: {
     presign: (data: {
       filename: string;
