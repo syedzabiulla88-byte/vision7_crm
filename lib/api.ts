@@ -284,8 +284,10 @@ export const api = {
     duplicates: () => apiFetch<any>(`/crm/duplicates`),
     merge: (targetId: string, sourceId: string) =>
       apiFetch<any>(`/crm/contacts/${targetId}/merge`, { method: "POST", body: JSON.stringify({ sourceId }) }),
-    // Enquiries inbox — list (status/q), convert to a contact (dedups), archive
+    // Enquiries inbox — list (status/q), staff-create, convert (dedups), archive
     enquiries: (params?: Params) => apiFetch<any>(`/crm/enquiries${qs(params)}`),
+    createEnquiry: (data: any) =>
+      apiFetch<any>(`/crm/enquiries`, { method: "POST", body: JSON.stringify(data) }),
     convertEnquiry: (id: string) =>
       apiFetch<any>(`/crm/enquiries/${id}/convert`, { method: "POST" }),
     updateEnquiry: (id: string, data: { status?: string }) =>

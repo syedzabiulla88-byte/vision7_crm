@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -15,6 +15,24 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -34,6 +52,8 @@ import {
   Folder as Archive,
   ChevronDown,
   ChevronRight,
+  Plus,
+  Eye,
 } from "@/lib/icons";
 
 // ─── Types (mirror the live backend contract) ────────────────────────────────────
@@ -54,6 +74,7 @@ interface Enquiry {
   status: EnquiryStatus;
   contactId: string | null;
   createdAt: string;
+  handledAt?: string | null;
   matchedContact: { id: string; name: string } | null;
   kind?: EnquiryKind | null;
   details?: Record<string, unknown> | null;
@@ -89,6 +110,43 @@ const EMPTY_DESC: Record<EnquiryStatus, string> = {
   CONVERTED: "Enquiries you turn into contacts will show up here.",
   ARCHIVED: "Enquiries you archive will be kept here for reference.",
 };
+
+// Sentinel for "Other" select options — when chosen we reveal a free-text input.
+const OTHER = "Other";
+
+const LANGUAGE_OPTIONS = ["Arabic", "English"];
+
+const ACADEMY_PROGRAMS = [
+  "Academy",
+  "Junior",
+  "Elite",
+  "Goalkeeping",
+  "Holiday camp",
+  OTHER,
+];
+const ACADEMY_GOALS = ["Improve skills", "Competitive", "Fitness", "Social", OTHER];
+const ACADEMY_LEVELS = ["Beginner", "Intermediate", "Advanced"];
+const ENQUIRING_FOR = ["My child", "Myself"];
+const GENDERS = ["Male", "Female"];
+
+const LEISURE_INTERESTS = [
+  "Gym",
+  "Padel",
+  "Swimming",
+  "Wellness",
+  "Personal Training",
+  OTHER,
+];
+const LEISURE_MEMBERSHIPS = ["Individual", "Family", "Corporate"];
+const LEISURE_GOALS = [
+  "Weight Loss",
+  "Muscle Building",
+  "Improve Fitness",
+  "Better Social Life",
+  OTHER,
+];
+const LEISURE_EXPERIENCE = ["Beginner", "Intermediate", "Advanced"];
+const LEISURE_TIMES = ["Morning", "Afternoon", "Evening"];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -151,6 +209,68 @@ function detailEntries(details?: Record<string, unknown> | null): [string, strin
   }, []);
 }
 
+// ─── New-enquiry form state ──────────────────────────────────────────────────────
+
+interface NewEnquiryForm {
+  name: string;
+  email: string;
+  phone: string;
+  message: string;
+  preferredLanguage: string;
+  city: string;
+  // academy
+  enquiringFor: string;
+  playerName: string;
+  playerAge: string;
+  playerGender: string;
+  currentLevel: string;
+  preferredProgram: string;
+  preferredProgramOther: string;
+  goal: string;
+  goalOther: string;
+  // leisure
+  gender: string;
+  interestedIn: string;
+  interestedInOther: string;
+  membershipType: string;
+  fitnessGoal: string;
+  fitnessGoalOther: string;
+  experience: string;
+  preferredTime: string;
+}
+
+const EMPTY_FORM: NewEnquiryForm = {
+  name: "",
+  email: "",
+  phone: "",
+  message: "",
+  preferredLanguage: "",
+  city: "",
+  enquiringFor: "",
+  playerName: "",
+  playerAge: "",
+  playerGender: "",
+  currentLevel: "",
+  preferredProgram: "",
+  preferredProgramOther: "",
+  goal: "",
+  goalOther: "",
+  gender: "",
+  interestedIn: "",
+  interestedInOther: "",
+  membershipType: "",
+  fitnessGoal: "",
+  fitnessGoalOther: "",
+  experience: "",
+  preferredTime: "",
+};
+
+// Resolve an "Other"-style select into the stored value (typed value, not "Other").
+function resolveOther(choice: string, other: string): string {
+  if (choice === OTHER) return other.trim();
+  return choice;
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────────
 
 export default function EnquiriesPage() {
@@ -166,6 +286,21 @@ export default function EnquiriesPage() {
   const [archiving, setArchiving] = useState<Enquiry | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Detail dialog — the enquiry currently being viewed.
+  const [viewing, setViewing] = useState<Enquiry | null>(null);
+
+  // Add-enquiry dialog.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addKind, setAddKind] = useState<EnquiryKind>("academy");
+  const [form, setForm] = useState<NewEnquiryForm>(EMPTY_FORM);
+  const [submitting, setSubmitting] = useState(false);
+
+  const setField = useCallback(
+    (key: keyof NewEnquiryForm, value: string) =>
+      setForm((prev) => ({ ...prev, [key]: value })),
+    [],
+  );
 
   const toggleExpanded = (id: string) =>
     setExpanded((prev) => {
@@ -233,6 +368,7 @@ export default function EnquiriesPage() {
       await api.crm.updateEnquiry(archiving.id, { status: "ARCHIVED" });
       toast.success("Enquiry archived");
       setArchiving(null);
+      setViewing((v) => (v && v.id === archiving.id ? null : v));
       load();
       loadNewCount();
     } catch (err) {
@@ -241,6 +377,97 @@ export default function EnquiriesPage() {
       setArchiveBusy(false);
     }
   };
+
+  // ── Add-enquiry submit ──────────────────────────────────────────────────────────
+
+  const resetAdd = useCallback(() => {
+    setForm(EMPTY_FORM);
+    setAddKind("academy");
+  }, []);
+
+  const submitNewEnquiry = async () => {
+    const name = form.name.trim();
+    const email = form.email.trim();
+    const phone = form.phone.trim();
+
+    if (!name) {
+      toast.error("Please enter a full name");
+      return;
+    }
+    if (!email && !phone) {
+      toast.error("Please provide at least an email or a phone number");
+      return;
+    }
+
+    // Build the captured details + a sensible `interest` summary per kind.
+    let interest = "";
+    const details: Record<string, unknown> = {
+      preferredLanguage: form.preferredLanguage || undefined,
+      city: form.city.trim() || undefined,
+    };
+
+    if (addKind === "academy") {
+      const program = resolveOther(form.preferredProgram, form.preferredProgramOther);
+      const goal = resolveOther(form.goal, form.goalOther);
+      interest = program || goal || "Academy";
+      Object.assign(details, {
+        enquiringFor: form.enquiringFor || undefined,
+        playerName: form.playerName.trim() || undefined,
+        playerAge: form.playerAge.trim() || undefined,
+        playerGender: form.playerGender || undefined,
+        currentLevel: form.currentLevel || undefined,
+        preferredProgram: program || undefined,
+        goal: goal || undefined,
+      });
+    } else {
+      const interestedIn = resolveOther(form.interestedIn, form.interestedInOther);
+      const fitnessGoal = resolveOther(form.fitnessGoal, form.fitnessGoalOther);
+      interest = interestedIn || "Leisure";
+      Object.assign(details, {
+        gender: form.gender || undefined,
+        interestedIn: interestedIn || undefined,
+        membershipType: form.membershipType || undefined,
+        fitnessGoal: fitnessGoal || undefined,
+        experience: form.experience || undefined,
+        preferredTime: form.preferredTime || undefined,
+      });
+    }
+
+    // Drop empty keys so we don't store noise.
+    const cleanDetails = Object.fromEntries(
+      Object.entries(details).filter(([, v]) => v !== undefined && v !== ""),
+    );
+
+    setSubmitting(true);
+    try {
+      await api.crm.createEnquiry({
+        name,
+        email,
+        phone,
+        message: form.message.trim(),
+        interest,
+        kind: addKind,
+        source: "staff",
+        details: cleanDetails,
+      });
+      toast.success("Enquiry added");
+      setAddOpen(false);
+      resetAdd();
+      if (status !== "NEW") setStatus("NEW");
+      else load();
+      loadNewCount();
+    } catch (err) {
+      toast.error(errMsg(err, "Could not add this enquiry"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Details for the currently-viewed enquiry, memoized.
+  const viewingEntries = useMemo(
+    () => (viewing ? detailEntries(viewing.details) : []),
+    [viewing],
+  );
 
   // ── Render ─────────────────────────────────────────────────────────────────────
 
@@ -259,6 +486,12 @@ export default function EnquiriesPage() {
         <PageHeader
           title="Enquiries"
           description="Incoming leads from the website and other channels — convert the good ones into contacts, archive the rest."
+          actions={
+            <Button onClick={() => setAddOpen(true)}>
+              <Plus />
+              Add enquiry
+            </Button>
+          }
         />
 
         {/* Status tabs */}
@@ -323,13 +556,20 @@ export default function EnquiriesPage() {
                     <Fragment key={e.id}>
                     <TableRow>
                       <TableCell className="align-top">
-                        <div className="font-medium">{fullName(e)}</div>
+                        <button
+                          type="button"
+                          onClick={() => setViewing(e)}
+                          className="text-left font-medium hover:underline"
+                          title="Open enquiry"
+                        >
+                          {fullName(e)}
+                        </button>
                         {entries.length > 0 && (
                           <button
                             type="button"
                             onClick={() => toggleExpanded(e.id)}
                             aria-expanded={isExpanded}
-                            className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                            className="mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                           >
                             {isExpanded ? (
                               <ChevronDown className="size-3" />
@@ -414,39 +654,48 @@ export default function EnquiriesPage() {
                       </TableCell>
 
                       <TableCell className="align-top text-right">
-                        {e.status === "NEW" ? (
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              size="sm"
-                              onClick={() => convert(e)}
-                              disabled={converting === e.id}
-                            >
-                              <UserAdd />
-                              {converting === e.id ? "Converting…" : "Convert to contact"}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setArchiving(e)}
-                              disabled={converting === e.id}
-                              title="Archive"
-                            >
-                              <Archive />
-                              Archive
-                            </Button>
-                          </div>
-                        ) : e.status === "CONVERTED" && e.contactId ? (
+                        <div className="flex items-center justify-end gap-1">
                           <Button
                             size="sm"
                             variant="outline"
-                            render={<Link href={`/crm/${e.contactId}`} />}
+                            onClick={() => setViewing(e)}
+                            title="Open enquiry"
                           >
-                            Open contact
-                            <ArrowRight />
+                            <Eye />
+                            Open
                           </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
+                          {e.status === "NEW" ? (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => convert(e)}
+                                disabled={converting === e.id}
+                              >
+                                <UserAdd />
+                                {converting === e.id ? "Converting…" : "Convert to contact"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setArchiving(e)}
+                                disabled={converting === e.id}
+                                title="Archive"
+                              >
+                                <Archive />
+                                Archive
+                              </Button>
+                            </>
+                          ) : e.status === "CONVERTED" && e.contactId ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              render={<Link href={`/crm/${e.contactId}`} />}
+                            >
+                              Open contact
+                              <ArrowRight />
+                            </Button>
+                          ) : null}
+                        </div>
                       </TableCell>
                     </TableRow>
 
@@ -479,6 +728,557 @@ export default function EnquiriesPage() {
           </div>
         )}
       </div>
+
+      {/* ── Enquiry detail dialog ─────────────────────────────────────────────── */}
+      <Dialog open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          {viewing && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex flex-wrap items-center gap-2">
+                  {fullName(viewing)}
+                  {viewing.kind && (
+                    <Badge variant={KIND_BADGE[viewing.kind].variant}>
+                      {KIND_BADGE[viewing.kind].label}
+                    </Badge>
+                  )}
+                  <Badge variant={STATUS_BADGE[viewing.status].variant}>
+                    {STATUS_BADGE[viewing.status].label}
+                  </Badge>
+                </DialogTitle>
+                <DialogDescription>
+                  Received {formatDate(viewing.createdAt)}
+                  {viewing.handledAt ? ` · handled ${formatDate(viewing.handledAt)}` : ""}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="max-h-[60vh] space-y-5 overflow-y-auto pr-1">
+                {/* Contact + meta */}
+                <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Email</span>
+                    {viewing.email ? (
+                      <a
+                        href={`mailto:${viewing.email}`}
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                      >
+                        <Mail className="size-3" />
+                        {viewing.email}
+                      </a>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Phone</span>
+                    {viewing.phone ? (
+                      <a
+                        href={`tel:${viewing.phone}`}
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                      >
+                        <Phone className="size-3" />
+                        {viewing.phone}
+                      </a>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Interest</span>
+                    <span className="text-sm capitalize">{viewing.interest || "—"}</span>
+                  </div>
+
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Source</span>
+                    <span className="text-sm capitalize">{viewing.source || "—"}</span>
+                  </div>
+                </div>
+
+                {/* Linked contact */}
+                {(viewing.matchedContact || (viewing.status === "CONVERTED" && viewing.contactId)) && (
+                  <div className="flex flex-col gap-1">
+                    {viewing.status === "CONVERTED" && viewing.contactId ? (
+                      <Link
+                        href={`/crm/${viewing.contactId}`}
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                      >
+                        <ArrowRight className="size-3" />
+                        View converted contact
+                      </Link>
+                    ) : viewing.matchedContact ? (
+                      <Link
+                        href={`/crm/${viewing.matchedContact.id}`}
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                        title="This enquiry matches an existing contact"
+                      >
+                        <ArrowRight className="size-3" />
+                        Matches existing contact: {viewing.matchedContact.name}
+                      </Link>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* Message */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Message</span>
+                  {viewing.message ? (
+                    <p className="text-sm whitespace-pre-wrap break-words">{viewing.message}</p>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  )}
+                </div>
+
+                {/* Captured details */}
+                {viewingEntries.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Captured details
+                    </span>
+                    <dl className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
+                      {viewingEntries.map(([key, value]) => (
+                        <div key={key} className="flex flex-col">
+                          <dt className="text-xs text-muted-foreground">{humanizeKey(key)}</dt>
+                          <dd className="text-sm break-words">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter showCloseButton>
+                {viewing.status === "NEW" ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => setArchiving(viewing)}
+                    >
+                      <Archive />
+                      Archive
+                    </Button>
+                    <Button
+                      onClick={() => convert(viewing)}
+                      disabled={converting === viewing.id}
+                    >
+                      <UserAdd />
+                      {converting === viewing.id ? "Converting…" : "Convert to contact"}
+                    </Button>
+                  </>
+                ) : viewing.status === "CONVERTED" && viewing.contactId ? (
+                  <Button render={<Link href={`/crm/${viewing.contactId}`} />}>
+                    Open contact
+                    <ArrowRight />
+                  </Button>
+                ) : null}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Add-enquiry dialog ────────────────────────────────────────────────── */}
+      <Dialog
+        open={addOpen}
+        onOpenChange={(o) => {
+          setAddOpen(o);
+          if (!o) resetAdd();
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>New enquiry</DialogTitle>
+            <DialogDescription>
+              Log a walk-in or phone enquiry. It will appear under the New tab.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1">
+            {/* Type toggle */}
+            <div className="flex flex-col gap-1.5">
+              <Label>Type</Label>
+              <div className="inline-flex w-fit rounded-md border p-0.5">
+                {(["academy", "leisure"] as EnquiryKind[]).map((k) => (
+                  <Button
+                    key={k}
+                    type="button"
+                    size="sm"
+                    variant={addKind === k ? "default" : "ghost"}
+                    onClick={() => setAddKind(k)}
+                  >
+                    {KIND_BADGE[k].label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* Common fields */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <Label htmlFor="enq-name">Full name *</Label>
+                <Input
+                  id="enq-name"
+                  value={form.name}
+                  onChange={(e) => setField("name", e.target.value)}
+                  placeholder="e.g. Sara Al-Otaibi"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="enq-email">Email</Label>
+                <Input
+                  id="enq-email"
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setField("email", e.target.value)}
+                  placeholder="name@example.com"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="enq-phone">Phone</Label>
+                <Input
+                  id="enq-phone"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setField("phone", e.target.value)}
+                  placeholder="+966 5x xxx xxxx"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label>Preferred language</Label>
+                <Select
+                  value={form.preferredLanguage || null}
+                  onValueChange={(v) => setField("preferredLanguage", v ?? "")}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select language" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_OPTIONS.map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="enq-city">City</Label>
+                <Input
+                  id="enq-city"
+                  value={form.city}
+                  onChange={(e) => setField("city", e.target.value)}
+                  placeholder="e.g. Riyadh"
+                />
+              </div>
+            </div>
+
+            {/* Academy fields */}
+            {addKind === "academy" && (
+              <div className="grid grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label>Enquiring for</Label>
+                  <Select
+                    value={form.enquiringFor || null}
+                    onValueChange={(v) => setField("enquiringFor", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ENQUIRING_FOR.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="enq-player-name">Player name</Label>
+                  <Input
+                    id="enq-player-name"
+                    value={form.playerName}
+                    onChange={(e) => setField("playerName", e.target.value)}
+                    placeholder="Player's name"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="enq-player-age">Player age</Label>
+                  <Input
+                    id="enq-player-age"
+                    type="number"
+                    min={0}
+                    value={form.playerAge}
+                    onChange={(e) => setField("playerAge", e.target.value)}
+                    placeholder="e.g. 10"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Player gender</Label>
+                  <Select
+                    value={form.playerGender || null}
+                    onValueChange={(v) => setField("playerGender", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GENDERS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Current level</Label>
+                  <Select
+                    value={form.currentLevel || null}
+                    onValueChange={(v) => setField("currentLevel", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ACADEMY_LEVELS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Preferred program</Label>
+                  <Select
+                    value={form.preferredProgram || null}
+                    onValueChange={(v) => setField("preferredProgram", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ACADEMY_PROGRAMS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.preferredProgram === OTHER && (
+                    <Input
+                      className="mt-1"
+                      value={form.preferredProgramOther}
+                      onChange={(e) => setField("preferredProgramOther", e.target.value)}
+                      placeholder="Which program?"
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Goal</Label>
+                  <Select
+                    value={form.goal || null}
+                    onValueChange={(v) => setField("goal", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ACADEMY_GOALS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.goal === OTHER && (
+                    <Input
+                      className="mt-1"
+                      value={form.goalOther}
+                      onChange={(e) => setField("goalOther", e.target.value)}
+                      placeholder="What's the goal?"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Leisure fields */}
+            {addKind === "leisure" && (
+              <div className="grid grid-cols-1 gap-3 border-t pt-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label>Gender</Label>
+                  <Select
+                    value={form.gender || null}
+                    onValueChange={(v) => setField("gender", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GENDERS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Interested in</Label>
+                  <Select
+                    value={form.interestedIn || null}
+                    onValueChange={(v) => setField("interestedIn", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LEISURE_INTERESTS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.interestedIn === OTHER && (
+                    <Input
+                      className="mt-1"
+                      value={form.interestedInOther}
+                      onChange={(e) => setField("interestedInOther", e.target.value)}
+                      placeholder="Interested in what?"
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Membership type</Label>
+                  <Select
+                    value={form.membershipType || null}
+                    onValueChange={(v) => setField("membershipType", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LEISURE_MEMBERSHIPS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Fitness goal</Label>
+                  <Select
+                    value={form.fitnessGoal || null}
+                    onValueChange={(v) => setField("fitnessGoal", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LEISURE_GOALS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {form.fitnessGoal === OTHER && (
+                    <Input
+                      className="mt-1"
+                      value={form.fitnessGoalOther}
+                      onChange={(e) => setField("fitnessGoalOther", e.target.value)}
+                      placeholder="What's the goal?"
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Experience</Label>
+                  <Select
+                    value={form.experience || null}
+                    onValueChange={(v) => setField("experience", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LEISURE_EXPERIENCE.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label>Preferred time</Label>
+                  <Select
+                    value={form.preferredTime || null}
+                    onValueChange={(v) => setField("preferredTime", v ?? "")}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LEISURE_TIMES.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            {/* Notes / message */}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="enq-message">Notes / message</Label>
+              <Textarea
+                id="enq-message"
+                value={form.message}
+                onChange={(e) => setField("message", e.target.value)}
+                placeholder="Anything else worth capturing…"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAddOpen(false);
+                resetAdd();
+              }}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button onClick={submitNewEnquiry} disabled={submitting}>
+              {submitting ? "Adding…" : "Add enquiry"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Archive confirm */}
       <ConfirmDialog
