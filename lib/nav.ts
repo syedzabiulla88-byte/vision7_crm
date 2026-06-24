@@ -27,6 +27,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Sales & CRM",
     items: [
+      { label: "Enquiries", href: "/enquiries", icon: "ClipboardCheck", permission: "crm:view" },
       { label: "Contacts", href: "/crm", icon: "Users", permission: "crm:view" },
       { label: "Pipeline", href: "/crm/board", icon: "Layers", permission: "crm:view" },
       { label: "Follow-ups", href: "/crm/followups", icon: "ClipboardCheck", permission: "followups:view" },
