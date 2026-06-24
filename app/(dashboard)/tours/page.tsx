@@ -1386,15 +1386,18 @@ function ScheduleTab() {
             <form onSubmit={saveConfig} className="space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="tour-notify-email">Notification email</Label>
+                  <Label htmlFor="tour-notify-email">Notification emails</Label>
                   <Input
                     id="tour-notify-email"
-                    type="email"
+                    type="text"
                     value={notifyEmail}
                     onChange={(e) => setNotifyEmail(e.target.value)}
-                    placeholder="tours@vision7.sa"
+                    placeholder="tours@vision7.sa, manager@vision7.sa"
                     disabled={configLoading}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Separate multiple with commas — each address gets the new-booking alert.
+                  </p>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="tour-window">Booking window (days)</Label>
