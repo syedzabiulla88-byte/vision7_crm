@@ -6,6 +6,22 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { api, uploadFile } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import {
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  eachDayOfInterval,
+  addMonths,
+  addDays,
+  differenceInCalendarDays,
+  isSameDay,
+  isBefore,
+  isSameMonth,
+  startOfDay,
+  format,
+} from "date-fns";
 import { PageHeader } from "@/components/shared/page-header";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Pagination } from "@/components/shared/pagination";
@@ -1376,6 +1392,93 @@ function EditMembershipDialog({
 
 // ─── Freeze dialog (replaces window.prompt) ──────────────────────────────────────
 
+type FreezeRange = { from?: Date; to?: Date };
+
+/** Lightweight month calendar with inclusive range selection (no extra deps). */
+function RangeCalendar({
+  value,
+  onChange,
+  minDate,
+}: {
+  value: FreezeRange;
+  onChange: (r: FreezeRange) => void;
+  minDate?: Date;
+}) {
+  const [month, setMonth] = useState<Date>(startOfMonth(value.from ?? new Date()));
+  const days = eachDayOfInterval({
+    start: startOfWeek(startOfMonth(month), { weekStartsOn: 0 }),
+    end: endOfWeek(endOfMonth(month), { weekStartsOn: 0 }),
+  });
+  const min = minDate ? startOfDay(minDate) : null;
+  const { from, to } = value;
+
+  const pick = (d: Date) => {
+    if (min && isBefore(d, min)) return;
+    if (!from || (from && to)) onChange({ from: d, to: undefined });
+    else if (isBefore(d, from)) onChange({ from: d, to: from });
+    else onChange({ from, to: d });
+  };
+
+  const isEndpoint = (d: Date) => !!((from && isSameDay(d, from)) || (to && isSameDay(d, to)));
+  const isMiddle = (d: Date) =>
+    !!(from && to && differenceInCalendarDays(d, from) > 0 && differenceInCalendarDays(to, d) > 0);
+
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setMonth(addMonths(month, -1))}
+          className="rounded px-2 py-1 text-muted-foreground hover:bg-muted"
+          aria-label="Previous month"
+        >
+          ‹
+        </button>
+        <span className="text-sm font-medium">{format(month, "MMMM yyyy")}</span>
+        <button
+          type="button"
+          onClick={() => setMonth(addMonths(month, 1))}
+          className="rounded px-2 py-1 text-muted-foreground hover:bg-muted"
+          aria-label="Next month"
+        >
+          ›
+        </button>
+      </div>
+      <div className="grid grid-cols-7 text-center text-[10px] font-medium uppercase text-muted-foreground">
+        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+          <div key={d} className="py-1">{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {days.map((d) => {
+          const disabled = !!(min && isBefore(d, min));
+          const outside = !isSameMonth(d, month);
+          const end = isEndpoint(d);
+          const mid = isMiddle(d);
+          return (
+            <button
+              key={d.toISOString()}
+              type="button"
+              disabled={disabled}
+              onClick={() => pick(d)}
+              className={cn(
+                "h-8 rounded text-xs transition-colors",
+                end && "bg-[#FFCF01] font-semibold text-[#011b2b]",
+                mid && "bg-[#FFCF01]/20",
+                !end && !mid && !disabled && "hover:bg-muted",
+                outside && !end && !mid && "text-muted-foreground/40",
+                disabled && "pointer-events-none opacity-30",
+              )}
+            >
+              {format(d, "d")}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FreezeDialog({
   membership,
   memberName,
@@ -1387,28 +1490,38 @@ function FreezeDialog({
   onClose: () => void;
   onFrozen: () => void;
 }) {
-  const [freezeDays, setFreezeDays] = useState("30");
+  const [range, setRange] = useState<FreezeRange>({});
   const [saving, setSaving] = useState(false);
 
-  // Lifetime freeze cap (null = unlimited) and how many days have already been
-  // used. The backend enforces the cap, but we surface it here so staff aren't
-  // surprised by a rejection.
+  // Lifetime freeze cap (null = unlimited) + how many days are already used.
   const maxFreezeDays: number | null = membership.plan?.maxFreezeDays ?? null;
   const usedFreezeDays = Number(membership.freezeDays) || 0;
   const remainingDays =
     maxFreezeDays != null ? Math.max(0, maxFreezeDays - usedFreezeDays) : null;
 
+  const freezeDays =
+    range.from && range.to ? differenceInCalendarDays(range.to, range.from) + 1 : 0;
+  const currentEnd = membership.endDate ? new Date(membership.endDate as string) : null;
+  const newExpiry = currentEnd && freezeDays ? addDays(currentEnd, freezeDays) : null;
+  const exceedsCap = remainingDays != null && freezeDays > remainingDays;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const days = Number(freezeDays);
-    if (!Number.isFinite(days) || days <= 0) {
-      toast.error("Enter a valid number of freeze days.");
+    if (!range.from || !range.to || freezeDays <= 0) {
+      toast.error("Select a freeze date range on the calendar.");
+      return;
+    }
+    if (exceedsCap) {
+      toast.error(`That's ${freezeDays} days — the plan allows ${remainingDays} more.`);
       return;
     }
     setSaving(true);
     try {
-      await api.memberships.freeze(membership.id, { freezeDays: days });
-      toast.success(`Froze ${memberName}'s membership for ${days} day${days === 1 ? "" : "s"}`);
+      await api.memberships.freeze(membership.id, {
+        freezeStartDate: toDateInput(range.from),
+        freezeDays,
+      });
+      toast.success(`Froze ${memberName}'s membership for ${freezeDays} day${freezeDays === 1 ? "" : "s"}`);
       onFrozen();
     } catch (err: any) {
       toast.error(err?.message || "Failed to freeze membership");
@@ -1419,38 +1532,53 @@ function FreezeDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-md">
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
             <DialogTitle>Freeze membership</DialogTitle>
             <DialogDescription>
-              Suspends {memberName}&apos;s membership for the given number of days. The end date is
-              auto-extended by the same amount.
+              Pick the dates to freeze {memberName}&apos;s membership. The end date is extended by
+              the number of frozen days.
             </DialogDescription>
           </DialogHeader>
-          <Field label="Freeze days" htmlFor="freeze-days">
-            <Input
-              id="freeze-days"
-              type="number"
-              min={1}
-              max={remainingDays ?? undefined}
-              value={freezeDays}
-              onChange={(e) => setFreezeDays(e.target.value)}
-              autoFocus
-            />
-            {maxFreezeDays != null && (
-              <p className="text-xs text-muted-foreground">
-                Max {maxFreezeDays} freeze day{maxFreezeDays === 1 ? "" : "s"} for this plan
-                {usedFreezeDays > 0 ? ` · ${usedFreezeDays} already used` : ""}
-                {remainingDays != null ? ` · ${remainingDays} remaining` : ""}
-              </p>
-            )}
-          </Field>
+
+          <RangeCalendar value={range} onChange={setRange} minDate={new Date()} />
+
+          <div className="space-y-1 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Freeze period</span>
+              <span className="font-medium">
+                {range.from && range.to
+                  ? `${formatDate(range.from)} → ${formatDate(range.to)} (${freezeDays} day${freezeDays === 1 ? "" : "s"})`
+                  : "Select a range"}
+              </span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">Current expiry</span>
+              <span>{currentEnd ? formatDate(currentEnd) : "—"}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-muted-foreground">New expiry</span>
+              <span className="font-semibold text-[#FFCF01]">
+                {newExpiry ? formatDate(newExpiry) : currentEnd ? formatDate(currentEnd) : "—"}
+              </span>
+            </div>
+          </div>
+
+          {maxFreezeDays != null && (
+            <p className={cn("text-xs", exceedsCap ? "text-destructive" : "text-muted-foreground")}>
+              Max {maxFreezeDays} freeze day{maxFreezeDays === 1 ? "" : "s"} for this plan
+              {usedFreezeDays > 0 ? ` · ${usedFreezeDays} used` : ""}
+              {remainingDays != null ? ` · ${remainingDays} remaining` : ""}
+              {exceedsCap ? " — selection exceeds the cap" : ""}
+            </p>
+          )}
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving || !range.from || !range.to || exceedsCap}>
               {saving ? "Freezing…" : "Freeze"}
             </Button>
           </DialogFooter>
