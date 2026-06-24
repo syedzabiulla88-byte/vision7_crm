@@ -123,6 +123,9 @@ export default function StatementsPage() {
           description={
             loading ? "Loading…" : `Updated ${formatUpdated(data?.generatedAt)}`
           }
+          onRefresh={() => {
+            load();
+          }}
         />
 
         {/* KPI cards */}

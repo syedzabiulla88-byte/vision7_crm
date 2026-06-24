@@ -28,7 +28,6 @@ import {
   Bell,
   Move,
   Layers,
-  RotateCcw,
 } from "@/lib/icons";
 
 // ─── Stage model ─────────────────────────────────────────────────────────────
@@ -181,17 +180,12 @@ export default function CrmBoardPage() {
         <PageHeader
           title="Pipeline"
           description="Drag contacts across stages as they move through the funnel. Won contacts auto-convert to customers; lost ones are archived."
+          onRefresh={load}
           actions={
-            <>
-              <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-                <RotateCcw className="h-4 w-4" />
-                Refresh
-              </Button>
-              <Button size="sm" render={<Link href="/crm/new" />}>
-                <Plus className="h-4 w-4" />
-                New Contact
-              </Button>
-            </>
+            <Button size="sm" render={<Link href="/crm/new" />}>
+              <Plus className="h-4 w-4" />
+              New Contact
+            </Button>
           }
         />
 

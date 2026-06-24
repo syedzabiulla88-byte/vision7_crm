@@ -149,6 +149,7 @@ export default function DuplicatesPage() {
         <PageHeader
           title="Duplicate contacts"
           description="People who share a phone number are likely the same person entered twice. Pick the contact to keep (the primary), then merge the others into it — their activities, bookings and invoices move across."
+          onRefresh={load}
         />
 
         {loading ? (

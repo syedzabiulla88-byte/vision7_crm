@@ -486,6 +486,9 @@ export default function EnquiriesPage() {
         <PageHeader
           title="Enquiries"
           description="Incoming leads from the website and other channels — convert the good ones into contacts, archive the rest."
+          onRefresh={async () => {
+            await Promise.all([load(), loadNewCount()]);
+          }}
           actions={
             <Button onClick={() => setAddOpen(true)}>
               <Plus />

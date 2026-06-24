@@ -238,6 +238,7 @@ export default function InvoicesPage() {
       <PageHeader
         title="Invoices"
         description="Track billed amounts, payments, and outstanding balances."
+        onRefresh={load}
         actions={
           <Button render={<Link href="/billing/invoices/new" />}>
             <Plus className="h-4 w-4" />

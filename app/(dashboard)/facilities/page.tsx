@@ -172,6 +172,7 @@ export default function FacilitiesPage() {
         <PageHeader
           title="Facilities"
           description="The bookable units across Vision7 — pitches, courts, the pool, the gym, the rooftop. These appear in the public booking widget and on the bookings calendar."
+          onRefresh={load}
           actions={
             <Button onClick={() => setEditing("new")}>
               <Plus className="h-4 w-4" />

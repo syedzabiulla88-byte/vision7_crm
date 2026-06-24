@@ -174,6 +174,7 @@ export default function PaymentsLedgerPage() {
         <PageHeader
           title="Payments"
           description="Every payment and refund across all invoices."
+          onRefresh={load}
           actions={
             <Button onClick={() => setRecordOpen(true)}>
               <Plus className="h-4 w-4" />

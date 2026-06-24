@@ -352,6 +352,7 @@ export default function FollowUpsPage() {
         <PageHeader
           title="Follow-ups"
           description="Internal sales calendar — schedule calls, emails and meetings with reminders when they're due."
+          onRefresh={load}
           actions={
             <>
               <Button variant="outline" onClick={runDigest} disabled={digesting}>

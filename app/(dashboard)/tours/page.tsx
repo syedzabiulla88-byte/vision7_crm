@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 
@@ -172,6 +172,9 @@ function errMsg(e: unknown, fallback: string): string {
 export default function ToursPage() {
   const [tab, setTab] = useState("bookings");
   const [addOpen, setAddOpen] = useState(false);
+  // Bumped by the PageHeader Refresh button; threaded into each tab so the
+  // currently-mounted tab re-fetches its own data (no full browser reload).
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   return (
     <PermissionGate
@@ -189,6 +192,7 @@ export default function ToursPage() {
           <PageHeader
             title="Tours"
             description="Facility tour bookings for the academy and leisure side, plus the daily tour schedule visitors can book into."
+            onRefresh={() => setRefreshNonce((n) => n + 1)}
             actions={
               tab === "bookings" ? (
                 <Button onClick={() => setAddOpen(true)}>
@@ -205,11 +209,11 @@ export default function ToursPage() {
           </TabsList>
 
           <TabsContent value="bookings">
-            <BookingsTab addOpen={addOpen} onAddOpenChange={setAddOpen} />
+            <BookingsTab addOpen={addOpen} onAddOpenChange={setAddOpen} refreshNonce={refreshNonce} />
           </TabsContent>
 
           <TabsContent value="schedule">
-            <ScheduleTab />
+            <ScheduleTab refreshNonce={refreshNonce} />
           </TabsContent>
         </Tabs>
       </div>
@@ -222,9 +226,11 @@ export default function ToursPage() {
 function BookingsTab({
   addOpen,
   onAddOpenChange,
+  refreshNonce = 0,
 }: {
   addOpen: boolean;
   onAddOpenChange: (open: boolean) => void;
+  refreshNonce?: number;
 }) {
   const [items, setItems] = useState<TourBooking[]>([]);
   const [meta, setMeta] = useState<ListMeta | null>(null);
@@ -308,6 +314,17 @@ function BookingsTab({
     load();
     loadOverview();
   }, [load, loadOverview]);
+
+  // PageHeader Refresh button: re-fetch list + stats when the parent bumps the
+  // nonce. Skip the initial mount — load()/loadOverview() already run on mount.
+  const didMountRef = useRef(false);
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+    reload();
+  }, [refreshNonce, reload]);
 
   // ── Actions ────────────────────────────────────────────────────────────────────
 
@@ -1107,7 +1124,7 @@ function AddTourDialog({
 
 // ─── Schedule tab (config) ───────────────────────────────────────────────────────
 
-function ScheduleTab() {
+function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
   const [slots, setSlots] = useState<TourSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1166,7 +1183,7 @@ function ScheduleTab() {
   useEffect(() => {
     loadSlots();
     loadConfig();
-  }, [loadSlots, loadConfig]);
+  }, [loadSlots, loadConfig, refreshNonce]);
 
   const addSlot = async () => {
     const time = newTime.trim();

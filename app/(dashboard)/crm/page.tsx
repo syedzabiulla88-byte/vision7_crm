@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -136,41 +136,35 @@ export default function CrmContactsPage() {
     totalPages: number;
   } | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      setLoading(true);
-      try {
-        const [list, ov] = await Promise.all([
-          api.crm.list({
-            q: q || undefined,
-            type: type === "ALL" ? undefined : type,
-            stage: stage === "ALL" ? undefined : stage,
-            source: source === "ALL" ? undefined : source,
-            page,
-            limit: PAGE_SIZE,
-          }),
-          api.crm.overview().catch(() => null),
-        ]);
-        if (cancelled) return;
-        const rows: CrmContact[] = Array.isArray(list) ? list : list?.data || [];
-        setContacts(rows);
-        setMeta(Array.isArray(list) ? null : list?.meta ?? null);
-        setOverview(ov);
-      } catch (err) {
-        if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : "Failed to load contacts");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    const t = setTimeout(run, q ? 250 : 0);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [list, ov] = await Promise.all([
+        api.crm.list({
+          q: q || undefined,
+          type: type === "ALL" ? undefined : type,
+          stage: stage === "ALL" ? undefined : stage,
+          source: source === "ALL" ? undefined : source,
+          page,
+          limit: PAGE_SIZE,
+        }),
+        api.crm.overview().catch(() => null),
+      ]);
+      const rows: CrmContact[] = Array.isArray(list) ? list : list?.data || [];
+      setContacts(rows);
+      setMeta(Array.isArray(list) ? null : list?.meta ?? null);
+      setOverview(ov);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load contacts");
+    } finally {
+      setLoading(false);
+    }
   }, [q, type, stage, source, page]);
+
+  useEffect(() => {
+    const t = setTimeout(load, q ? 250 : 0);
+    return () => clearTimeout(t);
+  }, [load, q]);
 
   const hasFilters = useMemo(
     () => Boolean(q) || type !== "ALL" || stage !== "ALL" || source !== "ALL",
@@ -182,6 +176,7 @@ export default function CrmContactsPage() {
       <PageHeader
         title="Contacts"
         description="Every person who has interacted with Vision7 — website bookings, walk-ins, invoiced customers, academy families."
+        onRefresh={load}
         actions={
           <Button render={<Link href="/crm/new" />}>
             <UserAdd className="h-4 w-4" />

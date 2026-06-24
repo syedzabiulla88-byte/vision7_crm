@@ -124,6 +124,7 @@ export default function AdminRolesPage() {
         <PageHeader
           title="Roles & Permissions"
           description="Define custom roles and pick exactly which areas of the control plane each one can access. System roles are built in — you can review their permissions but can't rename or delete them."
+          onRefresh={load}
           actions={
             <Button onClick={() => setEditing("new")}>
               <Plus className="h-4 w-4" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
@@ -72,39 +72,33 @@ export default function SystemSettingsPage() {
   // so we only ship a secret when its field has been touched.
   const [touchedSecrets, setTouchedSecrets] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [cat, current] = await Promise.all([
-          api.settings.catalog(),
-          api.settings.list().catch(() => ({} as Record<string, string>)),
-        ]);
-        if (cancelled) return;
-        const meta = (Array.isArray(cat) ? cat : []) as SettingMeta[];
-        const seeded: Record<string, string> = {};
-        for (const m of meta) {
-          seeded[m.key] = toFieldValue(m, (current as Record<string, unknown>)?.[m.key]);
-        }
-        setCatalog(meta);
-        setValues(seeded);
-        setOriginal(seeded);
-        setTouchedSecrets({});
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load settings");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [cat, current] = await Promise.all([
+        api.settings.catalog(),
+        api.settings.list().catch(() => ({} as Record<string, string>)),
+      ]);
+      const meta = (Array.isArray(cat) ? cat : []) as SettingMeta[];
+      const seeded: Record<string, string> = {};
+      for (const m of meta) {
+        seeded[m.key] = toFieldValue(m, (current as Record<string, unknown>)?.[m.key]);
       }
-    };
-    run();
-    return () => {
-      cancelled = true;
-    };
+      setCatalog(meta);
+      setValues(seeded);
+      setOriginal(seeded);
+      setTouchedSecrets({});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load settings");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   // Group catalog entries by their `group`, preserving first-seen order.
   const groups = useMemo(() => {
@@ -183,6 +177,7 @@ export default function SystemSettingsPage() {
         <PageHeader
           title="System Settings"
           description="Grouped, typed configuration for every Vision7 app — rendered live from the backend catalog."
+          onRefresh={load}
           actions={
             <div className="flex items-center gap-2">
               {dirty && (

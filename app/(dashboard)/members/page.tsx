@@ -351,6 +351,7 @@ export default function MembersPage() {
       <PageHeader
         title="Members"
         description="Active, pending and expired memberships across both academy and leisure. Add a new member (academy athlete or leisure customer) and assign a plan."
+        onRefresh={reload}
         actions={
           <>
             <Button variant="outline" onClick={() => setShowAddMember(true)}>

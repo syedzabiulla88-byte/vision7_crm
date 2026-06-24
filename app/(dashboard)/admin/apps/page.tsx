@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
@@ -115,6 +115,16 @@ export default function ConnectedAppsPage() {
   // deep-link-only — embedding is out of scope — so they show as "Live".
   const [apiHealth, setApiHealth] = useState<Health>("checking");
 
+  const checkHealth = useCallback(async () => {
+    setApiHealth("checking");
+    try {
+      await fetch(API_DOCS, { method: "GET", mode: "no-cors" });
+      setApiHealth("online");
+    } catch {
+      setApiHealth("offline");
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     fetch(API_DOCS, { method: "GET", mode: "no-cors" })
@@ -134,6 +144,7 @@ export default function ConnectedAppsPage() {
       <PageHeader
         title="Connected Apps"
         description="The Vision7 ecosystem at a glance. Every app talks to the shared backend — deep-link out to manage each surface in its own tab."
+        onRefresh={checkHealth}
       />
 
       {/* Ecosystem summary */}

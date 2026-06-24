@@ -98,6 +98,7 @@ export default function PlansPage() {
       <PageHeader
         title="Membership Plans"
         description="Define pricing, billing cycles and features for each Academy and Leisure offering."
+        onRefresh={load}
         actions={newPlanAction}
       />
 

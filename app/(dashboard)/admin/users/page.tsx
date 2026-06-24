@@ -287,6 +287,7 @@ export default function UsersDirectoryPage() {
       <PageHeader
         title="Users"
         description="Every Vision7 account — staff, coaches, sales, and the members, athletes and parents who log into the apps. Assign built-in or custom roles, manage status, and send login credentials."
+        onRefresh={load}
         actions={
           <PermissionGate permission="users:manage">
             <Button onClick={() => setEditing("new")}>

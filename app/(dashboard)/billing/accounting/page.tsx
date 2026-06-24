@@ -90,6 +90,7 @@ interface PlanRow {
 export default function AccountingPage() {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<AccountingOverview | null>(null);
   const [revenueByMonth, setRevenueByMonth] = useState<any[]>([]);
@@ -124,7 +125,7 @@ export default function AccountingPage() {
     return () => {
       cancelled = true;
     };
-  }, [year]);
+  }, [year, refreshNonce]);
 
   // Normalise revenue data to 12 buckets indexed 0..11.
   const normalizedMonths = useMemo<MonthBucket[]>(() => {
@@ -176,6 +177,7 @@ export default function AccountingPage() {
       <PageHeader
         title="Accounting"
         description="Revenue performance, outstanding balances and membership churn at a glance."
+        onRefresh={() => setRefreshNonce((n) => n + 1)}
         actions={
           <Select
             items={years.map((y) => ({ value: String(y), label: String(y) }))}

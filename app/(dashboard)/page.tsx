@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { api } from "@/lib/api";
@@ -91,25 +91,22 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    api.reports
-      .overview()
-      .then((d: Overview) => {
-        if (!cancelled) setData(d);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load dashboard");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const d: Overview = await api.reports.overview();
+      setData(d);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load dashboard");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const revenue = data?.revenue;
   const memberships = data?.memberships;
@@ -127,6 +124,7 @@ export default function DashboardPage() {
       <PageHeader
         title={`Welcome back, ${firstName}`}
         description="Single pane of glass — live KPIs across billing, memberships, bookings, the sales pipeline and the club."
+        onRefresh={load}
       />
 
       {error && (

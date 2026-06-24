@@ -328,6 +328,7 @@ export default function BookingsPage() {
       <PageHeader
         title="Bookings"
         description="Every pitch, padel court, gym and swim slot booked from the public website and by staff."
+        onRefresh={load}
         actions={
           <PermissionGate permission="bookings:manage">
             <Button onClick={() => setShowCreate(true)}>
