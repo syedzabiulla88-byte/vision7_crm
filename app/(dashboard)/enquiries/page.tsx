@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -32,11 +32,15 @@ import {
   ArrowRight,
   UserAdd,
   Folder as Archive,
+  ChevronDown,
+  ChevronRight,
 } from "@/lib/icons";
 
 // ─── Types (mirror the live backend contract) ────────────────────────────────────
 
 type EnquiryStatus = "NEW" | "CONVERTED" | "ARCHIVED";
+
+type EnquiryKind = "academy" | "leisure";
 
 interface Enquiry {
   id: string;
@@ -51,6 +55,8 @@ interface Enquiry {
   contactId: string | null;
   createdAt: string;
   matchedContact: { id: string; name: string } | null;
+  kind?: EnquiryKind | null;
+  details?: Record<string, unknown> | null;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
@@ -65,6 +71,11 @@ const STATUS_BADGE: Record<EnquiryStatus, { label: string; variant: "default" | 
   NEW: { label: "New", variant: "default" },
   CONVERTED: { label: "Converted", variant: "secondary" },
   ARCHIVED: { label: "Archived", variant: "outline" },
+};
+
+const KIND_BADGE: Record<EnquiryKind, { label: string; variant: "default" | "secondary" | "outline" }> = {
+  academy: { label: "Academy", variant: "default" },
+  leisure: { label: "Leisure", variant: "secondary" },
 };
 
 const EMPTY_TITLE: Record<EnquiryStatus, string> = {
@@ -102,6 +113,44 @@ function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
 }
 
+// "fitnessGoal" → "Fitness Goal", "dob" → "Dob", "preferred_time" → "Preferred Time"
+function humanizeKey(key: string): string {
+  const spaced = key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!spaced) return key;
+  return spaced
+    .split(" ")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// Render a captured detail value as a clean string; arrays comma-joined.
+function formatDetailValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((v) => formatDetailValue(v))
+      .filter((s) => s.length > 0)
+      .join(", ");
+  }
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value).trim();
+}
+
+// Flatten captured details into displayable [key, value] pairs, skipping empties.
+function detailEntries(details?: Record<string, unknown> | null): [string, string][] {
+  if (!details || typeof details !== "object") return [];
+  return Object.entries(details).reduce<[string, string][]>((acc, [key, raw]) => {
+    const formatted = formatDetailValue(raw);
+    if (formatted) acc.push([key, formatted]);
+    return acc;
+  }, []);
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────────
 
 export default function EnquiriesPage() {
@@ -116,6 +165,15 @@ export default function EnquiriesPage() {
   const [converting, setConverting] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<Enquiry | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   // ── Loaders ──────────────────────────────────────────────────────────────────
 
@@ -126,6 +184,7 @@ export default function EnquiriesPage() {
       const res = await api.crm.enquiries({ status });
       const list: Enquiry[] = Array.isArray(res) ? res : res?.data ?? [];
       setItems(list);
+      setExpanded(new Set());
     } catch (e) {
       const msg = errMsg(e, "Failed to load enquiries");
       setError(msg);
@@ -244,6 +303,7 @@ export default function EnquiriesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Kind</TableHead>
                   <TableHead>Contact</TableHead>
                   <TableHead>Interest</TableHead>
                   <TableHead>Source</TableHead>
@@ -256,10 +316,29 @@ export default function EnquiriesPage() {
               <TableBody>
                 {items.map((e) => {
                   const badge = STATUS_BADGE[e.status];
+                  const kindBadge = e.kind ? KIND_BADGE[e.kind] : null;
+                  const entries = detailEntries(e.details);
+                  const isExpanded = expanded.has(e.id);
                   return (
-                    <TableRow key={e.id}>
+                    <Fragment key={e.id}>
+                    <TableRow>
                       <TableCell className="align-top">
                         <div className="font-medium">{fullName(e)}</div>
+                        {entries.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(e.id)}
+                            aria-expanded={isExpanded}
+                            className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="size-3" />
+                            ) : (
+                              <ChevronRight className="size-3" />
+                            )}
+                            {isExpanded ? "Hide details" : "View details"}
+                          </button>
+                        )}
                         {e.matchedContact && (
                           <Link
                             href={`/crm/${e.matchedContact.id}`}
@@ -269,6 +348,14 @@ export default function EnquiriesPage() {
                             <ArrowRight className="size-3" />
                             matches: {e.matchedContact.name}
                           </Link>
+                        )}
+                      </TableCell>
+
+                      <TableCell className="align-top">
+                        {kindBadge ? (
+                          <Badge variant={kindBadge.variant}>{kindBadge.label}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </TableCell>
 
@@ -362,6 +449,29 @@ export default function EnquiriesPage() {
                         )}
                       </TableCell>
                     </TableRow>
+
+                    {isExpanded && entries.length > 0 && (
+                      <TableRow className="bg-muted/40 hover:bg-muted/40">
+                        <TableCell colSpan={9} className="align-top">
+                          <div className="px-1 py-1">
+                            <div className="mb-2 text-xs font-medium text-muted-foreground">
+                              Captured details
+                            </div>
+                            <dl className="grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                              {entries.map(([key, value]) => (
+                                <div key={key} className="flex flex-col">
+                                  <dt className="text-xs text-muted-foreground">
+                                    {humanizeKey(key)}
+                                  </dt>
+                                  <dd className="text-sm break-words">{value}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </Fragment>
                   );
                 })}
               </TableBody>
