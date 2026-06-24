@@ -92,10 +92,8 @@ const CLIENT_GOAL_OPTIONS = [
 ];
 
 const GENDER_OPTIONS = [
-  { value: "UNSPECIFIED", label: "Prefer not to say" },
   { value: "MALE", label: "Male" },
   { value: "FEMALE", label: "Female" },
-  { value: "OTHER", label: "Other" },
 ];
 
 const POSITION_OPTIONS = [
@@ -109,14 +107,12 @@ const ID_TYPE_OPTIONS = [
   { value: "NATIONAL_ID", label: "National ID" },
   { value: "IQAMA", label: "Iqama" },
   { value: "PASSPORT", label: "Passport" },
-  { value: "DRIVING_LICENCE", label: "Driving licence" },
-  { value: "OTHER", label: "Other" },
 ];
 
 const LEISURE_INTERESTS = ["gym", "padel", "swim", "rooftop", "wellness", "nutrition"];
 
 const FAMILY_RELATIONS = ["CHILD", "SPOUSE", "PARENT", "SIBLING", "GUARDIAN", "OTHER"];
-const FAMILY_ID_TYPES = ["NATIONAL_ID", "IQAMA", "PASSPORT", "DRIVING_LICENCE", "OTHER"];
+const FAMILY_ID_TYPES = ["NATIONAL_ID", "IQAMA", "PASSPORT"];
 
 const STATUS_OPTIONS = ["PENDING", "ACTIVE", "EXPIRED", "SUSPENDED", "CANCELLED"];
 
@@ -671,7 +667,7 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   lastName: "",
   email: "",
   phone: "",
-  gender: "UNSPECIFIED",
+  gender: "",
   nationality: "",
   dob: "",
   position: "MIDFIELDER",
@@ -794,6 +790,14 @@ function NewMemberDialog({
       toast.error("First name, last name and email are required");
       return;
     }
+    if (!form.phone.trim()) {
+      toast.error("Phone number is required");
+      return;
+    }
+    if (!form.gender) {
+      toast.error("Select a gender");
+      return;
+    }
     if (memberType === "ACADEMY" && !form.dob) {
       toast.error("Date of birth is required for academy athletes");
       return;
@@ -857,6 +861,8 @@ function NewMemberDialog({
           dob: form.dob ? new Date(form.dob).toISOString() : undefined,
           clientGoal: form.clientGoal || undefined,
           preferredLanguage: form.preferredLanguage || undefined,
+          idType: form.idNumber.trim() ? form.idType : undefined,
+          nationalId: form.idNumber.trim() || undefined,
         });
         // Bill for the plan: PENDING membership + invoice; payNow records payment & activates.
         const res = await api.memberships.assign({
@@ -945,7 +951,7 @@ function NewMemberDialog({
             </Field>
 
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Phone" htmlFor="nm-phone">
+              <Field label="Phone *" htmlFor="nm-phone">
                 <Input
                   id="nm-phone"
                   type="tel"
@@ -954,11 +960,12 @@ function NewMemberDialog({
                   placeholder="+966 5X XXX XXXX"
                 />
               </Field>
-              <Field label="Gender">
+              <Field label="Gender *">
                 <SelectField
                   value={form.gender}
                   onChange={(v) => set("gender", v)}
                   options={GENDER_OPTIONS}
+                  placeholder="Select gender…"
                 />
               </Field>
             </div>
@@ -1074,6 +1081,25 @@ function NewMemberDialog({
                       value={form.nationality}
                       onChange={(e) => set("nationality", e.target.value)}
                       placeholder="e.g. Saudi"
+                    />
+                  </Field>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="ID type">
+                    <SelectField
+                      value={form.idType}
+                      onChange={(v) => set("idType", v)}
+                      options={ID_TYPE_OPTIONS}
+                    />
+                  </Field>
+                  <Field label="ID number" htmlFor="nm-idnum-l">
+                    <Input
+                      id="nm-idnum-l"
+                      className="font-mono"
+                      value={form.idNumber}
+                      onChange={(e) => set("idNumber", e.target.value)}
+                      placeholder="e.g. 1234567890"
                     />
                   </Field>
                 </div>
@@ -1662,7 +1688,7 @@ const EMPTY_FAMILY = {
   firstName: "",
   lastName: "",
   dob: "",
-  gender: "UNSPECIFIED",
+  gender: "",
   relation: "CHILD",
   idType: "NATIONAL_ID",
   idNumber: "",
@@ -1969,6 +1995,9 @@ function AssignMembershipDialog({
   // Billing — every paid membership is invoiced; collect now or issue an open invoice.
   const [payNow, setPayNow] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState("cash");
+  // Optional ID capture — writes back to the selected subject before assigning.
+  const [idType, setIdType] = useState("NATIONAL_ID");
+  const [idNumber, setIdNumber] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -2061,6 +2090,15 @@ function AssignMembershipDialog({
     const price = Number(selectedPlan?.price) || 0;
     setSaving(true);
     try {
+      // Capture the ID onto the subject first (skip when left blank so we never
+      // wipe an existing value).
+      if (idNumber.trim()) {
+        if (subjectType === "ACADEMY") {
+          await api.athletes.update(subject.id, { idType, idNumber: idNumber.trim() });
+        } else {
+          await api.crm.update(subject.id, { idType, nationalId: idNumber.trim() });
+        }
+      }
       // Route through billing: creates a PENDING membership + an invoice, and
       // (payNow) records the payment which activates it. Free plans auto-activate.
       const res = await api.memberships.assign({
@@ -2209,6 +2247,25 @@ function AssignMembershipDialog({
                   placeholder="Select plan…"
                 />
               </Field>
+
+              <div className="grid grid-cols-2 gap-4">
+                <Field label="ID type">
+                  <SelectField
+                    value={idType}
+                    onChange={setIdType}
+                    options={ID_TYPE_OPTIONS}
+                  />
+                </Field>
+                <Field label="ID number" htmlFor="am-idnum">
+                  <Input
+                    id="am-idnum"
+                    className="font-mono"
+                    value={idNumber}
+                    onChange={(e) => setIdNumber(e.target.value)}
+                    placeholder="e.g. 1234567890"
+                  />
+                </Field>
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Start date" htmlFor="am-start">

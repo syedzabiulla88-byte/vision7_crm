@@ -89,16 +89,12 @@ const GENDERS = [
   { value: "", label: "—" },
   { value: "MALE", label: "Male" },
   { value: "FEMALE", label: "Female" },
-  { value: "OTHER", label: "Other" },
-  { value: "UNSPECIFIED", label: "Prefer not to say" },
 ];
 const ID_TYPES = [
   { value: "", label: "—" },
   { value: "NATIONAL_ID", label: "National ID" },
   { value: "IQAMA", label: "Iqama" },
   { value: "PASSPORT", label: "Passport" },
-  { value: "DRIVING_LICENCE", label: "Driving licence" },
-  { value: "OTHER", label: "Other" },
 ];
 const MARITAL_STATUSES = [
   { value: "", label: "—" },
@@ -115,13 +111,6 @@ const WORK_STATUSES = [
   { value: "UNEMPLOYED", label: "Unemployed" },
   { value: "STUDENT", label: "Student" },
   { value: "RETIRED", label: "Retired" },
-  { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
-];
-const INCOME_STATUSES = [
-  { value: "", label: "—" },
-  { value: "LOW", label: "Low" },
-  { value: "MIDDLE", label: "Middle" },
-  { value: "HIGH", label: "High" },
   { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
 ];
 const PREFERRED_LANGUAGES = [
@@ -347,7 +336,6 @@ interface EditForm {
   childrenCount: string;
   workStatus: string;
   workInfo: string;
-  incomeStatus: string;
   preferredLanguage: string;
   clientGoal: string;
 }
@@ -403,7 +391,6 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
             : String(c.childrenCount),
         workStatus: c.workStatus || "",
         workInfo: c.workInfo || "",
-        incomeStatus: c.incomeStatus || "",
         preferredLanguage: c.preferredLanguage || "",
         clientGoal: c.clientGoal || "",
       });
@@ -444,7 +431,6 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         childrenCount: form.childrenCount === "" ? null : Number(form.childrenCount),
         workStatus: form.workStatus || null,
         workInfo: form.workInfo.trim() || null,
-        incomeStatus: form.incomeStatus || null,
         preferredLanguage: form.preferredLanguage || null,
         clientGoal: form.clientGoal || null,
       });
@@ -744,12 +730,6 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                       value={form.workInfo}
                       onChange={(v) => upd("workInfo", v)}
                       placeholder="Employer, role, sector…"
-                    />
-                    <SelectField
-                      label="Income status"
-                      value={form.incomeStatus}
-                      onChange={(v) => upd("incomeStatus", v)}
-                      options={INCOME_STATUSES}
                     />
                     <SelectField
                       label="Preferred language"
@@ -1127,7 +1107,6 @@ function DemographicsView({ contact }: { contact: any }) {
   const idType = labelFor(ID_TYPES, contact.idType);
   const marital = labelFor(MARITAL_STATUSES, contact.maritalStatus);
   const work = labelFor(WORK_STATUSES, contact.workStatus);
-  const income = labelFor(INCOME_STATUSES, contact.incomeStatus);
   const language = labelFor(PREFERRED_LANGUAGES, contact.preferredLanguage);
   const goal = labelFor(CLIENT_GOALS, contact.clientGoal);
   const hasChildren = contact.childrenCount !== null && contact.childrenCount !== undefined;
@@ -1136,7 +1115,6 @@ function DemographicsView({ contact }: { contact: any }) {
     idType ||
     marital ||
     work ||
-    income ||
     contact.dob ||
     contact.nationalId ||
     contact.occupation ||
@@ -1180,11 +1158,6 @@ function DemographicsView({ contact }: { contact: any }) {
       {contact.workInfo && (
         <DetailRow icon={<Briefcase className="h-4 w-4" />} label="Work info">
           {contact.workInfo}
-        </DetailRow>
-      )}
-      {income && (
-        <DetailRow icon={<FileText className="h-4 w-4" />} label="Income">
-          {income}
         </DetailRow>
       )}
       {language && (
@@ -1778,6 +1751,9 @@ function AssignPlanDialog({
   // Billing — every paid membership is invoiced; collect now or issue an open invoice.
   const [payNow, setPayNow] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState("cash");
+  // ID capture — recorded onto the subject (athlete or CRM contact) when provided.
+  const [idType, setIdType] = useState("NATIONAL_ID");
+  const [idNumber, setIdNumber] = useState("");
 
   // Athlete provisioning fields (only used for academy plans without a linked athlete).
   const [athleteDob, setAthleteDob] = useState("");
@@ -1796,6 +1772,8 @@ function AssignPlanDialog({
     setAthletePosition("MIDFIELDER");
     setAthleteJersey("");
     setAthleteNationality("");
+    setIdType(contact?.idType || "NATIONAL_ID");
+    setIdNumber(contact?.nationalId || "");
     let cancelled = false;
     (async () => {
       setLoadingPlans(true);
@@ -1887,6 +1865,8 @@ function AssignPlanDialog({
           jerseyNumber: athleteJersey.trim(),
           nationality: athleteNationality.trim() || undefined,
           gender: contact.gender || undefined,
+          idType,
+          idNumber: idNumber.trim() || undefined,
         });
         // 2. Bill for the plan, tied to the freshly created athlete.
         const res = await api.memberships.assign({
@@ -1905,6 +1885,9 @@ function AssignPlanDialog({
         );
       } else if (requiresAthlete && linkedAthleteId) {
         // Academy plan, contact already has an athlete — bill via athleteId.
+        if (idNumber.trim()) {
+          await api.athletes.update(linkedAthleteId, { idType, idNumber: idNumber.trim() });
+        }
         const res = await api.memberships.assign({
           athleteId: linkedAthleteId,
           planId,
@@ -1917,6 +1900,9 @@ function AssignPlanDialog({
         toast.success(billingToast(res?.membership?.status));
       } else {
         // Non-academy plan — bill directly to the CRM contact.
+        if (idNumber.trim()) {
+          await api.crm.update(contact.id, { idType, nationalId: idNumber.trim() });
+        }
         const res = await api.memberships.assign({
           crmContactId: contact.id,
           planId,
@@ -2014,6 +2000,25 @@ function AssignPlanDialog({
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Anything to record about this membership…"
             />
+          </div>
+
+          {/* ID capture — optional; recorded onto the member's profile. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <SelectField
+              label="ID type"
+              value={idType}
+              onChange={(v) => setIdType(v || "NATIONAL_ID")}
+              options={ID_TYPES}
+            />
+            <div className="space-y-1.5">
+              <Label htmlFor="assign-id-number">ID number (optional)</Label>
+              <Input
+                id="assign-id-number"
+                value={idNumber}
+                onChange={(e) => setIdNumber(e.target.value)}
+                placeholder="e.g. 1xxxxxxxxx"
+              />
+            </div>
           </div>
 
           {/* Billing — every membership is billed; no free passes. */}

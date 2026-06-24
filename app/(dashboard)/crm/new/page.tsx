@@ -37,19 +37,14 @@ const SOURCES = [
   { value: "other", label: "Other" },
 ];
 const GENDERS = [
-  { value: "", label: "—" },
   { value: "MALE", label: "Male" },
   { value: "FEMALE", label: "Female" },
-  { value: "OTHER", label: "Other" },
-  { value: "UNSPECIFIED", label: "Prefer not to say" },
 ];
 const ID_TYPES = [
   { value: "", label: "—" },
   { value: "NATIONAL_ID", label: "National ID" },
   { value: "IQAMA", label: "Iqama" },
   { value: "PASSPORT", label: "Passport" },
-  { value: "DRIVING_LICENCE", label: "Driving licence" },
-  { value: "OTHER", label: "Other" },
 ];
 const MARITAL_STATUSES = [
   { value: "", label: "—" },
@@ -66,13 +61,6 @@ const WORK_STATUSES = [
   { value: "UNEMPLOYED", label: "Unemployed" },
   { value: "STUDENT", label: "Student" },
   { value: "RETIRED", label: "Retired" },
-  { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
-];
-const INCOME_STATUSES = [
-  { value: "", label: "—" },
-  { value: "LOW", label: "Low" },
-  { value: "MIDDLE", label: "Middle" },
-  { value: "HIGH", label: "High" },
   { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
 ];
 const PREFERRED_LANGUAGES = [
@@ -113,7 +101,6 @@ interface FormState {
   childrenCount: string;
   workStatus: string;
   workInfo: string;
-  incomeStatus: string;
   program: "academy" | "gym";
   preferredLanguage: string;
   clientGoal: string;
@@ -138,7 +125,6 @@ const INITIAL: FormState = {
   childrenCount: "",
   workStatus: "",
   workInfo: "",
-  incomeStatus: "",
   program: "academy",
   preferredLanguage: "",
   clientGoal: "",
@@ -191,6 +177,10 @@ export default function NewContactPage() {
       toast.error("First name and email are required");
       return;
     }
+    if (!form.phone.trim()) {
+      toast.error("Phone number is required");
+      return;
+    }
     setSaving(true);
     try {
       const tags = form.tagsRaw
@@ -219,7 +209,6 @@ export default function NewContactPage() {
         childrenCount: form.childrenCount === "" ? undefined : Number(form.childrenCount),
         workStatus: form.workStatus || undefined,
         workInfo: form.workInfo.trim() || undefined,
-        incomeStatus: form.incomeStatus || undefined,
         preferredLanguage: form.preferredLanguage || undefined,
         clientGoal: form.clientGoal || undefined,
       });
@@ -284,7 +273,9 @@ export default function NewContactPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="phone">Phone</Label>
+              <Label htmlFor="phone">
+                Phone <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="phone"
                 type="tel"
@@ -304,7 +295,7 @@ export default function NewContactPage() {
           </CardContent>
         </Card>
 
-        {/* Program — Academy / Gym selector + conditional wellness fields */}
+        {/* Program — Academy / Leisure selector + conditional wellness fields */}
         <Card>
           <CardHeader>
             <CardTitle>Program</CardTitle>
@@ -316,7 +307,7 @@ export default function NewContactPage() {
                 {(
                   [
                     { value: "academy", label: "Academy" },
-                    { value: "gym", label: "Gym" },
+                    { value: "gym", label: "Leisure" },
                   ] as const
                 ).map((opt) => (
                   <Button
@@ -435,13 +426,6 @@ export default function NewContactPage() {
                 onChange={(e) => set("workInfo", e.target.value)}
               />
             </div>
-            <SelectField
-              id="incomeStatus"
-              label="Income status"
-              value={form.incomeStatus}
-              onChange={(v) => set("incomeStatus", v)}
-              options={INCOME_STATUSES}
-            />
           </CardContent>
         </Card>
 
