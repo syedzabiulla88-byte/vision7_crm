@@ -30,8 +30,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Warning } from "@/lib/icons";
-import { formatSAR, formatDateTime, PAYMENT_METHODS } from "../invoices/_shared";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Warning, Plus, Search, ArrowLeft } from "@/lib/icons";
+import {
+  formatSAR,
+  formatDateTime,
+  getBalance,
+  invoiceNo,
+  statusBadgeClass,
+  PAYMENT_METHODS,
+  type Invoice,
+} from "../invoices/_shared";
 
 const PAGE_SIZE = 20;
 
@@ -91,6 +107,7 @@ export default function PaymentsLedgerPage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
+  const [recordOpen, setRecordOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +174,12 @@ export default function PaymentsLedgerPage() {
         <PageHeader
           title="Payments"
           description="Every payment and refund across all invoices."
+          actions={
+            <Button onClick={() => setRecordOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Record payment
+            </Button>
+          }
         />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -364,7 +387,302 @@ export default function PaymentsLedgerPage() {
             />
           </CardContent>
         </Card>
+
+        {recordOpen && (
+          <RecordPaymentDialog
+            onClose={() => setRecordOpen(false)}
+            onSaved={() => {
+              setRecordOpen(false);
+              load();
+            }}
+          />
+        )}
       </div>
     </PermissionGate>
+  );
+}
+
+// ─── Record payment dialog ───────────────────────────────────────────────────────
+
+/** Backend may send the outstanding balance on `balance`; else derive it. */
+type InvoiceOption = Invoice & { balance?: number };
+
+const PAYABLE_STATUSES = new Set(["SENT", "PARTIAL", "OVERDUE"]);
+
+/** Outstanding balance for an invoice — prefer the server `balance`, else derive. */
+function invoiceBalance(inv: InvoiceOption): number {
+  if (inv.balance !== undefined && inv.balance !== null) return Number(inv.balance) || 0;
+  return getBalance(inv);
+}
+
+/** Recipient/customer name for an invoice row. */
+function invoiceRecipient(inv: InvoiceOption): string {
+  if (inv.athlete) {
+    const n = `${inv.athlete.firstName || ""} ${inv.athlete.lastName || ""}`.trim();
+    if (n) return n;
+  }
+  return inv.customerName || "—";
+}
+
+function RecordPaymentDialog({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  // Step 1 — search + pick an invoice.
+  const [searchInput, setSearchInput] = useState("");
+  const [results, setResults] = useState<InvoiceOption[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState<InvoiceOption | null>(null);
+
+  // Step 2 — payment fields.
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("cash");
+  const [reference, setReference] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Debounced invoice search (~300ms). Only runs while no invoice is selected.
+  useEffect(() => {
+    if (selected) return;
+    const term = searchInput.trim();
+    if (!term) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await api.invoices.list({ search: term, limit: 10 });
+        const found: InvoiceOption[] = Array.isArray(res) ? res : res?.data || [];
+        setResults(found);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to search invoices");
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput, selected]);
+
+  const pickInvoice = (inv: InvoiceOption) => {
+    setSelected(inv);
+    setAmount(String(invoiceBalance(inv)));
+  };
+
+  const backToSearch = () => {
+    setSelected(null);
+    setAmount("");
+    setReference("");
+    setMethod("cash");
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selected) return;
+    const value = Number(amount);
+    const balance = invoiceBalance(selected);
+    if (!amount || value <= 0) {
+      toast.error("Enter an amount greater than 0");
+      return;
+    }
+    if (value > balance) {
+      toast.error(`Amount cannot exceed the outstanding balance (${formatSAR(balance)})`);
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.invoices.addPayment(selected.id, {
+        amount: value,
+        method,
+        reference: reference.trim() || undefined,
+      });
+      toast.success("Payment recorded");
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to record payment");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedBalance = selected ? invoiceBalance(selected) : 0;
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Record payment</DialogTitle>
+          <DialogDescription>
+            {selected
+              ? "Record a payment against the selected invoice."
+              : "Search for an invoice to record a payment against."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {!selected ? (
+          /* ── Step 1: pick an invoice ── */
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="record-search" className="text-xs text-muted-foreground">
+                Find invoice
+              </Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="record-search"
+                  type="search"
+                  autoFocus
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="Number, customer, athlete…"
+                  className="w-full pl-8"
+                />
+              </div>
+            </div>
+
+            <div className="max-h-72 space-y-1.5 overflow-y-auto">
+              {searching ? (
+                Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 w-full rounded-md" />
+                ))
+              ) : !searchInput.trim() ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  Start typing to search invoices.
+                </p>
+              ) : results.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  No invoices match your search.
+                </p>
+              ) : (
+                results.map((inv) => {
+                  const status = String(inv.status || "").toUpperCase();
+                  const payable = PAYABLE_STATUSES.has(status);
+                  const balance = invoiceBalance(inv);
+                  return (
+                    <button
+                      key={inv.id}
+                      type="button"
+                      disabled={!payable}
+                      onClick={() => payable && pickInvoice(inv)}
+                      className={`w-full rounded-md border p-3 text-left transition-colors ${
+                        payable
+                          ? "cursor-pointer hover:border-primary/50 hover:bg-muted"
+                          : "cursor-not-allowed opacity-60"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-mono text-xs">{invoiceNo(inv)}</p>
+                          <p className="truncate text-sm">{invoiceRecipient(inv)}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge variant="outline" className={statusBadgeClass(status)}>
+                            {status || "—"}
+                          </Badge>
+                          <span className="tabular-nums text-sm font-medium">
+                            {formatSAR(balance)}
+                          </span>
+                        </div>
+                      </div>
+                      {!payable && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Nothing to pay on this invoice.
+                        </p>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          /* ── Step 2: enter payment details ── */
+          <form onSubmit={submit} className="space-y-4">
+            <div className="rounded-md border bg-muted/40 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-mono text-xs">{invoiceNo(selected)}</p>
+                  <p className="truncate text-sm">{invoiceRecipient(selected)}</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={backToSearch}
+                  disabled={saving}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Change
+                </Button>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Outstanding balance</span>
+                <span className="tabular-nums font-medium">{formatSAR(selectedBalance)}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="record-amount">
+                Amount (SAR) <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="record-amount"
+                type="number"
+                min="0"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Method</Label>
+              <Select value={method} onValueChange={(v) => setMethod((v as string) || "cash")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="record-ref">Reference</Label>
+              <Input
+                id="record-ref"
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder="Transaction id, cheque number…"
+              />
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Recording…" : "Record payment"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

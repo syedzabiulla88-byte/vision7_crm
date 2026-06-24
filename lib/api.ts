@@ -155,6 +155,12 @@ export const api = {
     delete: (id: string) => apiFetch<any>(`/invoices/${id}`, { method: "DELETE" }),
     send: (id: string) => apiFetch<any>(`/invoices/${id}/send`, { method: "POST" }),
     cancel: (id: string) => apiFetch<any>(`/invoices/${id}/cancel`, { method: "POST" }),
+    // Guided status change: SENT (issue, no email) / DRAFT (reopen) / CANCELLED.
+    setStatus: (id: string, status: string) =>
+      apiFetch<any>(`/invoices/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
+    // Mark fully paid — records the remaining balance as a payment.
+    markPaid: (id: string, data?: { method?: string; reference?: string }) =>
+      apiFetch<any>(`/invoices/${id}/mark-paid`, { method: "POST", body: JSON.stringify(data || {}) }),
     addPayment: (id: string, data: any) =>
       apiFetch<any>(`/invoices/${id}/payments`, { method: "POST", body: JSON.stringify(data) }),
     // Record a refund against an invoice (recomputes balance/status)

@@ -48,6 +48,7 @@ export {
   MoreVertical,
   Menu,
   XCircle as CloseCircle,
+  CheckCircle2 as CheckCircle,
   Image,
   File,
   Stethoscope as Medical,

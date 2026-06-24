@@ -29,10 +29,40 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Pagination } from "@/components/shared/pagination";
-import { Plus, Eye, Pencil, Trash, FileText, Search } from "@/lib/icons";
+import {
+  Plus,
+  Eye,
+  Pencil,
+  Trash,
+  FileText,
+  Search,
+  MoreVertical,
+  Send,
+  Download,
+  RotateCcw,
+  CloseCircle,
+  Check,
+  CirclePlus,
+} from "@/lib/icons";
 import {
   INVOICE_STATUSES,
+  PAYMENT_METHODS,
   formatSAR,
   formatDate,
   getBalance,
@@ -62,8 +92,14 @@ export default function InvoicesPage() {
   const [toDate, setToDate] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [deleting, setDeleting] = useState<Invoice | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
+  // Confirm dialog for the destructive / irreversible row actions.
+  const [confirm, setConfirm] = useState<{
+    type: "delete" | "cancel" | "markPaid";
+    invoice: Invoice;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  // Record-payment dialog target (null = closed).
+  const [paying, setPaying] = useState<Invoice | null>(null);
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState<{
     total: number;
@@ -126,18 +162,71 @@ export default function InvoicesPage() {
     };
   }, [filtered, meta]);
 
-  const handleDelete = async () => {
-    if (!deleting) return;
-    setDeleteBusy(true);
+  // Row actions that fire immediately (no confirmation step). Each reloads the
+  // list on success and surfaces the error message on failure.
+  const runRowAction = useCallback(
+    async (action: () => Promise<unknown>, successMsg: string) => {
+      try {
+        await action();
+        toast.success(successMsg);
+        await load();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Action failed");
+      }
+    },
+    [load],
+  );
+
+  const handleSend = useCallback(
+    async (inv: Invoice, resend: boolean) => {
+      try {
+        const res = await api.invoices.send(inv.id);
+        if (res?.emailed) {
+          toast.success(resend ? "Invoice resent" : "Invoice sent");
+        } else {
+          toast.warning("Marked sent — no email on file, share the PDF.");
+        }
+        await load();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to send invoice");
+      }
+    },
+    [load],
+  );
+
+  const handleDownloadPdf = useCallback(async (inv: Invoice) => {
     try {
-      await api.invoices.delete(deleting.id);
-      toast.success("Invoice deleted");
-      setDeleting(null);
+      const url = await api.invoices.pdfBlobUrl(inv.id);
+      // Open in a new tab; revoke after a beat so the tab can read the blob.
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to generate PDF");
+    }
+  }, []);
+
+  // The confirmed (destructive / irreversible) actions.
+  const runConfirm = async () => {
+    if (!confirm) return;
+    const { type, invoice } = confirm;
+    setConfirmBusy(true);
+    try {
+      if (type === "delete") {
+        await api.invoices.delete(invoice.id);
+        toast.success("Invoice deleted");
+      } else if (type === "cancel") {
+        await api.invoices.cancel(invoice.id);
+        toast.success("Invoice cancelled");
+      } else if (type === "markPaid") {
+        await api.invoices.markPaid(invoice.id);
+        toast.success("Invoice marked as paid");
+      }
+      setConfirm(null);
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete invoice");
+      toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
-      setDeleteBusy(false);
+      setConfirmBusy(false);
     }
   };
 
@@ -334,36 +423,127 @@ export default function InvoicesPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="outline"
-                              size="icon-sm"
-                              render={<Link href={`/billing/invoices/${inv.id}`} />}
-                              aria-label="View invoice"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            {isDraft && (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="icon-sm"
-                                  render={<Link href={`/billing/invoices/${inv.id}/edit`} />}
-                                  aria-label="Edit invoice"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="icon-sm"
-                                  onClick={() => setDeleting(inv)}
-                                  aria-label="Delete invoice"
-                                  className="text-destructive hover:text-destructive"
-                                >
-                                  <Trash className="h-4 w-4" />
-                                </Button>
-                              </>
-                            )}
+                          <div className="flex justify-end">
+                            {(() => {
+                              const isSent = ["SENT", "PARTIAL", "OVERDUE"].includes(status);
+                              const isPaid = status === "PAID";
+                              const isCancelled = status === "CANCELLED";
+                              return (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger
+                                    render={
+                                      <Button
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        aria-label="Invoice actions"
+                                        title="Actions"
+                                      >
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    }
+                                  />
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      render={<Link href={`/billing/invoices/${inv.id}`} />}
+                                    >
+                                      <Eye className="h-4 w-4" />
+                                      View
+                                    </DropdownMenuItem>
+                                    {isDraft && (
+                                      <DropdownMenuItem
+                                        render={
+                                          <Link href={`/billing/invoices/${inv.id}/edit`} />
+                                        }
+                                      >
+                                        <Pencil className="h-4 w-4" />
+                                        Edit
+                                      </DropdownMenuItem>
+                                    )}
+                                    {isDraft && (
+                                      <DropdownMenuItem onClick={() => handleSend(inv, false)}>
+                                        <Send className="h-4 w-4" />
+                                        Send
+                                      </DropdownMenuItem>
+                                    )}
+                                    {isSent && (
+                                      <DropdownMenuItem onClick={() => handleSend(inv, true)}>
+                                        <Send className="h-4 w-4" />
+                                        Resend
+                                      </DropdownMenuItem>
+                                    )}
+                                    {isDraft && (
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          runRowAction(
+                                            () => api.invoices.setStatus(inv.id, "SENT"),
+                                            "Invoice marked as sent",
+                                          )
+                                        }
+                                      >
+                                        <Check className="h-4 w-4" />
+                                        Mark as sent (no email)
+                                      </DropdownMenuItem>
+                                    )}
+                                    {isSent && (
+                                      <DropdownMenuItem onClick={() => setPaying(inv)}>
+                                        <CirclePlus className="h-4 w-4" />
+                                        Record payment
+                                      </DropdownMenuItem>
+                                    )}
+                                    {isSent && (
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          setConfirm({ type: "markPaid", invoice: inv })
+                                        }
+                                      >
+                                        <Check className="h-4 w-4" />
+                                        Mark as paid
+                                      </DropdownMenuItem>
+                                    )}
+                                    {isCancelled && (
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          runRowAction(
+                                            () => api.invoices.setStatus(inv.id, "DRAFT"),
+                                            "Invoice reopened",
+                                          )
+                                        }
+                                      >
+                                        <RotateCcw className="h-4 w-4" />
+                                        Reopen
+                                      </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuItem onClick={() => handleDownloadPdf(inv)}>
+                                      <Download className="h-4 w-4" />
+                                      Download PDF
+                                    </DropdownMenuItem>
+                                    {!isPaid && !isCancelled && <DropdownMenuSeparator />}
+                                    {!isPaid && !isCancelled && (
+                                      <DropdownMenuItem
+                                        variant="destructive"
+                                        onClick={() =>
+                                          setConfirm({ type: "cancel", invoice: inv })
+                                        }
+                                      >
+                                        <CloseCircle className="h-4 w-4" />
+                                        Cancel
+                                      </DropdownMenuItem>
+                                    )}
+                                    {isDraft && (
+                                      <DropdownMenuItem
+                                        variant="destructive"
+                                        onClick={() =>
+                                          setConfirm({ type: "delete", invoice: inv })
+                                        }
+                                      >
+                                        <Trash className="h-4 w-4" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              );
+                            })()}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -385,17 +565,172 @@ export default function InvoicesPage() {
       </Card>
 
       <ConfirmDialog
-        open={!!deleting}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        title="Delete invoice"
-        description={`Delete invoice ${
-          deleting ? invoiceNo(deleting) : ""
-        }? This cannot be undone.`}
-        confirmLabel="Delete"
-        variant="destructive"
-        onConfirm={handleDelete}
-        loading={deleteBusy}
+        open={!!confirm}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title={
+          confirm?.type === "delete"
+            ? "Delete invoice"
+            : confirm?.type === "cancel"
+              ? "Cancel invoice"
+              : "Mark as paid"
+        }
+        description={
+          confirm?.type === "delete"
+            ? `Delete invoice ${
+                confirm ? invoiceNo(confirm.invoice) : ""
+              }? This cannot be undone.`
+            : confirm?.type === "cancel"
+              ? `Cancel invoice ${
+                  confirm ? invoiceNo(confirm.invoice) : ""
+                }? It will be marked as cancelled.`
+              : `Mark invoice ${
+                  confirm ? invoiceNo(confirm.invoice) : ""
+                } as paid? The remaining balance will be recorded as a payment.`
+        }
+        confirmLabel={
+          confirm?.type === "delete"
+            ? "Delete"
+            : confirm?.type === "cancel"
+              ? "Cancel invoice"
+              : "Mark as paid"
+        }
+        variant={confirm?.type === "markPaid" ? "default" : "destructive"}
+        onConfirm={runConfirm}
+        loading={confirmBusy}
+      />
+
+      <PaymentDialog
+        invoice={paying}
+        open={!!paying}
+        onOpenChange={(o) => !o && setPaying(null)}
+        onSaved={() => {
+          setPaying(null);
+          load();
+        }}
       />
     </div>
+  );
+}
+
+/**
+ * Record a payment against an invoice without leaving the list. Defaults the
+ * amount to the outstanding balance and validates 0 < amount ≤ balance.
+ */
+function PaymentDialog({
+  invoice,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  invoice: Invoice | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSaved: () => void;
+}) {
+  const balance = getBalance(invoice ?? undefined);
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("cash");
+  const [reference, setReference] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setAmount(balance ? String(balance) : "");
+      setMethod("cash");
+      setReference("");
+    }
+  }, [open, balance]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!invoice) return;
+    const value = Number(amount);
+    if (!amount || value <= 0) {
+      toast.error("Enter an amount greater than 0");
+      return;
+    }
+    if (value > balance) {
+      toast.error(`Amount cannot exceed the balance (${formatSAR(balance)})`);
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.invoices.addPayment(invoice.id, {
+        amount: value,
+        method,
+        reference: reference.trim() || undefined,
+      });
+      toast.success("Payment recorded");
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to record payment");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Record payment</DialogTitle>
+          <DialogDescription>
+            {invoice ? `${invoiceNo(invoice)} · ` : ""}Outstanding balance:{" "}
+            {formatSAR(balance)}
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="pay-amount">
+              Amount (SAR) <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="pay-amount"
+              type="number"
+              min="0"
+              max={balance || undefined}
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Method</Label>
+            <Select value={method} onValueChange={(v) => setMethod((v as string) || "cash")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAYMENT_METHODS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pay-ref">Reference</Label>
+            <Input
+              id="pay-ref"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="Transaction id, cheque number…"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Record payment"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

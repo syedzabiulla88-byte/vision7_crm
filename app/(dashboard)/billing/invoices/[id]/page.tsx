@@ -33,6 +33,7 @@ import {
   Printer,
   Trash,
   CloseCircle,
+  CheckCircle,
   Pencil,
   Download,
   RotateCcw,
@@ -65,7 +66,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [showRefund, setShowRefund] = useState(false);
 
   // Confirmation dialogs
-  const [confirm, setConfirm] = useState<null | "send" | "resend" | "cancel" | "delete">(null);
+  const [confirm, setConfirm] = useState<
+    null | "send" | "resend" | "markPaid" | "markSent" | "cancel" | "reopen" | "delete"
+  >(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -112,9 +115,21 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           toast.warning("Marked sent — no email on file, share the PDF.");
         }
         await load();
+      } else if (confirm === "markPaid") {
+        await api.invoices.markPaid(id);
+        toast.success("Invoice marked paid");
+        await load();
+      } else if (confirm === "markSent") {
+        await api.invoices.setStatus(id, "SENT");
+        toast.success("Marked as sent");
+        await load();
       } else if (confirm === "cancel") {
         await api.invoices.cancel(id);
         toast.success("Invoice cancelled");
+        await load();
+      } else if (confirm === "reopen") {
+        await api.invoices.setStatus(id, "DRAFT");
+        toast.success("Invoice reopened");
         await load();
       } else if (confirm === "delete") {
         await api.invoices.delete(id);
@@ -229,7 +244,27 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             Record refund
           </Button>
         )}
+
+        {/* Change status (guided / safe) */}
         {canPay && (
+          <Button variant="outline" onClick={() => setConfirm("markPaid")}>
+            <CheckCircle className="h-4 w-4" />
+            Mark as paid
+          </Button>
+        )}
+        {isDraft && (
+          <Button variant="outline" onClick={() => setConfirm("markSent")}>
+            <Send className="h-4 w-4" />
+            Mark as sent
+          </Button>
+        )}
+        {isCancelled && (
+          <Button variant="outline" onClick={() => setConfirm("reopen")}>
+            <RotateCcw className="h-4 w-4" />
+            Reopen
+          </Button>
+        )}
+        {!isPaid && !isCancelled && (
           <Button
             variant="outline"
             onClick={() => setConfirm("cancel")}
@@ -531,12 +566,39 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         loading={confirmBusy}
       />
       <ConfirmDialog
+        open={confirm === "markPaid"}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title="Mark as paid"
+        description={`Record the remaining balance (${formatSAR(balance)}) as a cash payment and mark this invoice paid?`}
+        confirmLabel="Mark as paid"
+        onConfirm={runConfirm}
+        loading={confirmBusy}
+      />
+      <ConfirmDialog
+        open={confirm === "markSent"}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title="Mark as sent"
+        description="Mark this invoice as sent without emailing it? Use this when you have shared the invoice another way."
+        confirmLabel="Mark as sent"
+        onConfirm={runConfirm}
+        loading={confirmBusy}
+      />
+      <ConfirmDialog
         open={confirm === "cancel"}
         onOpenChange={(o) => !o && setConfirm(null)}
         title="Cancel invoice"
-        description="Cancel this invoice? It will be marked as cancelled."
+        description="Cancel this invoice?"
         confirmLabel="Cancel invoice"
         variant="destructive"
+        onConfirm={runConfirm}
+        loading={confirmBusy}
+      />
+      <ConfirmDialog
+        open={confirm === "reopen"}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title="Reopen invoice"
+        description="Reopen this cancelled invoice? It will return to draft so you can edit and re-issue it."
+        confirmLabel="Reopen"
         onConfirm={runConfirm}
         loading={confirmBusy}
       />
