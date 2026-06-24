@@ -77,6 +77,7 @@ export function statusBadgeClass(status?: string): string {
 
 export interface Invoice {
   id: string;
+  number?: string;
   invoiceNumber?: string;
   status?: string;
   issueDate?: string | null;
@@ -119,11 +120,13 @@ export interface InvoiceLine {
 export interface Payment {
   id?: string;
   amount?: number;
+  currency?: string;
   method?: string;
   reference?: string | null;
   notes?: string | null;
   paidAt?: string | null;
   createdAt?: string | null;
+  isRefund?: boolean;
 }
 
 export function lineItemTotal(li: { quantity?: unknown; unitPrice?: unknown }): number {
@@ -147,4 +150,9 @@ export function getTotal(inv?: Invoice): number {
 
 export function getBalance(inv?: Invoice): number {
   return Math.max(getTotal(inv) - getPaid(inv), 0);
+}
+
+/** Human-facing invoice number (INV-2026-0001), with safe fallbacks. */
+export function invoiceNo(inv?: Pick<Invoice, "id" | "number" | "invoiceNumber"> | null): string {
+  return inv?.number ?? inv?.invoiceNumber ?? `#${String(inv?.id || "").slice(-8)}`;
 }

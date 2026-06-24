@@ -87,16 +87,17 @@ export default function PlansPage() {
     </PermissionGate>
   );
 
-  // Plans whose type is missing / unrecognized — only when viewing all.
-  const otherPlans = plans.filter(
-    (p) => !TYPE_ORDER.includes((p.type as PlanType) || "ACADEMY"),
-  );
+  // Collapse every plan into one of the two offered buckets. Academy stays
+  // Academy; everything else (Leisure, legacy Personal Training, untyped)
+  // falls under Leisure so no plan disappears.
+  const bucketOf = (p: Plan): PlanType =>
+    (p.type as PlanType) === "ACADEMY" ? "ACADEMY" : "LEISURE";
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Membership Plans"
-        description="Define pricing, billing cycles and features for each Academy, Performance, Leisure and Personal Training offering."
+        description="Define pricing, billing cycles and features for each Academy and Leisure offering."
         actions={newPlanAction}
       />
 
@@ -138,12 +139,10 @@ export default function PlansPage() {
             ))}
           </div>
 
-          {/* Grouped by type sections */}
+          {/* Grouped by category sections (Academy / Leisure) */}
           {TYPE_ORDER.filter((t) => typeFilter === "ALL" || typeFilter === t).map(
             (type) => {
-              const group = plans.filter(
-                (p) => ((p.type as PlanType) || "ACADEMY") === type,
-              );
+              const group = plans.filter((p) => bucketOf(p) === type);
               if (group.length === 0) return null;
               return (
                 <PlanSection
@@ -161,19 +160,6 @@ export default function PlansPage() {
                 </PlanSection>
               );
             },
-          )}
-
-          {/* Plans with an unknown type */}
-          {typeFilter === "ALL" && otherPlans.length > 0 && (
-            <PlanSection title="Other" count={otherPlans.length}>
-              {otherPlans.map((plan) => (
-                <PlanCard
-                  key={plan.id}
-                  plan={plan}
-                  onDelete={() => setDeleteTarget(plan)}
-                />
-              ))}
-            </PlanSection>
           )}
         </>
       )}

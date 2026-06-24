@@ -16,12 +16,11 @@ export const TYPE_LABELS: Record<PlanType, string> = {
 };
 
 /** Order in which type sections are rendered (also drives the filter tabs). */
-export const TYPE_ORDER: PlanType[] = ["ACADEMY", "LEISURE", "PERSONAL_TRAINING"];
+export const TYPE_ORDER: PlanType[] = ["ACADEMY", "LEISURE"];
 
 export const PLAN_TYPES: PlanOption[] = [
   { value: "ACADEMY", label: "Academy" },
   { value: "LEISURE", label: "Leisure" },
-  { value: "PERSONAL_TRAINING", label: "Personal Training" },
 ];
 
 export const CATEGORIES: PlanOption[] = [

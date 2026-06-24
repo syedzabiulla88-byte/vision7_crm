@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "@/lib/icons";
 import { InvoiceForm } from "../../_invoice-form";
-import type { Invoice } from "../../_shared";
+import { invoiceNo, type Invoice } from "../../_shared";
 
 export default function EditInvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -73,7 +73,7 @@ export default function EditInvoicePage({ params }: { params: Promise<{ id: stri
           <p className="font-medium">This invoice can no longer be edited.</p>
           <p className="mt-1 text-muted-foreground">
             Only draft invoices can be edited. Invoice{" "}
-            {invoice.invoiceNumber || `#${String(invoice.id).slice(0, 8)}`} has status{" "}
+            {invoiceNo(invoice)} has status{" "}
             <span className="font-medium">{String(invoice.status).toUpperCase()}</span>.
           </p>
         </div>

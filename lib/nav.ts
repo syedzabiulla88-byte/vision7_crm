@@ -37,7 +37,7 @@ export const NAV: NavGroup[] = [
   {
     label: "Memberships",
     items: [
-      { label: "Members", href: "/members", icon: "UsersMultiple", permission: "memberships:view" },
+      { label: "Members", href: "/members", icon: "UsersMultiple", permission: "members:view" },
       { label: "Plans", href: "/memberships/plans", icon: "Award", permission: "memberships:manage" },
     ],
   },
@@ -52,12 +52,21 @@ export const NAV: NavGroup[] = [
     label: "Finance",
     items: [
       { label: "Invoices", href: "/billing/invoices", icon: "FileText", permission: "invoices:view" },
+      { label: "Payments", href: "/billing/payments", icon: "ClipboardCheck", permission: "payments:view" },
+      { label: "Statements", href: "/billing/statements", icon: "TrendUp", permission: "reports:view" },
       { label: "Accounting", href: "/billing/accounting", icon: "Chart", permission: "accounting:view" },
     ],
   },
   {
     label: "Insights",
-    items: [{ label: "Reports", href: "/reports", icon: "TrendUp", permission: "reports:view" }],
+    items: [
+      { label: "Reports", href: "/reports", icon: "TrendUp", permission: "reports:view" },
+      { label: "Billing report", href: "/reports/billing", icon: "FileText", permission: "reports:view" },
+      { label: "Customers", href: "/reports/customers", icon: "Users", permission: "reports:view" },
+      { label: "Bookings", href: "/reports/bookings", icon: "Calendar", permission: "reports:view" },
+      { label: "Facilities", href: "/reports/facilities", icon: "MapPin", permission: "reports:view" },
+      { label: "Follow-ups", href: "/reports/followups", icon: "ClipboardCheck", permission: "reports:view" },
+    ],
   },
   {
     label: "Control Plane",
@@ -65,7 +74,7 @@ export const NAV: NavGroup[] = [
       { label: "Users", href: "/admin/users", icon: "ShieldUser", permission: "users:view" },
       { label: "Roles & Permissions", href: "/admin/roles", icon: "Shield", permission: "roles:manage" },
       { label: "System Settings", href: "/admin/settings", icon: "Settings", permission: "settings:manage" },
-      { label: "Connected Apps", href: "/admin/apps", icon: "Layers", permission: "settings:manage" },
+      { label: "Connected Apps", href: "/admin/apps", icon: "Layers", permission: "apps:view" },
     ],
   },
 ];

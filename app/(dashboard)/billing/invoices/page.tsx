@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Pagination } from "@/components/shared/pagination";
-import { Plus, Eye, Pencil, Trash, FileText } from "@/lib/icons";
+import { Plus, Eye, Pencil, Trash, FileText, Search } from "@/lib/icons";
 import {
   INVOICE_STATUSES,
   formatSAR,
@@ -38,6 +38,7 @@ import {
   getBalance,
   getPaid,
   getTotal,
+  invoiceNo,
   statusBadgeClass,
   type Invoice,
 } from "./_shared";
@@ -59,6 +60,8 @@ export default function InvoicesPage() {
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<Invoice | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [page, setPage] = useState(1);
@@ -76,6 +79,7 @@ export default function InvoicesPage() {
       if (statusFilter !== "ALL") params.status = statusFilter;
       if (fromDate) params.from = fromDate;
       if (toDate) params.to = toDate;
+      if (search) params.search = search;
       const result = await api.invoices.list(params);
       const rows: Invoice[] = Array.isArray(result) ? result : result?.data || [];
       setInvoices(rows);
@@ -85,11 +89,23 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, fromDate, toDate]);
+  }, [page, statusFilter, fromDate, toDate, search]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Debounce the search box → commit to `search` (resets to page 1).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSearch((prev) => {
+        if (prev === searchInput) return prev;
+        setPage(1);
+        return searchInput;
+      });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   // Filters are applied server-side; render the returned page directly.
   const filtered = invoices;
@@ -125,7 +141,8 @@ export default function InvoicesPage() {
     }
   };
 
-  const hasFilters = statusFilter !== "ALL" || Boolean(fromDate) || Boolean(toDate);
+  const hasFilters =
+    statusFilter !== "ALL" || Boolean(fromDate) || Boolean(toDate) || Boolean(searchInput);
 
   return (
     <div className="space-y-6">
@@ -151,6 +168,22 @@ export default function InvoicesPage() {
         <CardContent className="space-y-4">
           {/* Filters */}
           <div className="flex flex-col gap-3 md:flex-row md:items-end">
+            <div className="space-y-1.5 md:flex-1">
+              <Label htmlFor="invoice-search" className="text-xs text-muted-foreground">
+                Search
+              </Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="invoice-search"
+                  type="search"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="Number, customer, athlete…"
+                  className="w-full pl-8 md:w-64"
+                />
+              </div>
+            </div>
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Status</Label>
               <Select
@@ -209,6 +242,8 @@ export default function InvoicesPage() {
                   setStatusFilter("ALL");
                   setFromDate("");
                   setToDate("");
+                  setSearchInput("");
+                  setSearch("");
                   setPage(1);
                 }}
               >
@@ -268,7 +303,7 @@ export default function InvoicesPage() {
                             href={`/billing/invoices/${inv.id}`}
                             className="font-mono text-xs hover:text-primary"
                           >
-                            {inv.invoiceNumber || `#${String(inv.id).slice(0, 8)}`}
+                            {invoiceNo(inv)}
                           </Link>
                         </TableCell>
                         <TableCell>
@@ -354,7 +389,7 @@ export default function InvoicesPage() {
         onOpenChange={(o) => !o && setDeleting(null)}
         title="Delete invoice"
         description={`Delete invoice ${
-          deleting?.invoiceNumber || deleting?.id?.slice(0, 8) || ""
+          deleting ? invoiceNo(deleting) : ""
         }? This cannot be undone.`}
         confirmLabel="Delete"
         variant="destructive"

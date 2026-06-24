@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ArrowLeft, Plus, Close, Send, Save } from "@/lib/icons";
-import { formatSAR, toDateInput, type Invoice } from "./_shared";
+import { formatSAR, toDateInput, invoiceNo, type Invoice } from "./_shared";
 
 interface LineState {
   /** Selector state: "" = unpicked, "custom" = free text, else a plan id. */
@@ -299,7 +299,7 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-semibold tracking-tight">
             {editingId
-              ? `Edit ${editing?.invoiceNumber || "Draft Invoice"}`
+              ? `Edit ${editing ? invoiceNo(editing) : "Draft Invoice"}`
               : "Create Invoice"}
           </h1>
         </div>

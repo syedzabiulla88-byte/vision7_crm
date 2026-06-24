@@ -35,6 +35,7 @@ import {
   CloseCircle,
   Pencil,
   Download,
+  RotateCcw,
 } from "@/lib/icons";
 import {
   PAYMENT_METHODS,
@@ -44,6 +45,7 @@ import {
   toDateInput,
   getPaid,
   getTotal,
+  invoiceNo,
   lineItemTotal,
   statusBadgeClass,
   type Invoice,
@@ -60,9 +62,10 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [error, setError] = useState("");
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [showRefund, setShowRefund] = useState(false);
 
   // Confirmation dialogs
-  const [confirm, setConfirm] = useState<null | "send" | "cancel" | "delete">(null);
+  const [confirm, setConfirm] = useState<null | "send" | "resend" | "cancel" | "delete">(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -101,9 +104,13 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     if (!confirm) return;
     setConfirmBusy(true);
     try {
-      if (confirm === "send") {
-        await api.invoices.send(id);
-        toast.success("Invoice sent");
+      if (confirm === "send" || confirm === "resend") {
+        const res = await api.invoices.send(id);
+        if (res?.emailed) {
+          toast.success("Invoice sent");
+        } else {
+          toast.warning("Marked sent — no email on file, share the PDF.");
+        }
         await load();
       } else if (confirm === "cancel") {
         await api.invoices.cancel(id);
@@ -152,6 +159,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const isCancelled = status === "CANCELLED";
   const isPaid = status === "PAID";
   const canPay = !isDraft && !isCancelled && !isPaid;
+  // Resend applies to already-sent statuses (not draft/paid/cancelled).
+  const canResend = ["SENT", "PARTIAL", "OVERDUE"].includes(status);
 
   const lineItems: InvoiceLine[] = Array.isArray(invoice.lineItems)
     ? invoice.lineItems
@@ -162,6 +171,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const total = getTotal(invoice);
   const paid = getPaid(invoice);
   const balance = Math.max(total - paid, 0);
+  // Refund is available once money has been collected (PAID/PARTIAL/OVERDUE).
+  const canRefund = paid > 0 && !isDraft && !isCancelled;
   const subtotal = Number(
     invoice.subtotal ?? lineItems.reduce((s, li) => s + lineItemTotal(li), 0),
   );
@@ -200,21 +211,33 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </Button>
           </>
         )}
+        {canResend && (
+          <Button variant="outline" onClick={() => setConfirm("resend")}>
+            <Send className="h-4 w-4" />
+            Resend
+          </Button>
+        )}
         {canPay && (
-          <>
-            <Button onClick={() => setShowPayment(true)}>
-              <Download className="h-4 w-4" />
-              Record Payment
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setConfirm("cancel")}
-              className="text-destructive hover:text-destructive"
-            >
-              <CloseCircle className="h-4 w-4" />
-              Cancel Invoice
-            </Button>
-          </>
+          <Button onClick={() => setShowPayment(true)}>
+            <Download className="h-4 w-4" />
+            Record Payment
+          </Button>
+        )}
+        {canRefund && (
+          <Button variant="outline" onClick={() => setShowRefund(true)}>
+            <RotateCcw className="h-4 w-4" />
+            Record refund
+          </Button>
+        )}
+        {canPay && (
+          <Button
+            variant="outline"
+            onClick={() => setConfirm("cancel")}
+            className="text-destructive hover:text-destructive"
+          >
+            <CloseCircle className="h-4 w-4" />
+            Cancel Invoice
+          </Button>
         )}
         <Button
           variant="outline"
@@ -241,7 +264,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#FFCF01]">Invoice</p>
             <h1 className="mt-1 text-3xl font-bold tracking-tight md:text-4xl">
-              {invoice.invoiceNumber || `#${String(invoice.id).slice(0, 8)}`}
+              {invoiceNo(invoice)}
             </h1>
           </div>
           <div className="text-left md:text-right">
@@ -421,13 +444,23 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <p className="py-4 text-center text-sm text-muted-foreground">No payments recorded.</p>
         ) : (
           <div className="divide-y">
-            {payments.map((p) => (
+            {payments.map((p) => {
+              const refund = Boolean(p.isRefund);
+              return (
               <div
                 key={p.id || p.reference || `${p.paidAt}-${p.amount}`}
                 className="flex flex-wrap gap-4 py-3 text-sm"
               >
                 <div className="min-w-[160px] flex-1">
-                  <p className="font-semibold tabular-nums">{formatSAR(p.amount)}</p>
+                  <p
+                    className={`font-semibold tabular-nums ${
+                      refund ? "text-red-600 dark:text-red-400" : ""
+                    }`}
+                  >
+                    {refund
+                      ? `Refund −${formatSAR(Math.abs(Number(p.amount) || 0))}`
+                      : formatSAR(p.amount)}
+                  </p>
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">
                     {p.method || "—"}
                   </p>
@@ -448,7 +481,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -465,13 +499,34 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         }}
       />
 
-      {/* Send / Cancel / Delete confirmations */}
+      {/* Refund dialog */}
+      <RefundDialog
+        open={showRefund}
+        onOpenChange={setShowRefund}
+        invoiceId={id}
+        maxAmount={paid}
+        onSaved={() => {
+          setShowRefund(false);
+          load();
+        }}
+      />
+
+      {/* Send / Resend / Cancel / Delete confirmations */}
       <ConfirmDialog
         open={confirm === "send"}
         onOpenChange={(o) => !o && setConfirm(null)}
         title="Send invoice"
         description="Send this invoice now? The PDF will be emailed to the customer."
         confirmLabel="Send"
+        onConfirm={runConfirm}
+        loading={confirmBusy}
+      />
+      <ConfirmDialog
+        open={confirm === "resend"}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title="Resend invoice"
+        description="Resend this invoice to the customer? The PDF will be emailed again."
+        confirmLabel="Resend"
         onConfirm={runConfirm}
         loading={confirmBusy}
       />
@@ -645,6 +700,131 @@ function PaymentDialog({
             </Button>
             <Button type="submit" disabled={saving}>
               {saving ? "Saving…" : "Record"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const REFUND_METHODS = [
+  { value: "cash", label: "Cash" },
+  { value: "card", label: "Card" },
+  { value: "bank-transfer", label: "Bank transfer" },
+  { value: "online", label: "Online" },
+  { value: "other", label: "Other" },
+];
+
+function RefundDialog({
+  open,
+  onOpenChange,
+  invoiceId,
+  maxAmount,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  invoiceId: string;
+  maxAmount: number;
+  onSaved: () => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("cash");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setAmount(maxAmount ? String(maxAmount) : "");
+      setMethod("cash");
+      setReason("");
+    }
+  }, [open, maxAmount]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const value = Number(amount);
+    if (!amount || value <= 0) {
+      toast.error("Enter a refund amount greater than 0");
+      return;
+    }
+    if (value > maxAmount) {
+      toast.error(`Refund cannot exceed the amount paid (${formatSAR(maxAmount)})`);
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.invoices.refund(invoiceId, {
+        amount: value,
+        method,
+        reason: reason.trim() || undefined,
+      });
+      toast.success("Refund recorded");
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to record refund");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Record refund</DialogTitle>
+          <DialogDescription>Amount paid: {formatSAR(maxAmount)}</DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="refund-amount">
+              Amount (SAR) <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="refund-amount"
+              type="number"
+              min="0"
+              max={maxAmount || undefined}
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Method</Label>
+            <Select value={method} onValueChange={(v) => setMethod((v as string) || "cash")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {REFUND_METHODS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="refund-reason">Reason</Label>
+            <Textarea
+              id="refund-reason"
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Optional"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Record refund"}
             </Button>
           </DialogFooter>
         </form>

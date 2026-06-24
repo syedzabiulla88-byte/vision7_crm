@@ -151,6 +151,10 @@ export const api = {
     cancel: (id: string) => apiFetch<any>(`/invoices/${id}/cancel`, { method: "POST" }),
     addPayment: (id: string, data: any) =>
       apiFetch<any>(`/invoices/${id}/payments`, { method: "POST", body: JSON.stringify(data) }),
+    // Record a refund against an invoice (recomputes balance/status)
+    refund: (id: string, data: { amount: number; method?: string; reason?: string }) =>
+      apiFetch<any>(`/payments/${id}/refund`, { method: "POST", body: JSON.stringify(data) }),
+    markOverdue: () => apiFetch<any>(`/invoices/mark-overdue`, { method: "POST" }),
     /**
      * Download the invoice PDF as a Blob and return an object URL. Caller is
      * responsible for URL.revokeObjectURL once done.
@@ -164,6 +168,11 @@ export const api = {
       const blob = await res.blob();
       return URL.createObjectURL(blob);
     },
+  },
+
+  // Cross-invoice payments ledger (filters: method, invoiceId, isRefund, from, to)
+  payments: {
+    list: (params?: Params) => apiFetch<any>(`/payments${qs(params)}`),
   },
 
   accounting: {
@@ -201,6 +210,8 @@ export const api = {
     customers: (params?: Params) => apiFetch<any>(`/reports/customers${qs(params)}`),
     bookings: (params?: Params) => apiFetch<any>(`/reports/bookings${qs(params)}`),
     facilities: (params?: Params) => apiFetch<any>(`/reports/facilities${qs(params)}`),
+    // Per-customer AR aging / statements
+    statements: (params?: Params) => apiFetch<any>(`/reports/statements${qs(params)}`),
     // §control-plane — cross-app KPI bundle for the dashboard / single pane of glass
     overview: () => apiFetch<any>(`/reports/overview`),
   },

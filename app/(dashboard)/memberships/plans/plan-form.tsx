@@ -22,7 +22,6 @@ import {
 import { ArrowLeft, Plus, Close } from "@/lib/icons";
 import {
   PLAN_TYPES,
-  CATEGORIES,
   BILLING_CYCLES,
   type Plan,
 } from "./plan-constants";
@@ -50,7 +49,7 @@ function emptyPlan(): PlanFormState {
     name: "",
     description: "",
     type: "ACADEMY",
-    category: "academy-junior",
+    category: "academy",
     price: "",
     billingCycle: "monthly",
     durationDays: "",
@@ -66,11 +65,15 @@ function emptyPlan(): PlanFormState {
 }
 
 function fromPlan(initial: Plan): PlanFormState {
+  // Legacy PERSONAL_TRAINING plans surface as Leisure in the two-option
+  // selector. The underlying data is only changed if the plan is saved.
+  const selectorType =
+    (initial.type as string) === "ACADEMY" ? "ACADEMY" : "LEISURE";
   return {
     name: initial.name || "",
     description: initial.description || "",
-    type: (initial.type as string) || "ACADEMY",
-    category: initial.category || "academy-junior",
+    type: selectorType,
+    category: initial.category || (selectorType === "ACADEMY" ? "academy" : "leisure"),
     price: initial.price != null ? String(initial.price) : "",
     billingCycle: initial.billingCycle || "monthly",
     durationDays: initial.durationDays != null ? String(initial.durationDays) : "",
@@ -86,7 +89,7 @@ function fromPlan(initial: Plan): PlanFormState {
     requiresAthlete:
       initial.requiresAthlete != null
         ? initial.requiresAthlete
-        : (initial.type as string) === "ACADEMY",
+        : selectorType === "ACADEMY",
   };
 }
 
@@ -104,6 +107,16 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
 
   const set = <K extends keyof PlanFormState>(key: K, value: PlanFormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // Single Academy/Leisure category selector drives the backend `type` +
+  // `category`, and defaults requiresAthlete (still overridable below).
+  const selectCategory = (type: string) =>
+    setForm((f) => ({
+      ...f,
+      type,
+      category: type === "ACADEMY" ? "academy" : "leisure",
+      requiresAthlete: type === "ACADEMY",
+    }));
 
   const addFeature = () => set("features", [...form.features, ""]);
   const updateFeature = (i: number, v: string) => {
@@ -126,7 +139,7 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         type: form.type,
-        category: form.category,
+        category: form.type === "ACADEMY" ? "academy" : "leisure",
         price: Number(form.price) || 0,
         billingCycle: form.billingCycle,
         durationDays: form.durationDays === "" ? undefined : Number(form.durationDays),
@@ -213,33 +226,18 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
                   placeholder="Short description shown to athletes."
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Plan type</Label>
-                <Select value={form.type} onValueChange={(v) => set("type", v as string)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select a type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PLAN_TYPES.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Category</Label>
                   <Select
-                    value={form.category}
-                    onValueChange={(v) => set("category", v as string)}
+                    value={form.type}
+                    onValueChange={(v) => selectCategory(v as string)}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select a category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {CATEGORIES.map((opt) => (
+                      {PLAN_TYPES.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           {opt.label}
                         </SelectItem>
