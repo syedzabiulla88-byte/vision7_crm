@@ -1775,6 +1775,9 @@ function AssignPlanDialog({
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Billing — every paid membership is invoiced; collect now or issue an open invoice.
+  const [payNow, setPayNow] = useState(true);
+  const [paymentMethod, setPaymentMethod] = useState("cash");
 
   // Athlete provisioning fields (only used for academy plans without a linked athlete).
   const [athleteDob, setAthleteDob] = useState("");
@@ -1864,6 +1867,13 @@ function AssignPlanDialog({
       }
     }
     setSaving(true);
+    const planPrice = Number(selectedPlan?.price) || 0;
+    const billingToast = (status?: string) =>
+      planPrice <= 0
+        ? "Membership assigned — activated (free plan)"
+        : status === "ACTIVE"
+          ? "Payment recorded — contact is now an active Member"
+          : "Invoice raised — membership pending until paid";
     try {
       if (needsAthleteDetails) {
         // 1. Provision the athlete (creates a user login + auto-links a CRM contact).
@@ -1878,37 +1888,45 @@ function AssignPlanDialog({
           nationality: athleteNationality.trim() || undefined,
           gender: contact.gender || undefined,
         });
-        // 2. Tie the membership to the freshly created athlete.
-        await api.memberships.create({
+        // 2. Bill for the plan, tied to the freshly created athlete.
+        const res = await api.memberships.assign({
           athleteId: athlete.id,
           planId,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
+          payNow: planPrice > 0 ? payNow : true,
+          paymentMethod,
         });
         toast.success(
-          "Athlete profile + membership created — they can now log into the platform",
+          res?.membership?.status === "ACTIVE"
+            ? "Athlete profile created + membership active — they can log into the platform"
+            : "Athlete profile created — invoice raised, membership pending until paid",
         );
       } else if (requiresAthlete && linkedAthleteId) {
-        // Academy plan, contact already has an athlete — assign via athleteId.
-        await api.memberships.create({
+        // Academy plan, contact already has an athlete — bill via athleteId.
+        const res = await api.memberships.assign({
           athleteId: linkedAthleteId,
           planId,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
+          payNow: planPrice > 0 ? payNow : true,
+          paymentMethod,
         });
-        toast.success("Membership assigned — contact is now a Member");
+        toast.success(billingToast(res?.membership?.status));
       } else {
-        // Non-academy plan — assign directly to the CRM contact.
-        await api.memberships.create({
+        // Non-academy plan — bill directly to the CRM contact.
+        const res = await api.memberships.assign({
           crmContactId: contact.id,
           planId,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
+          payNow: planPrice > 0 ? payNow : true,
+          paymentMethod,
         });
-        toast.success("Membership assigned — contact is now a Member");
+        toast.success(billingToast(res?.membership?.status));
       }
       onAssigned?.();
       onOpenChange(false);
@@ -1997,6 +2015,58 @@ function AssignPlanDialog({
               placeholder="Anything to record about this membership…"
             />
           </div>
+
+          {/* Billing — every membership is billed; no free passes. */}
+          {planId
+            ? (() => {
+                const price = Number(selectedPlan?.price) || 0;
+                if (price <= 0) {
+                  return (
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                      Free plan — no payment required. The membership activates immediately.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-3 rounded-md border p-3">
+                    <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPayNow(true)}
+                        className={`rounded-md border px-3 py-2 text-sm ${payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                      >
+                        Collect payment now
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPayNow(false)}
+                        className={`rounded-md border px-3 py-2 text-sm ${!payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                      >
+                        Invoice — pay later
+                      </button>
+                    </div>
+                    {payNow ? (
+                      <SelectField
+                        label="Payment method"
+                        value={paymentMethod}
+                        onChange={(v) => setPaymentMethod(v || "cash")}
+                        options={[
+                          { value: "cash", label: "Cash" },
+                          { value: "card", label: "Card" },
+                          { value: "bank-transfer", label: "Bank transfer" },
+                          { value: "cheque", label: "Cheque" },
+                        ]}
+                      />
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        An invoice will be issued. The member stays <strong>pending</strong> (no access) until it&apos;s paid.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()
+            : null}
 
           {needsAthleteDetails && (
             <div className="space-y-3 rounded-md border border-[#FFCF01]/40 bg-[#FFCF01]/10 p-3 text-sm">
