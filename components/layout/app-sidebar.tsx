@@ -74,14 +74,14 @@ export function AppSidebar() {
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r border-[#FFCF01]/15 bg-[#011b2b] text-white md:flex">
       {/* Brand */}
-      <div className="flex h-16 items-center gap-2 border-b border-[#FFCF01]/15 px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded bg-[#FFCF01] font-bold text-[#011b2b]">
-          V7
-        </div>
-        <div className="leading-tight">
-          <p className="text-sm font-semibold">Vision7</p>
-          <p className="text-[10px] uppercase tracking-wider text-[#FFCF01]">Control Plane</p>
-        </div>
+      <div className="flex h-16 items-center gap-2.5 border-b border-[#FFCF01]/15 px-5">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/vision-logo.svg" alt="Vision7" className="h-9 w-auto" />
+        <span className="text-[10px] uppercase leading-tight tracking-wider text-[#FFCF01]">
+          Control
+          <br />
+          Plane
+        </span>
       </div>
 
       {/* Nav */}

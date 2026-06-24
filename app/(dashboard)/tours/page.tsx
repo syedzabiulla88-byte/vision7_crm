@@ -98,6 +98,7 @@ interface AvailabilitySlot {
   booked: number;
   remaining: number;
   available: boolean;
+  past?: boolean;
 }
 
 interface ListMeta {
@@ -1084,8 +1085,8 @@ function AddTourDialog({
                   </SelectTrigger>
                   <SelectContent>
                     {slots.map((s) => (
-                      <SelectItem key={s.time} value={s.time} disabled={s.remaining <= 0}>
-                        {s.time} — {s.remaining <= 0 ? "full" : `${s.remaining} left`}
+                      <SelectItem key={s.time} value={s.time} disabled={!s.available}>
+                        {s.time} — {s.past ? "past" : s.remaining <= 0 ? "full" : `${s.remaining} left`}
                       </SelectItem>
                     ))}
                   </SelectContent>

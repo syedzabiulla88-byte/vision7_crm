@@ -8,8 +8,19 @@ import { Button } from "@/components/ui/button"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Cancel01Icon } from "@hugeicons/core-free-icons"
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+function Dialog({ onOpenChange, ...props }: DialogPrimitive.Root.Props) {
+  // Don't let an accidental click outside the dialog (or focus leaving it) close
+  // it — that loses half-filled forms. Require an explicit close (the X button,
+  // a Cancel action, Escape, or programmatic). cancel() blocks Base UI's own
+  // dismissal, so this holds for both controlled and uncontrolled dialogs.
+  const handleOpenChange: DialogPrimitive.Root.Props["onOpenChange"] = (open, eventDetails) => {
+    if (!open && (eventDetails.reason === "outside-press" || eventDetails.reason === "focus-out")) {
+      eventDetails.cancel()
+      return
+    }
+    onOpenChange?.(open, eventDetails)
+  }
+  return <DialogPrimitive.Root data-slot="dialog" {...props} onOpenChange={handleOpenChange} />
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
