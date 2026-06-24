@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -67,6 +67,9 @@ import {
   Clock,
   PlayCircle,
   Check,
+  ChevronDown,
+  ChevronRight,
+  Warning,
 } from "@/lib/icons";
 
 // ─── Domain constants (ported from site/src/app/admin/members/page.js) ──────────
@@ -148,6 +151,27 @@ function toDateInput(value: unknown): string {
 type Membership = any;
 
 /**
+ * A person row from api.memberships.listGrouped — one entry per human, with that
+ * person's full membership objects nested under `memberships` (best-status-first).
+ */
+interface Person {
+  key: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  idNumber: string | null;
+  avatar: string | null;
+  contactId: string | null;
+  contactType: "MEMBER" | "CUSTOMER" | "LEAD" | "FORMER" | null;
+  athleteId: string | null;
+  userId: string | null;
+  memberships: Membership[];
+  membershipCount: number;
+  activeCount: number;
+  primaryStatus: string | null;
+}
+
+/**
  * A membership row carries a CRM contact id when the member exists in the CRM —
  * directly for leisure members, or via the linked athlete (backend resolves the
  * academy athlete's linked contact onto athlete.crmContactId) so family works for
@@ -187,6 +211,24 @@ function statusVariant(status: unknown): "default" | "secondary" | "destructive"
   }
 }
 
+/** CRM classification badge — Member reads "active customer", everything else muted. */
+function contactTypeBadge(
+  type: Person["contactType"],
+): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } | null {
+  switch (type) {
+    case "MEMBER":
+      return { label: "Member", variant: "default" };
+    case "CUSTOMER":
+      return { label: "Customer", variant: "secondary" };
+    case "LEAD":
+      return { label: "Lead", variant: "outline" };
+    case "FORMER":
+      return { label: "Former", variant: "destructive" };
+    default:
+      return null;
+  }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MembersPage() {
@@ -194,7 +236,7 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [typeFilter, setTypeFilter] = useState<"ALL" | "ACADEMY" | "LEISURE">("ALL");
   const [query, setQuery] = useState("");
@@ -205,6 +247,8 @@ export default function MembersPage() {
     limit: number;
     totalPages: number;
   } | null>(null);
+  // Which multi-membership person rows are expanded (keyed by Person.key).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [showAssign, setShowAssign] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
@@ -215,51 +259,60 @@ export default function MembersPage() {
   const [unfreezeTarget, setUnfreezeTarget] = useState<Membership | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
 
-  // §3 — server-side search. The search term is debounced and passed to
-  // api.memberships.list({ search }), which matches name / phone / ID across
-  // the linked athlete, user AND crmContact.
-  const load = useCallback(async (search = "", pageArg = 1) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: Record<string, unknown> = { page: pageArg, limit: PAGE_SIZE };
-      const term = search.trim();
-      if (term) params.search = term;
-      const result = await api.memberships.list(params);
-      const rows = Array.isArray(result) ? result : result?.data || [];
-      setMemberships(rows);
-      setMeta(Array.isArray(result) ? null : result?.meta ?? null);
-    } catch (err: any) {
-      setError(err?.message || "Failed to load memberships");
-      toast.error(err?.message || "Failed to load memberships");
-    } finally {
-      setLoading(false);
-      setInitialLoaded(true);
-    }
-  }, []);
-
-  // Debounce the search term (~300ms) and re-query the server when it (or the
-  // page) changes.
-  useEffect(() => {
-    const t = setTimeout(() => load(query, page), 300);
-    return () => clearTimeout(t);
-  }, [query, page, load]);
-
-  // Re-query keeping the current search term + page so the list doesn't reset
-  // after create / edit / freeze actions.
-  const reload = useCallback(() => load(query, page), [load, query, page]);
-
-  // Status + side (academy/leisure) filtering stays client-side on the
-  // server-searched result set.
-  const filtered = useMemo(() => {
-    return memberships.filter((m) => {
-      const s = String(m.status || "").toUpperCase();
-      if (statusFilter !== "ALL" && s !== statusFilter) return false;
-      if (typeFilter === "ACADEMY" && !m.athleteId) return false;
-      if (typeFilter === "LEISURE" && m.athleteId) return false;
-      return true;
+  const toggleExpand = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
     });
-  }, [memberships, statusFilter, typeFilter]);
+
+  // Server-side, person-grouped fetch. listGrouped returns ONE entry per human
+  // with their memberships nested, and applies search / status / side filters +
+  // person-level pagination server-side — so there is no client-side filtering.
+  const load = useCallback(
+    async (
+      search = "",
+      pageArg = 1,
+      status = "ALL",
+      side: "ALL" | "ACADEMY" | "LEISURE" = "ALL",
+    ) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params: Record<string, unknown> = { page: pageArg, limit: PAGE_SIZE };
+        const term = search.trim();
+        if (term) params.search = term;
+        if (status !== "ALL") params.status = status;
+        if (side !== "ALL") params.type = side;
+        const result = await api.memberships.listGrouped(params);
+        const rows: Person[] = Array.isArray(result) ? result : result?.data || [];
+        setPeople(rows);
+        setMeta(Array.isArray(result) ? null : result?.meta ?? null);
+      } catch (err: any) {
+        setError(err?.message || "Failed to load members");
+        toast.error(err?.message || "Failed to load members");
+      } finally {
+        setLoading(false);
+        setInitialLoaded(true);
+      }
+    },
+    [],
+  );
+
+  // Debounce the search term (~300ms) and re-query the server when search, page,
+  // status or side changes — all filtering happens server-side now.
+  useEffect(() => {
+    const t = setTimeout(() => load(query, page, statusFilter, typeFilter), 300);
+    return () => clearTimeout(t);
+  }, [query, page, statusFilter, typeFilter, load]);
+
+  // Re-query keeping the current filters + page so the list doesn't reset after
+  // create / edit / freeze actions.
+  const reload = useCallback(
+    () => load(query, page, statusFilter, typeFilter),
+    [load, query, page, statusFilter, typeFilter],
+  );
 
   const memberLabel = (m: Membership) => displayName(m) || "this membership";
 
@@ -293,15 +346,6 @@ export default function MembersPage() {
     }
   };
 
-  const counts = useMemo(
-    () => ({
-      all: memberships.length,
-      academy: memberships.filter((m) => m.athleteId).length,
-      leisure: memberships.filter((m) => !m.athleteId).length,
-    }),
-    [memberships],
-  );
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -326,9 +370,9 @@ export default function MembersPage() {
         <span className="mr-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Side</span>
         {(
           [
-            { v: "ALL", label: "All", count: counts.all },
-            { v: "ACADEMY", label: "Academy", count: counts.academy },
-            { v: "LEISURE", label: "Leisure", count: counts.leisure },
+            { v: "ALL", label: "All" },
+            { v: "ACADEMY", label: "Academy" },
+            { v: "LEISURE", label: "Leisure" },
           ] as const
         ).map((t) => (
           <Button
@@ -341,7 +385,6 @@ export default function MembersPage() {
             }}
           >
             {t.label}
-            <span className="opacity-70">· {t.count}</span>
           </Button>
         ))}
       </div>
@@ -378,31 +421,29 @@ export default function MembersPage() {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Table — one row per PERSON; people with several memberships expand to
+          show each membership (academy + leisure, renewals, pending) in place. */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Member</TableHead>
               <TableHead>Contact</TableHead>
-              <TableHead>Plan</TableHead>
+              <TableHead>Plan / membership</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Start</TableHead>
-              <TableHead>End</TableHead>
-              <TableHead>Price</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
                   Loading members…
                 </TableCell>
               </TableRow>
             ) : error ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center">
+                <TableCell colSpan={5} className="h-32 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <p className="text-destructive">{error}</p>
                     <Button variant="outline" size="sm" onClick={reload}>
@@ -411,121 +452,241 @@ export default function MembersPage() {
                   </div>
                 </TableCell>
               </TableRow>
-            ) : filtered.length === 0 ? (
+            ) : people.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="h-32 text-center">
+                <TableCell colSpan={5} className="h-32 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <UsersMultiple className="h-8 w-8 opacity-40" />
                     <p>
                       {query.trim()
                         ? "No members match your search."
-                        : "No memberships match your filters."}
+                        : "No members match your filters."}
                     </p>
                   </div>
                 </TableCell>
               </TableRow>
             ) : (
-              filtered.map((m) => {
-                const name = displayName(m);
-                const email = m.athlete?.email || m.crmContact?.email || m.user?.email || "";
-                const phone = m.athlete?.phone || m.crmContact?.phone || m.user?.phone || "";
-                const idNumber = m.athlete?.idNumber || m.crmContact?.nationalId || "";
-                const crmId = contactIdOf(m);
-                const isFrozen = String(m.status || "").toUpperCase() === "FROZEN";
+              people.map((p) => {
+                const memberships = p.memberships ?? [];
+                const primary = memberships[0];
+                const multi = p.membershipCount > 1;
+                const isOpen = expanded.has(p.key);
+                const typeBadge = contactTypeBadge(p.contactType);
+                const primaryFrozen =
+                  String(primary?.status || "").toUpperCase() === "FROZEN";
                 return (
-                  <TableRow key={m.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback>{(name.charAt(0) || "?").toUpperCase()}</AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{name || "—"}</p>
-                          {email && <p className="truncate text-xs text-muted-foreground">{email}</p>}
+                  <Fragment key={p.key}>
+                    <TableRow>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          {multi ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpand(p.key)}
+                              className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              aria-label={isOpen ? "Collapse memberships" : "Expand memberships"}
+                              aria-expanded={isOpen}
+                            >
+                              {isOpen ? (
+                                <ChevronDown className="h-4 w-4" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4" />
+                              )}
+                            </button>
+                          ) : (
+                            <span className="w-5 shrink-0" />
+                          )}
+                          <Avatar className="h-8 w-8">
+                            <AvatarFallback>{(p.name.charAt(0) || "?").toUpperCase()}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="truncate font-medium">{p.name || "—"}</p>
+                              {typeBadge && (
+                                <Badge variant={typeBadge.variant}>{typeBadge.label}</Badge>
+                              )}
+                            </div>
+                            {p.email && (
+                              <p className="truncate text-xs text-muted-foreground">{p.email}</p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="min-w-0 space-y-0.5 text-xs text-muted-foreground">
-                        <p className="truncate">{phone || "—"}</p>
-                        {idNumber && <p className="truncate font-mono">ID {idNumber}</p>}
-                      </div>
-                    </TableCell>
-                    <TableCell>{m.plan?.name || "—"}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(m.status)}>{m.status || "—"}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{formatDate(m.startDate)}</TableCell>
-                    <TableCell className="text-muted-foreground">{formatDate(m.endDate)}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatSAR(m.price ?? m.plan?.price)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-1">
-                        {crmId && (
-                          <Button
-                            variant="outline"
-                            size="icon-sm"
-                            render={<Link href={`/crm/${crmId}`} />}
-                            title="Open in CRM"
-                            aria-label="Open in CRM"
+                      </TableCell>
+                      <TableCell>
+                        <div className="min-w-0 space-y-0.5 text-xs text-muted-foreground">
+                          <p className="truncate">{p.phone || "—"}</p>
+                          {p.idNumber && <p className="truncate font-mono">ID {p.idNumber}</p>}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {multi ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(p.key)}
+                            className="text-left"
                           >
-                            <Share2 />
-                          </Button>
-                        )}
-                        {isFrozen ? (
-                          <Button
-                            variant="outline"
-                            size="icon-sm"
-                            onClick={() => setUnfreezeTarget(m)}
-                            title="Unfreeze membership"
-                            aria-label="Unfreeze membership"
-                          >
-                            <PlayCircle />
-                          </Button>
+                            <span className="font-medium">{primary?.plan?.name || "—"}</span>
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              +{p.membershipCount - 1} more
+                            </span>
+                          </button>
                         ) : (
-                          <Button
-                            variant="outline"
-                            size="icon-sm"
-                            onClick={() => setFreezeTarget(m)}
-                            title="Freeze membership"
-                            aria-label="Freeze membership"
-                          >
-                            <Clock />
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            <span>{primary?.plan?.name || "—"}</span>
+                            {primary && (
+                              <Badge variant={statusVariant(primary.status)}>
+                                {primary.status || "—"}
+                              </Badge>
+                            )}
+                          </div>
                         )}
-                        {crmId && (
-                          <Button
-                            variant="outline"
-                            size="icon-sm"
-                            onClick={() => setFamilyMembership(m)}
-                            title="Family members"
-                            aria-label="Family members"
-                          >
-                            <UsersIcon />
-                          </Button>
-                        )}
-                        <Button
-                          variant="outline"
-                          size="icon-sm"
-                          onClick={() => setEditing(m)}
-                          title="Edit"
-                          aria-label="Edit membership"
-                        >
-                          <SquarePen />
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="icon-sm"
-                          onClick={() => setDeleteTarget(m)}
-                          title="Delete"
-                          aria-label="Delete membership"
-                        >
-                          <Trash />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={statusVariant(p.primaryStatus)}>
+                          {p.primaryStatus || "—"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          {p.contactId && (
+                            <Button
+                              variant="outline"
+                              size="icon-sm"
+                              render={<Link href={`/crm/${p.contactId}`} />}
+                              title="Open in CRM"
+                              aria-label="Open in CRM"
+                            >
+                              <Share2 />
+                            </Button>
+                          )}
+                          {p.contactId && primary && (
+                            <Button
+                              variant="outline"
+                              size="icon-sm"
+                              onClick={() => setFamilyMembership(primary)}
+                              title="Family members"
+                              aria-label="Family members"
+                            >
+                              <UsersIcon />
+                            </Button>
+                          )}
+                          {/* Single-membership people get inline membership actions;
+                              for multi they live in the expanded sub-rows. */}
+                          {!multi && primary && (
+                            <>
+                              {primaryFrozen ? (
+                                <Button
+                                  variant="outline"
+                                  size="icon-sm"
+                                  onClick={() => setUnfreezeTarget(primary)}
+                                  title="Unfreeze membership"
+                                  aria-label="Unfreeze membership"
+                                >
+                                  <PlayCircle />
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="icon-sm"
+                                  onClick={() => setFreezeTarget(primary)}
+                                  title="Freeze membership"
+                                  aria-label="Freeze membership"
+                                >
+                                  <Clock />
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                size="icon-sm"
+                                onClick={() => setEditing(primary)}
+                                title="Edit"
+                                aria-label="Edit membership"
+                              >
+                                <SquarePen />
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="icon-sm"
+                                onClick={() => setDeleteTarget(primary)}
+                                title="Delete"
+                                aria-label="Delete membership"
+                              >
+                                <Trash />
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+
+                    {/* Expanded sub-rows — one line per membership, with that
+                        membership's own status + dates + per-membership actions. */}
+                    {multi &&
+                      isOpen &&
+                      memberships.map((m) => {
+                        const subFrozen = String(m.status || "").toUpperCase() === "FROZEN";
+                        return (
+                          <TableRow key={m.id} className="bg-muted/30">
+                            <TableCell />
+                            <TableCell colSpan={2}>
+                              <div className="flex items-center gap-2 pl-7">
+                                <span className="text-sm font-medium">{m.plan?.name || "—"}</span>
+                                <Badge variant={statusVariant(m.status)}>{m.status || "—"}</Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatDate(m.startDate)} – {formatDate(m.endDate)}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatSAR(m.price ?? m.plan?.price)}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex justify-end gap-1">
+                                {subFrozen ? (
+                                  <Button
+                                    variant="outline"
+                                    size="icon-sm"
+                                    onClick={() => setUnfreezeTarget(m)}
+                                    title="Unfreeze membership"
+                                    aria-label="Unfreeze membership"
+                                  >
+                                    <PlayCircle />
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="outline"
+                                    size="icon-sm"
+                                    onClick={() => setFreezeTarget(m)}
+                                    title="Freeze membership"
+                                    aria-label="Freeze membership"
+                                  >
+                                    <Clock />
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="outline"
+                                  size="icon-sm"
+                                  onClick={() => setEditing(m)}
+                                  title="Edit"
+                                  aria-label="Edit membership"
+                                >
+                                  <SquarePen />
+                                </Button>
+                                <Button
+                                  variant="destructive"
+                                  size="icon-sm"
+                                  onClick={() => setDeleteTarget(m)}
+                                  title="Delete"
+                                  aria-label="Delete membership"
+                                >
+                                  <Trash />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </Fragment>
                 );
               })
             )}
@@ -536,7 +697,7 @@ export default function MembersPage() {
       <Pagination
         page={page}
         pageSize={PAGE_SIZE}
-        total={meta?.total ?? filtered.length}
+        total={meta?.total ?? people.length}
         totalPages={meta?.totalPages ?? 1}
         onPageChange={setPage}
       />
@@ -1995,6 +2156,11 @@ function AssignMembershipDialog({
   const [results, setResults] = useState<any[]>([]);
   // Selected subject (athlete or crm contact); { id, name, sub } where sub = email/phone
   const [subject, setSubject] = useState<{ id: string; name: string; sub?: string } | null>(null);
+  // Duplicate-assign guard — the subject's existing ACTIVE/PENDING memberships.
+  // Multiple memberships are allowed, so this is a deliberate confirm, not a block.
+  const [existingMemberships, setExistingMemberships] = useState<Membership[]>([]);
+  const [checkingExisting, setCheckingExisting] = useState(false);
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
 
   const [plans, setPlans] = useState<any[]>([]);
   const [planId, setPlanId] = useState("");
@@ -2031,6 +2197,39 @@ function AssignMembershipDialog({
     setSearch("");
     setResults([]);
   }, [subjectType]);
+
+  // When a subject is picked, look up their existing memberships so we can warn
+  // before assigning a second active/pending one. Clears whenever the subject
+  // changes (including back to none).
+  useEffect(() => {
+    setExistingMemberships([]);
+    setConfirmDuplicate(false);
+    if (!subject?.id) {
+      setCheckingExisting(false);
+      return;
+    }
+    let cancelled = false;
+    setCheckingExisting(true);
+    (async () => {
+      try {
+        const params =
+          subjectType === "ACADEMY"
+            ? { athleteId: subject.id, limit: 50 }
+            : { crmContactId: subject.id, limit: 50 };
+        const res = await api.memberships.list(params);
+        const list: Membership[] = Array.isArray(res) ? res : (res as any)?.data || [];
+        if (!cancelled) setExistingMemberships(list);
+      } catch {
+        // Non-fatal — if the lookup fails we simply skip the warning.
+        if (!cancelled) setExistingMemberships([]);
+      } finally {
+        if (!cancelled) setCheckingExisting(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [subject, subjectType]);
 
   // Debounced server-side search (~300ms) for the active subject type.
   useEffect(() => {
@@ -2082,6 +2281,13 @@ function AssignMembershipDialog({
     return { name, sub };
   };
 
+  // Existing memberships that already grant (ACTIVE) or will grant (PENDING)
+  // access — these drive the duplicate-assign confirm.
+  const activeOrPending = existingMemberships.filter((m) =>
+    ["ACTIVE", "PENDING"].includes(String(m.status || "").toUpperCase()),
+  );
+  const needsDuplicateConfirm = activeOrPending.length > 0;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject?.id) {
@@ -2094,6 +2300,12 @@ function AssignMembershipDialog({
     }
     if (!planId) {
       toast.error("Plan is required");
+      return;
+    }
+    // Multiple memberships are allowed, but assigning a second active/pending one
+    // must be deliberate — require the confirm checkbox first.
+    if (needsDuplicateConfirm && !confirmDuplicate) {
+      toast.error(`${subject.name} already has an active/pending membership — tick the box to add another.`);
       return;
     }
     const selectedPlan = plans.find((p) => p.id === planId);
@@ -2249,6 +2461,33 @@ function AssignMembershipDialog({
                 )}
               </Field>
 
+              {/* Duplicate-assign warning — a person CAN hold multiple
+                  memberships, so this is a deliberate confirm, not a hard block. */}
+              {subject && needsDuplicateConfirm && (
+                <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+                  <p className="flex items-start gap-2 text-amber-700 dark:text-amber-400">
+                    <Warning className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      <strong>{subject.name}</strong> already has an active/pending membership
+                      {activeOrPending[0]?.plan?.name ? ` — ${activeOrPending[0].plan.name}` : ""}
+                      {activeOrPending.length > 1 ? ` (+${activeOrPending.length - 1} more)` : ""}.
+                      Assigning another will add to it.
+                    </span>
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      id="am-confirm-duplicate"
+                      checked={confirmDuplicate}
+                      onCheckedChange={(v) => setConfirmDuplicate(!!v)}
+                    />
+                    <Label htmlFor="am-confirm-duplicate">Add another membership anyway</Label>
+                  </div>
+                </div>
+              )}
+              {subject && checkingExisting && (
+                <p className="text-xs text-muted-foreground">Checking existing memberships…</p>
+              )}
+
               <Field label="Plan *">
                 <SelectField
                   value={planId}
@@ -2371,7 +2610,10 @@ function AssignMembershipDialog({
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || loading}>
+            <Button
+              type="submit"
+              disabled={saving || loading || (needsDuplicateConfirm && !confirmDuplicate)}
+            >
               {saving ? "Saving…" : "Assign"}
             </Button>
           </DialogFooter>

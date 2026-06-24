@@ -1760,11 +1760,16 @@ function AssignPlanDialog({
   const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
   const [athleteJersey, setAthleteJersey] = useState("");
   const [athleteNationality, setAthleteNationality] = useState("");
+  // Warn (don't block) when the person already holds an active/pending membership.
+  const [existingActive, setExistingActive] = useState<any[]>([]);
+  const [confirmDup, setConfirmDup] = useState(false);
 
   // Load plans whenever the dialog opens; reset the form.
   useEffect(() => {
     if (!open) return;
     setPlanId("");
+    setExistingActive([]);
+    setConfirmDup(false);
     setStartDate(toDateInput(new Date().toISOString()));
     setEndDate("");
     setNotes("");
@@ -1788,6 +1793,21 @@ function AssignPlanDialog({
         }
       } finally {
         if (!cancelled) setLoadingPlans(false);
+      }
+    })();
+    // Surface any active/pending membership this person already holds.
+    (async () => {
+      try {
+        const calls: Promise<any>[] = [api.memberships.list({ crmContactId: contact.id, limit: 50 })];
+        if (contact?.linkedAthleteId) calls.push(api.memberships.list({ athleteId: contact.linkedAthleteId, limit: 50 }));
+        const results = await Promise.all(calls);
+        if (cancelled) return;
+        const all = results.flatMap((r) => (Array.isArray(r) ? r : r?.data || []));
+        setExistingActive(
+          all.filter((m: any) => ["ACTIVE", "PENDING"].includes(String(m.status).toUpperCase())),
+        );
+      } catch {
+        /* non-blocking */
       }
     })();
     return () => {
@@ -1843,6 +1863,10 @@ function AssignPlanDialog({
         toast.error("Pick a playing position for the athlete.");
         return;
       }
+    }
+    if (existingActive.length && !confirmDup) {
+      toast.error("This person already has an active/pending membership — tick the box to add another.");
+      return;
     }
     setSaving(true);
     const planPrice = Number(selectedPlan?.price) || 0;
@@ -1939,6 +1963,25 @@ function AssignPlanDialog({
         </DialogHeader>
 
         <form onSubmit={submit} className="space-y-4">
+          {existingActive.length > 0 && (
+            <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700/50 dark:bg-amber-950/30">
+              <p className="font-medium text-amber-800 dark:text-amber-200">
+                Already has {existingActive.length} active/pending membership
+                {existingActive.length > 1 ? "s" : ""}
+              </p>
+              <ul className="ml-4 list-disc text-xs text-amber-700 dark:text-amber-300">
+                {existingActive.slice(0, 4).map((m) => (
+                  <li key={m.id}>
+                    {m.plan?.name || "Plan"} — {String(m.status).toLowerCase()}
+                  </li>
+                ))}
+              </ul>
+              <label className="flex items-center gap-2 text-xs text-amber-800 dark:text-amber-200">
+                <input type="checkbox" checked={confirmDup} onChange={(e) => setConfirmDup(e.target.checked)} />
+                Add another membership anyway
+              </label>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Plan</Label>
             <Select

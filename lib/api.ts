@@ -125,6 +125,8 @@ export const api = {
 
   memberships: {
     list: (params?: Params) => apiFetch<any>(`/memberships${qs(params)}`),
+    // Members directory grouped by person (one entry per person, memberships[] nested).
+    listGrouped: (params?: Params) => apiFetch<any>(`/memberships/grouped${qs(params)}`),
     get: (id: string) => apiFetch<any>(`/memberships/${id}`),
     create: (data: any) =>
       apiFetch<any>(`/memberships`, { method: "POST", body: JSON.stringify(data) }),
