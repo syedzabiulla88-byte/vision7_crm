@@ -147,9 +147,19 @@ function toDateInput(value: unknown): string {
 
 type Membership = any;
 
-/** A membership row carries a CRM contact id when the member exists in the CRM. */
+/**
+ * A membership row carries a CRM contact id when the member exists in the CRM —
+ * directly for leisure members, or via the linked athlete (backend resolves the
+ * academy athlete's linked contact onto athlete.crmContactId) so family works for
+ * every member, not just leisure.
+ */
 function contactIdOf(m: Membership): string | null {
-  return m?.crmContactId || m?.crmContact?.id || null;
+  return (
+    m?.crmContactId ||
+    m?.crmContact?.id ||
+    (m?.athlete as { crmContactId?: string } | undefined)?.crmContactId ||
+    null
+  );
 }
 
 /** Best-available display name for a membership row. */
