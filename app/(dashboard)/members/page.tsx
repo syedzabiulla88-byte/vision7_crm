@@ -1894,13 +1894,36 @@ function FamilyMembersDialog({
 }) {
   const [family, setFamily] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ ...EMPTY_FAMILY });
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
-    setForm((f) => ({ ...f, [k]: v }));
+  // Add flow — two modes: link an existing CRM contact, or create one & link it.
+  const [mode, setMode] = useState<"LINK" | "CREATE">("LINK");
+
+  // Link-existing mode
+  const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<any[]>([]);
+  const [selected, setSelected] = useState<any | null>(null);
+  const [linkRelation, setLinkRelation] = useState(FAMILY_RELATIONS[0]);
+  const [linking, setLinking] = useState(false);
+
+  // Create-&-link mode
+  const [createForm, setCreateForm] = useState({
+    firstName: "",
+    lastName: "",
+    phone: "",
+    dob: "",
+    relation: FAMILY_RELATIONS[0],
+  });
+  const [creating, setCreating] = useState(false);
+  const setCreate = <K extends keyof typeof createForm>(k: K, v: (typeof createForm)[K]) =>
+    setCreateForm((f) => ({ ...f, [k]: v }));
+
+  const relationOptions = FAMILY_RELATIONS.map((r) => ({
+    value: r,
+    label: r.charAt(0) + r.slice(1).toLowerCase(),
+  }));
 
   const loadFamily = useCallback(async () => {
     setLoading(true);
@@ -1918,36 +1941,92 @@ function FamilyMembersDialog({
     loadFamily();
   }, [loadFamily]);
 
-  const submit = async (e: React.FormEvent) => {
+  // IDs already linked (or the primary contact) — excluded from search results so
+  // we never offer to link the same person twice.
+  const excludedIds = useMemo(() => {
+    const ids = new Set<string>([contactId]);
+    for (const fm of family) {
+      if (fm?.memberContactId) ids.add(fm.memberContactId);
+    }
+    return ids;
+  }, [family, contactId]);
+
+  // Debounced server-side contact search (~300ms).
+  useEffect(() => {
+    const term = search.trim();
+    if (!term) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await api.crm.list({ q: term, limit: 8 });
+        const list = Array.isArray(res) ? res : (res as any)?.data || [];
+        setResults(list);
+      } catch (err: any) {
+        toast.error(err?.message || "Search failed");
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [search]);
+
+  const resetLink = () => {
+    setSelected(null);
+    setSearch("");
+    setResults([]);
+    setLinkRelation(FAMILY_RELATIONS[0]);
+  };
+
+  const linkExisting = async () => {
+    if (!selected?.id) return;
+    setLinking(true);
+    try {
+      await api.crm.addFamily(contactId, {
+        memberContactId: selected.id,
+        relation: linkRelation,
+      });
+      toast.success("Family member linked");
+      resetLink();
+      await loadFamily();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to link family member");
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const createAndLink = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.firstName.trim()) {
+    if (!createForm.firstName.trim()) {
       toast.error("First name is required");
       return;
     }
-    setSaving(true);
+    setCreating(true);
     try {
-      await api.crm.addFamily(contactId, {
-        firstName: form.firstName.trim(),
-        lastName: form.lastName.trim() || undefined,
-        dob: form.dob ? new Date(form.dob).toISOString() : undefined,
-        gender: form.gender,
-        relation: form.relation,
-        idType: form.idNumber.trim() ? form.idType : undefined,
-        idNumber: form.idNumber.trim() || undefined,
-        school: form.school.trim() || undefined,
-        notes: form.notes.trim() || undefined,
-        // §8 — link the dependent to this single membership when added from a
-        // membership context.
-        membershipId: membershipId || undefined,
+      const c = await api.crm.create({
+        firstName: createForm.firstName.trim(),
+        lastName: createForm.lastName.trim() || undefined,
+        phone: createForm.phone.trim() || undefined,
+        dob: createForm.dob ? new Date(createForm.dob).toISOString() : undefined,
+        type: "CONTACT",
+        source: "family",
       });
-      toast.success("Family member added");
-      setForm({ ...EMPTY_FAMILY });
+      await api.crm.addFamily(contactId, {
+        memberContactId: c.id,
+        relation: createForm.relation,
+      });
+      toast.success("Family member created & linked");
+      setCreateForm({ firstName: "", lastName: "", phone: "", dob: "", relation: FAMILY_RELATIONS[0] });
       await loadFamily();
     } catch (err: any) {
-      // Backend rejects dependents under age 5 — surface that (and any other) error.
-      toast.error(err?.message || "Failed to add family member");
+      toast.error(err?.message || "Failed to create family member");
     } finally {
-      setSaving(false);
+      setCreating(false);
     }
   };
 
@@ -1966,8 +2045,23 @@ function FamilyMembersDialog({
     }
   };
 
-  const familyLabel = (fm: any) =>
-    `${fm.firstName || ""} ${fm.lastName || ""}`.trim() || "this family member";
+  // Display name for a row — prefer the linked contact, fall back to the legacy blob.
+  const familyLabel = (fm: any) => {
+    const c = fm?.memberContact;
+    const name = c
+      ? `${c.firstName || ""} ${c.lastName || ""}`.trim()
+      : `${fm.firstName || ""} ${fm.lastName || ""}`.trim();
+    return name || "this family member";
+  };
+
+  const relationLabel = (r?: string) =>
+    r ? r.charAt(0) + r.slice(1).toLowerCase() : null;
+
+  const contactLabel = (c: any) => {
+    const name = `${c.firstName || ""} ${c.lastName || ""}`.trim() || "(unnamed)";
+    const sub = c.email || c.phone || "";
+    return { name, sub };
+  };
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1994,140 +2088,242 @@ function FamilyMembersDialog({
                 </p>
               ) : (
                 <ul className="space-y-2">
-                  {family.map((fm) => (
-                    <li key={fm.id} className="flex items-center gap-3 rounded-md border px-3 py-2.5">
-                      <Avatar className="h-8 w-8 shrink-0">
-                        <AvatarFallback>{(fm.firstName || "?").charAt(0).toUpperCase()}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{familyLabel(fm)}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {[fm.relation, fm.dob ? formatDate(fm.dob) : null, fm.school || null]
-                            .filter(Boolean)
-                            .join(" · ") || "—"}
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="icon-sm"
-                        onClick={() => setDeleteTarget(fm)}
-                        title="Remove"
-                        aria-label="Remove family member"
+                  {family.map((fm) => {
+                    const c = fm.memberContact;
+                    return (
+                      <li
+                        key={fm.id}
+                        className="flex items-center gap-3 rounded-md border px-3 py-2.5"
                       >
-                        <Trash />
-                      </Button>
-                    </li>
-                  ))}
+                        <Avatar className="h-8 w-8 shrink-0">
+                          <AvatarFallback>
+                            {familyLabel(fm).charAt(0).toUpperCase() || "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          {c ? (
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <Link
+                                href={`/crm/${c.id}`}
+                                className="truncate font-medium hover:underline"
+                              >
+                                {familyLabel(fm)}
+                              </Link>
+                              {relationLabel(fm.relation) && (
+                                <Badge variant="secondary">{relationLabel(fm.relation)}</Badge>
+                              )}
+                              {c.type && <Badge variant="outline">{c.type}</Badge>}
+                              {c.linkedAthleteId && <Badge variant="outline">Athlete</Badge>}
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="truncate font-medium">{familyLabel(fm)}</span>
+                              {relationLabel(fm.relation) && (
+                                <Badge variant="secondary">{relationLabel(fm.relation)}</Badge>
+                              )}
+                            </div>
+                          )}
+                          <p className="truncate text-xs text-muted-foreground">
+                            {c
+                              ? c.email || c.phone || "—"
+                              : "Info only — not a linked contact"}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="icon-sm"
+                          onClick={() => setDeleteTarget(fm)}
+                          title="Remove"
+                          aria-label="Remove family member"
+                        >
+                          <Trash />
+                        </Button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
 
-            {/* Add form */}
-            <form onSubmit={submit} className="space-y-4 border-t pt-4">
+            {/* Add section — link an existing contact or create one & link it */}
+            <div className="space-y-4 border-t pt-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Add family member
               </p>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="First name *" htmlFor="fm-first">
-                  <Input
-                    id="fm-first"
-                    required
-                    value={form.firstName}
-                    onChange={(e) => set("firstName", e.target.value)}
-                  />
-                </Field>
-                <Field label="Last name" htmlFor="fm-last">
-                  <Input
-                    id="fm-last"
-                    value={form.lastName}
-                    onChange={(e) => set("lastName", e.target.value)}
-                  />
-                </Field>
+              {/* Mode toggle */}
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    { v: "LINK", label: "Link existing" },
+                    { v: "CREATE", label: "Create new & link" },
+                  ] as const
+                ).map((t) => (
+                  <Button
+                    key={t.v}
+                    type="button"
+                    size="sm"
+                    variant={mode === t.v ? "default" : "outline"}
+                    onClick={() => setMode(t.v)}
+                  >
+                    {t.label}
+                  </Button>
+                ))}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Date of birth" htmlFor="fm-dob">
-                  <Input
-                    id="fm-dob"
-                    type="date"
-                    value={form.dob}
-                    onChange={(e) => set("dob", e.target.value)}
-                  />
-                </Field>
-                <Field label="Gender">
-                  <SelectField
-                    value={form.gender}
-                    onChange={(v) => set("gender", v)}
-                    options={GENDER_OPTIONS}
-                  />
-                </Field>
-              </div>
+              {mode === "LINK" ? (
+                <div className="space-y-3">
+                  <Field label="Find a contact" htmlFor="fm-search">
+                    {selected ? (
+                      <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">
+                            {contactLabel(selected).name}
+                          </p>
+                          {contactLabel(selected).sub ? (
+                            <p className="truncate text-xs text-muted-foreground">
+                              {contactLabel(selected).sub}
+                            </p>
+                          ) : null}
+                        </div>
+                        <Button type="button" size="sm" variant="ghost" onClick={resetLink}>
+                          Change
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Input
+                          id="fm-search"
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          placeholder="Search by name, email or phone…"
+                          autoComplete="off"
+                        />
+                        {search.trim() ? (
+                          <div className="max-h-48 overflow-y-auto rounded-md border">
+                            {searching ? (
+                              <p className="px-3 py-2 text-sm text-muted-foreground">Searching…</p>
+                            ) : (
+                              (() => {
+                                const visible = results.filter((r) => !excludedIds.has(r.id));
+                                if (visible.length === 0) {
+                                  return (
+                                    <p className="px-3 py-2 text-sm text-muted-foreground">
+                                      No matches.
+                                    </p>
+                                  );
+                                }
+                                return visible.map((r) => {
+                                  const { name, sub } = contactLabel(r);
+                                  return (
+                                    <button
+                                      key={r.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelected(r);
+                                        setResults([]);
+                                      }}
+                                      className="flex w-full items-center justify-between gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/50"
+                                    >
+                                      <span className="flex min-w-0 flex-col">
+                                        <span className="truncate text-sm font-medium">{name}</span>
+                                        {sub ? (
+                                          <span className="truncate text-xs text-muted-foreground">
+                                            {sub}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                      {r.type ? (
+                                        <Badge variant="outline" className="shrink-0">
+                                          {r.type}
+                                        </Badge>
+                                      ) : null}
+                                    </button>
+                                  );
+                                });
+                              })()
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+                  </Field>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Relation">
-                  <SelectField
-                    value={form.relation}
-                    onChange={(v) => set("relation", v)}
-                    options={FAMILY_RELATIONS.map((r) => ({
-                      value: r,
-                      label: r.charAt(0) + r.slice(1).toLowerCase(),
-                    }))}
-                  />
-                </Field>
-                <Field label="School" htmlFor="fm-school">
-                  <Input
-                    id="fm-school"
-                    value={form.school}
-                    onChange={(e) => set("school", e.target.value)}
-                    placeholder="e.g. Riyadh Intl."
-                  />
-                </Field>
-              </div>
+                  {selected && (
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <Field label="Relation">
+                          <SelectField
+                            value={linkRelation}
+                            onChange={setLinkRelation}
+                            options={relationOptions}
+                          />
+                        </Field>
+                      </div>
+                      <Button type="button" onClick={linkExisting} disabled={linking}>
+                        <Plus />
+                        {linking ? "Linking…" : "Link"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <form onSubmit={createAndLink} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="First name *" htmlFor="fm-new-first">
+                      <Input
+                        id="fm-new-first"
+                        required
+                        value={createForm.firstName}
+                        onChange={(e) => setCreate("firstName", e.target.value)}
+                      />
+                    </Field>
+                    <Field label="Last name" htmlFor="fm-new-last">
+                      <Input
+                        id="fm-new-last"
+                        value={createForm.lastName}
+                        onChange={(e) => setCreate("lastName", e.target.value)}
+                      />
+                    </Field>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="ID type">
-                  <SelectField
-                    value={form.idType}
-                    onChange={(v) => set("idType", v)}
-                    options={FAMILY_ID_TYPES.map((t) => ({
-                      value: t,
-                      label: t
-                        .split("_")
-                        .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
-                        .join(" "),
-                    }))}
-                  />
-                </Field>
-                <Field label="ID number" htmlFor="fm-idnum">
-                  <Input
-                    id="fm-idnum"
-                    className="font-mono"
-                    value={form.idNumber}
-                    onChange={(e) => set("idNumber", e.target.value)}
-                    placeholder="e.g. 1234567890"
-                  />
-                </Field>
-              </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Phone" htmlFor="fm-new-phone">
+                      <Input
+                        id="fm-new-phone"
+                        value={createForm.phone}
+                        onChange={(e) => setCreate("phone", e.target.value)}
+                        placeholder="e.g. 05XXXXXXXX"
+                      />
+                    </Field>
+                    <Field label="Date of birth" htmlFor="fm-new-dob">
+                      <Input
+                        id="fm-new-dob"
+                        type="date"
+                        value={createForm.dob}
+                        onChange={(e) => setCreate("dob", e.target.value)}
+                      />
+                    </Field>
+                  </div>
 
-              <Field label="Notes" htmlFor="fm-notes">
-                <Textarea
-                  id="fm-notes"
-                  rows={2}
-                  value={form.notes}
-                  onChange={(e) => set("notes", e.target.value)}
-                  placeholder="Anything staff should know"
-                />
-              </Field>
+                  <Field label="Relation">
+                    <SelectField
+                      value={createForm.relation}
+                      onChange={(v) => setCreate("relation", v)}
+                      options={relationOptions}
+                    />
+                  </Field>
 
-              <div className="flex justify-end">
-                <Button type="submit" disabled={saving}>
-                  <Plus />
-                  {saving ? "Adding…" : "Add family member"}
-                </Button>
-              </div>
-            </form>
+                  <div className="flex justify-end">
+                    <Button type="submit" disabled={creating}>
+                      <Plus />
+                      {creating ? "Saving…" : "Create & link"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
 
           <DialogFooter className="border-t p-4">
