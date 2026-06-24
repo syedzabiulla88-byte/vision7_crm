@@ -40,10 +40,9 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-[#011b2b] p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-[#FFCF01] text-xl font-bold text-[#011b2b]">
-            V7
-          </div>
-          <h1 className="text-xl font-semibold text-white">Vision7 Control Plane</h1>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/vision-logo.svg" alt="Vision7" className="mx-auto mb-4 h-12 w-auto" />
+          <h1 className="text-sm font-semibold uppercase tracking-[0.25em] text-[#FFCF01]">Control Plane</h1>
           <p className="mt-1 text-sm text-white/60">Sign in to manage the business</p>
         </div>
 
