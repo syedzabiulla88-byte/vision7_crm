@@ -124,7 +124,6 @@ const ID_TYPE_OPTIONS = [
 
 const LEISURE_INTERESTS = ["gym", "padel", "swim", "rooftop", "wellness", "nutrition"];
 
-const FAMILY_RELATIONS = ["CHILD", "SPOUSE", "PARENT", "SIBLING", "GUARDIAN", "OTHER"];
 const FAMILY_ID_TYPES = ["NATIONAL_ID", "IQAMA", "PASSPORT"];
 
 const STATUS_OPTIONS = ["PENDING", "ACTIVE", "EXPIRED", "SUSPENDED", "CANCELLED"];
@@ -180,6 +179,19 @@ interface Person {
   membershipCount: number;
   activeCount: number;
   primaryStatus: string | null;
+  // Household / family-package fields (from api.memberships.listGrouped). When the
+  // person is a family-package payer, their covered members are nested here and
+  // hidden from the top level by the backend.
+  isHousehold?: boolean;
+  householdCount?: number;
+  householdMembers?: Array<{
+    name: string;
+    contactId: string | null;
+    athleteId: string | null;
+    service: string | null;
+    status: string;
+    side: "ACADEMY" | "LEISURE";
+  }>;
 }
 
 /**
@@ -319,6 +331,8 @@ export default function MembersPage() {
   const [editing, setEditing] = useState<Membership | null>(null);
   const [familyMembership, setFamilyMembership] = useState<Membership | null>(null);
   const [familyContactId, setFamilyContactId] = useState<string | null>(null);
+  // The family-package (anchor) membership id — covered members link to this.
+  const [familyAnchorMembershipId, setFamilyAnchorMembershipId] = useState<string | null>(null);
   const [familyBusy, setFamilyBusy] = useState<string | null>(null);
   const [sessionBusy, setSessionBusy] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Membership | null>(null);
@@ -417,8 +431,14 @@ export default function MembersPage() {
       toast.error("This member has no contact to link family to");
       return;
     }
+    // The covered members anchor on the person's family-package membership.
+    const anchor =
+      (person.memberships || []).find(
+        (m) => !!(m.plan as { isFamilyPlan?: boolean } | undefined)?.isFamilyPlan,
+      ) || membership;
     setFamilyContactId(cid);
     setFamilyMembership(membership);
+    setFamilyAnchorMembershipId(anchor?.id || null);
   };
 
   // Use / restore a session on a pack membership, then refresh.
@@ -606,6 +626,10 @@ export default function MembersPage() {
                 const memberships = p.memberships ?? [];
                 const primary = memberships[0];
                 const multi = p.membershipCount > 1;
+                const householdMembers = p.householdMembers ?? [];
+                const hasHousehold = !!p.isHousehold && householdMembers.length > 0;
+                // A row expands if it has several memberships OR a covered household.
+                const expandable = multi || hasHousehold;
                 const isOpen = expanded.has(p.key);
                 const typeBadge = contactTypeBadge(p.contactType);
                 const primaryFrozen =
@@ -615,12 +639,12 @@ export default function MembersPage() {
                     <TableRow>
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          {multi ? (
+                          {expandable ? (
                             <button
                               type="button"
                               onClick={() => toggleExpand(p.key)}
                               className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                              aria-label={isOpen ? "Collapse memberships" : "Expand memberships"}
+                              aria-label={isOpen ? "Collapse details" : "Expand details"}
                               aria-expanded={isOpen}
                             >
                               {isOpen ? (
@@ -636,10 +660,18 @@ export default function MembersPage() {
                             <AvatarFallback>{(p.name.charAt(0) || "?").toUpperCase()}</AvatarFallback>
                           </Avatar>
                           <div className="min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <p className="truncate font-medium">{p.name || "—"}</p>
                               {typeBadge && (
                                 <Badge variant={typeBadge.variant}>{typeBadge.label}</Badge>
+                              )}
+                              {p.isHousehold && (
+                                <Badge variant="secondary" title="Family package">
+                                  {"\u{1F468}‍\u{1F469}‍\u{1F466}"} Family
+                                  {(p.householdCount ?? p.householdMembers?.length ?? 0) > 0
+                                    ? ` · ${p.householdCount ?? p.householdMembers?.length}`
+                                    : ""}
+                                </Badge>
                               )}
                             </div>
                             {p.email && (
@@ -835,6 +867,43 @@ export default function MembersPage() {
                           </TableRow>
                         );
                       })}
+
+                    {/* Household sub-rows — members covered by this person's family
+                        package. Each is a free, linked membership; shown read-only
+                        here (managed via the Family dialog). */}
+                    {hasHousehold && isOpen && (
+                      <>
+                        <TableRow className="bg-muted/30">
+                          <TableCell />
+                          <TableCell colSpan={4}>
+                            <p className="pl-7 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Covered by family package ({householdMembers.length})
+                            </p>
+                          </TableCell>
+                        </TableRow>
+                        {householdMembers.map((hm, i) => (
+                          <TableRow key={`${p.key}-hh-${i}`} className="bg-muted/30">
+                            <TableCell />
+                            <TableCell colSpan={3}>
+                              <div className="flex flex-wrap items-center gap-2 pl-7">
+                                <span className="text-sm font-medium">{hm.name || "—"}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {hm.service || "—"}
+                                </span>
+                                <Badge variant={statusVariant(hm.status)}>
+                                  {hm.status || "—"}
+                                </Badge>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">
+                                {hm.side === "ACADEMY" ? "Academy" : "Leisure"}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </>
+                    )}
                   </Fragment>
                 );
               })
@@ -889,14 +958,17 @@ export default function MembersPage() {
         />
       )}
 
-      {familyMembership && familyContactId && (
+      {familyMembership && familyContactId && familyAnchorMembershipId && (
         <FamilyMembersDialog
           contactId={familyContactId}
           membershipId={familyMembership.id}
+          anchorMembershipId={familyAnchorMembershipId}
           memberName={displayName(familyMembership) || familyMembership.plan?.name || "this member"}
+          onChanged={reload}
           onClose={() => {
             setFamilyMembership(null);
             setFamilyContactId(null);
+            setFamilyAnchorMembershipId(null);
           }}
         />
       )}
@@ -2080,151 +2152,162 @@ const EMPTY_FAMILY = {
 function FamilyMembersDialog({
   contactId,
   membershipId,
+  anchorMembershipId,
   memberName,
+  onChanged,
   onClose,
 }: {
   contactId: string;
   membershipId: string;
+  anchorMembershipId: string;
   memberName: string;
+  onChanged?: () => void;
   onClose: () => void;
 }) {
-  const [family, setFamily] = useState<any[]>([]);
+  // Covered members — free, active memberships linked to the family-package
+  // (anchor) membership. Loaded + managed entirely through the memberships API.
+  const [covered, setCovered] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Add flow — two modes: link an existing CRM contact, or create one & link it.
-  const [mode, setMode] = useState<"LINK" | "CREATE">("LINK");
+  // Service plans (non-family). A plan with requiresAthlete is an academy plan.
+  const [plans, setPlans] = useState<any[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
 
-  // Link-existing mode
-  const [search, setSearch] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
-  const [selected, setSelected] = useState<any | null>(null);
-  const [linkRelation, setLinkRelation] = useState(FAMILY_RELATIONS[0]);
-  const [linking, setLinking] = useState(false);
-
-  // Create-&-link mode
-  const [createForm, setCreateForm] = useState({
+  // Add-a-member form.
+  const [form, setForm] = useState({
     firstName: "",
     lastName: "",
-    phone: "",
+    planId: "",
     dob: "",
-    relation: FAMILY_RELATIONS[0],
+    gender: "",
   });
-  const [creating, setCreating] = useState(false);
-  const setCreate = <K extends keyof typeof createForm>(k: K, v: (typeof createForm)[K]) =>
-    setCreateForm((f) => ({ ...f, [k]: v }));
+  const [adding, setAdding] = useState(false);
+  const setField = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
 
-  const relationOptions = FAMILY_RELATIONS.map((r) => ({
-    value: r,
-    label: r.charAt(0) + r.slice(1).toLowerCase(),
-  }));
+  // Reference void so unused props don't trip lint — membershipId is kept on the
+  // contract for callers/back-compat even though covered members anchor on
+  // anchorMembershipId. contactId is still used for naming context.
+  void membershipId;
+  void contactId;
 
-  const loadFamily = useCallback(async () => {
+  const loadCovered = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.crm.listFamily(contactId);
-      setFamily(Array.isArray(res) ? res : res?.data || []);
+      const res = await api.memberships.list({
+        familyMembershipId: anchorMembershipId,
+        limit: 50,
+      });
+      setCovered(Array.isArray(res) ? res : res?.data || []);
     } catch (err: any) {
-      toast.error(err?.message || "Failed to load family members");
+      toast.error(err?.message || "Failed to load covered members");
     } finally {
       setLoading(false);
     }
-  }, [contactId]);
+  }, [anchorMembershipId]);
 
   useEffect(() => {
-    loadFamily();
-  }, [loadFamily]);
+    loadCovered();
+  }, [loadCovered]);
 
-  // IDs already linked (or the primary contact) — excluded from search results so
-  // we never offer to link the same person twice.
-  const excludedIds = useMemo(() => {
-    const ids = new Set<string>([contactId]);
-    for (const fm of family) {
-      if (fm?.memberContactId) ids.add(fm.memberContactId);
-    }
-    return ids;
-  }, [family, contactId]);
-
-  // Debounced server-side contact search (~300ms).
+  // Load the service plans once. A family-package plan can't be a covered
+  // service, so those are excluded from the picker.
   useEffect(() => {
-    const term = search.trim();
-    if (!term) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    const handle = setTimeout(async () => {
-      try {
-        const res = await api.crm.list({ q: term, limit: 8 });
-        const list = Array.isArray(res) ? res : (res as any)?.data || [];
-        setResults(list);
-      } catch (err: any) {
-        toast.error(err?.message || "Search failed");
-        setResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [search]);
+    api.plans
+      .list({ limit: 1000 })
+      .then((res: any) => setPlans(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setPlans([]))
+      .finally(() => setPlansLoading(false));
+  }, []);
 
-  const resetLink = () => {
-    setSelected(null);
-    setSearch("");
-    setResults([]);
-    setLinkRelation(FAMILY_RELATIONS[0]);
+  const servicePlans = useMemo(
+    () =>
+      plans.filter(
+        (p) => !(p as { isFamilyPlan?: boolean }).isFamilyPlan,
+      ),
+    [plans],
+  );
+
+  const planOptions = useMemo(
+    () =>
+      servicePlans.map((p) => ({
+        value: p.id,
+        label: `${p.name}${p.requiresAthlete ? " · Academy" : ""}${
+          p.price != null ? ` — ${formatSAR(p.price)}` : ""
+        }`,
+      })),
+    [servicePlans],
+  );
+
+  const selectedPlan = useMemo(
+    () => servicePlans.find((p) => p.id === form.planId) || null,
+    [servicePlans, form.planId],
+  );
+  const requiresAthlete = !!selectedPlan?.requiresAthlete;
+
+  // Best display name for a covered membership row.
+  const coveredLabel = (m: any) => {
+    const a = m?.athlete;
+    if (a) return `${a.firstName || ""} ${a.lastName || ""}`.trim() || "this member";
+    const c = m?.crmContact;
+    if (c) return `${c.firstName || ""} ${c.lastName || ""}`.trim() || "this member";
+    return "this member";
   };
 
-  const linkExisting = async () => {
-    if (!selected?.id) return;
-    setLinking(true);
-    try {
-      await api.crm.addFamily(contactId, {
-        memberContactId: selected.id,
-        relation: linkRelation,
-        membershipId,
-      });
-      toast.success("Family member linked");
-      resetLink();
-      await loadFamily();
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to link family member");
-    } finally {
-      setLinking(false);
-    }
-  };
+  const resetForm = () =>
+    setForm({ firstName: "", lastName: "", planId: "", dob: "", gender: "" });
 
-  const createAndLink = async (e: React.FormEvent) => {
+  const addMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!createForm.firstName.trim()) {
-      toast.error("First name is required");
+    if (!form.firstName.trim() || !form.lastName.trim()) {
+      toast.error("First and last name are required");
       return;
     }
-    setCreating(true);
+    if (!form.planId) {
+      toast.error("Pick a service for this member");
+      return;
+    }
+    if (requiresAthlete && (!form.dob || !form.gender)) {
+      toast.error("Date of birth and gender are required for academy plans");
+      return;
+    }
+    setAdding(true);
     try {
-      const c = await api.crm.create({
-        firstName: createForm.firstName.trim(),
-        lastName: createForm.lastName.trim() || undefined,
-        phone: createForm.phone.trim() || undefined,
-        dob: createForm.dob ? new Date(createForm.dob).toISOString() : undefined,
-        type: "CUSTOMER",
-        source: "family",
-      });
-      await api.crm.addFamily(contactId, {
-        memberContactId: c.id,
-        relation: createForm.relation,
-        membershipId,
-      });
-      toast.success("Family member created & linked");
-      setCreateForm({ firstName: "", lastName: "", phone: "", dob: "", relation: FAMILY_RELATIONS[0] });
-      await loadFamily();
+      if (requiresAthlete) {
+        const a = await api.athletes.create({
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          dob: new Date(form.dob).toISOString(),
+          gender: form.gender,
+          email: undefined,
+        });
+        await api.memberships.assign({
+          familyMembershipId: anchorMembershipId,
+          athleteId: a.id,
+          planId: form.planId,
+        });
+      } else {
+        const c = await api.crm.create({
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          type: "CUSTOMER",
+        });
+        await api.memberships.assign({
+          familyMembershipId: anchorMembershipId,
+          crmContactId: c.id,
+          planId: form.planId,
+        });
+      }
+      toast.success("Member added to the family package");
+      resetForm();
+      await loadCovered();
+      onChanged?.();
     } catch (err: any) {
-      toast.error(err?.message || "Failed to create family member");
+      toast.error(err?.message || "Failed to add member");
     } finally {
-      setCreating(false);
+      setAdding(false);
     }
   };
 
@@ -2232,33 +2315,16 @@ function FamilyMembersDialog({
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await api.crm.deleteFamily(deleteTarget.id);
-      toast.success("Family member removed");
+      await api.memberships.delete(deleteTarget.id);
+      toast.success("Member removed from the family package");
       setDeleteTarget(null);
-      await loadFamily();
+      await loadCovered();
+      onChanged?.();
     } catch (err: any) {
-      toast.error(err?.message || "Failed to remove family member");
+      toast.error(err?.message || "Failed to remove member");
     } finally {
       setDeleting(false);
     }
-  };
-
-  // Display name for a row — prefer the linked contact, fall back to the legacy blob.
-  const familyLabel = (fm: any) => {
-    const c = fm?.memberContact;
-    const name = c
-      ? `${c.firstName || ""} ${c.lastName || ""}`.trim()
-      : `${fm.firstName || ""} ${fm.lastName || ""}`.trim();
-    return name || "this family member";
-  };
-
-  const relationLabel = (r?: string) =>
-    r ? r.charAt(0) + r.slice(1).toLowerCase() : null;
-
-  const contactLabel = (c: any) => {
-    const name = `${c.firstName || ""} ${c.lastName || ""}`.trim() || "(unnamed)";
-    const sub = c.email || c.phone || "";
-    return { name, sub };
   };
 
   return (
@@ -2266,74 +2332,60 @@ function FamilyMembersDialog({
       <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-lg">
         <div className="flex max-h-[90vh] flex-col">
           <DialogHeader className="border-b p-6">
-            <DialogTitle>Family members — {memberName}</DialogTitle>
-            <DialogDescription>Dependents and family linked to this member.</DialogDescription>
+            <DialogTitle>Members covered by this package — {memberName}</DialogTitle>
+            <DialogDescription>
+              Family members covered by this package each get their own free, active
+              membership.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 space-y-5 overflow-y-auto p-6">
-            {/* Existing family list */}
+            {/* Covered members list */}
             <div>
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Current ({family.length})
+                Covered ({covered.length})
               </p>
               {loading ? (
                 <p className="rounded-md border px-4 py-6 text-center text-sm text-muted-foreground">
                   Loading…
                 </p>
-              ) : family.length === 0 ? (
+              ) : covered.length === 0 ? (
                 <p className="rounded-md border px-4 py-6 text-center text-sm text-muted-foreground">
-                  No family members yet.
+                  No covered members yet.
                 </p>
               ) : (
                 <ul className="space-y-2">
-                  {family.map((fm) => {
-                    const c = fm.memberContact;
+                  {covered.map((m) => {
+                    const name = coveredLabel(m);
                     return (
                       <li
-                        key={fm.id}
+                        key={m.id}
                         className="flex items-center gap-3 rounded-md border px-3 py-2.5"
                       >
                         <Avatar className="h-8 w-8 shrink-0">
                           <AvatarFallback>
-                            {familyLabel(fm).charAt(0).toUpperCase() || "?"}
+                            {name.charAt(0).toUpperCase() || "?"}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          {c ? (
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <Link
-                                href={`/crm/${c.id}`}
-                                className="truncate font-medium hover:underline"
-                              >
-                                {familyLabel(fm)}
-                              </Link>
-                              {relationLabel(fm.relation) && (
-                                <Badge variant="secondary">{relationLabel(fm.relation)}</Badge>
-                              )}
-                              {c.type && <Badge variant="outline">{c.type}</Badge>}
-                              {c.linkedAthleteId && <Badge variant="outline">Athlete</Badge>}
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className="truncate font-medium">{familyLabel(fm)}</span>
-                              {relationLabel(fm.relation) && (
-                                <Badge variant="secondary">{relationLabel(fm.relation)}</Badge>
-                              )}
-                            </div>
-                          )}
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="truncate font-medium">{name}</span>
+                            <Badge variant={statusVariant(m.status)}>
+                              {m.status || "—"}
+                            </Badge>
+                            {m.athlete && <Badge variant="outline">Academy</Badge>}
+                          </div>
                           <p className="truncate text-xs text-muted-foreground">
-                            {c
-                              ? c.email || c.phone || "—"
-                              : "Info only — not a linked contact"}
+                            {m.plan?.name || "—"}
                           </p>
                         </div>
                         <Button
                           type="button"
                           variant="destructive"
                           size="icon-sm"
-                          onClick={() => setDeleteTarget(fm)}
+                          onClick={() => setDeleteTarget(m)}
                           title="Remove"
-                          aria-label="Remove family member"
+                          aria-label="Remove covered member"
                         >
                           <Trash />
                         </Button>
@@ -2344,184 +2396,69 @@ function FamilyMembersDialog({
               )}
             </div>
 
-            {/* Add section — link an existing contact or create one & link it */}
-            <div className="space-y-4 border-t pt-4">
+            {/* Add a member */}
+            <form onSubmit={addMember} className="space-y-4 border-t pt-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Add family member
+                Add a member
               </p>
 
-              {/* Mode toggle */}
-              <div className="grid grid-cols-2 gap-2">
-                {(
-                  [
-                    { v: "LINK", label: "Link existing" },
-                    { v: "CREATE", label: "Create new & link" },
-                  ] as const
-                ).map((t) => (
-                  <Button
-                    key={t.v}
-                    type="button"
-                    size="sm"
-                    variant={mode === t.v ? "default" : "outline"}
-                    onClick={() => setMode(t.v)}
-                  >
-                    {t.label}
-                  </Button>
-                ))}
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="First name *" htmlFor="fm-first">
+                  <Input
+                    id="fm-first"
+                    required
+                    value={form.firstName}
+                    onChange={(e) => setField("firstName", e.target.value)}
+                  />
+                </Field>
+                <Field label="Last name *" htmlFor="fm-last">
+                  <Input
+                    id="fm-last"
+                    required
+                    value={form.lastName}
+                    onChange={(e) => setField("lastName", e.target.value)}
+                  />
+                </Field>
               </div>
 
-              {mode === "LINK" ? (
-                <div className="space-y-3">
-                  <Field label="Find a contact" htmlFor="fm-search">
-                    {selected ? (
-                      <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">
-                            {contactLabel(selected).name}
-                          </p>
-                          {contactLabel(selected).sub ? (
-                            <p className="truncate text-xs text-muted-foreground">
-                              {contactLabel(selected).sub}
-                            </p>
-                          ) : null}
-                        </div>
-                        <Button type="button" size="sm" variant="ghost" onClick={resetLink}>
-                          Change
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <Input
-                          id="fm-search"
-                          value={search}
-                          onChange={(e) => setSearch(e.target.value)}
-                          placeholder="Search by name, email or phone…"
-                          autoComplete="off"
-                        />
-                        {search.trim() ? (
-                          <div className="max-h-48 overflow-y-auto rounded-md border">
-                            {searching ? (
-                              <p className="px-3 py-2 text-sm text-muted-foreground">Searching…</p>
-                            ) : (
-                              (() => {
-                                const visible = results.filter((r) => !excludedIds.has(r.id));
-                                if (visible.length === 0) {
-                                  return (
-                                    <p className="px-3 py-2 text-sm text-muted-foreground">
-                                      No matches.
-                                    </p>
-                                  );
-                                }
-                                return visible.map((r) => {
-                                  const { name, sub } = contactLabel(r);
-                                  return (
-                                    <button
-                                      key={r.id}
-                                      type="button"
-                                      onClick={() => {
-                                        setSelected(r);
-                                        setResults([]);
-                                      }}
-                                      className="flex w-full items-center justify-between gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/50"
-                                    >
-                                      <span className="flex min-w-0 flex-col">
-                                        <span className="truncate text-sm font-medium">{name}</span>
-                                        {sub ? (
-                                          <span className="truncate text-xs text-muted-foreground">
-                                            {sub}
-                                          </span>
-                                        ) : null}
-                                      </span>
-                                      {r.type ? (
-                                        <Badge variant="outline" className="shrink-0">
-                                          {r.type}
-                                        </Badge>
-                                      ) : null}
-                                    </button>
-                                  );
-                                });
-                              })()
-                            )}
-                          </div>
-                        ) : null}
-                      </div>
-                    )}
-                  </Field>
+              <Field label="Service *">
+                <ComboField
+                  value={form.planId}
+                  onChange={(v) => setField("planId", v)}
+                  options={planOptions}
+                  placeholder={plansLoading ? "Loading services…" : "Select a service…"}
+                />
+              </Field>
 
-                  {selected && (
-                    <div className="flex items-end gap-3">
-                      <div className="flex-1">
-                        <Field label="Relation">
-                          <SelectField
-                            value={linkRelation}
-                            onChange={setLinkRelation}
-                            options={relationOptions}
-                          />
-                        </Field>
-                      </div>
-                      <Button type="button" onClick={linkExisting} disabled={linking}>
-                        <Plus />
-                        {linking ? "Linking…" : "Link"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <form onSubmit={createAndLink} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="First name *" htmlFor="fm-new-first">
-                      <Input
-                        id="fm-new-first"
-                        required
-                        value={createForm.firstName}
-                        onChange={(e) => setCreate("firstName", e.target.value)}
-                      />
-                    </Field>
-                    <Field label="Last name" htmlFor="fm-new-last">
-                      <Input
-                        id="fm-new-last"
-                        value={createForm.lastName}
-                        onChange={(e) => setCreate("lastName", e.target.value)}
-                      />
-                    </Field>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Phone" htmlFor="fm-new-phone">
-                      <Input
-                        id="fm-new-phone"
-                        value={createForm.phone}
-                        onChange={(e) => setCreate("phone", e.target.value)}
-                        placeholder="e.g. 05XXXXXXXX"
-                      />
-                    </Field>
-                    <Field label="Date of birth" htmlFor="fm-new-dob">
-                      <Input
-                        id="fm-new-dob"
-                        type="date"
-                        value={createForm.dob}
-                        onChange={(e) => setCreate("dob", e.target.value)}
-                      />
-                    </Field>
-                  </div>
-
-                  <Field label="Relation">
-                    <SelectField
-                      value={createForm.relation}
-                      onChange={(v) => setCreate("relation", v)}
-                      options={relationOptions}
+              {requiresAthlete && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Date of birth *" htmlFor="fm-dob">
+                    <Input
+                      id="fm-dob"
+                      type="date"
+                      required
+                      value={form.dob}
+                      onChange={(e) => setField("dob", e.target.value)}
                     />
                   </Field>
-
-                  <div className="flex justify-end">
-                    <Button type="submit" disabled={creating}>
-                      <Plus />
-                      {creating ? "Saving…" : "Create & link"}
-                    </Button>
-                  </div>
-                </form>
+                  <Field label="Gender *">
+                    <SelectField
+                      value={form.gender}
+                      onChange={(v) => setField("gender", v)}
+                      options={GENDER_OPTIONS}
+                      placeholder="Select gender…"
+                    />
+                  </Field>
+                </div>
               )}
-            </div>
+
+              <div className="flex justify-end">
+                <Button type="submit" disabled={adding}>
+                  <Plus />
+                  {adding ? "Adding…" : "Add member"}
+                </Button>
+              </div>
+            </form>
           </div>
 
           <DialogFooter className="border-t p-4">
@@ -2535,8 +2472,8 @@ function FamilyMembersDialog({
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title="Remove family member"
-        description={`Remove ${deleteTarget ? familyLabel(deleteTarget) : ""}?`}
+        title="Remove covered member"
+        description={`Remove ${deleteTarget ? coveredLabel(deleteTarget) : ""} from this family package? Their covered membership will be deleted.`}
         confirmLabel="Remove"
         variant="destructive"
         loading={deleting}
