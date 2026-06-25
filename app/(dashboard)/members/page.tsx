@@ -165,6 +165,7 @@ interface Person {
   contactType: "MEMBER" | "CUSTOMER" | "LEAD" | "FORMER" | null;
   athleteId: string | null;
   userId: string | null;
+  isDependent?: boolean;
   memberships: Membership[];
   membershipCount: number;
   activeCount: number;
@@ -560,7 +561,7 @@ export default function MembersPage() {
                               <Share2 />
                             </Button>
                           )}
-                          {p.contactId && primary && (
+                          {p.contactId && primary && !p.isDependent && (
                             <Button
                               variant="outline"
                               size="icon-sm"
@@ -2358,15 +2359,24 @@ function AssignMembershipDialog({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  // Which side are we assigning to?
-  const [subjectType, setSubjectType] = useState<"ACADEMY" | "LEISURE">("ACADEMY");
-
-  // Searchable subject picker state
+  // ONE common contact search — the chosen PLAN decides whether an athlete is
+  // needed (academy plans), so there is no academy/leisure toggle here.
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<any[]>([]);
-  // Selected subject (athlete or crm contact); { id, name, sub } where sub = email/phone
-  const [subject, setSubject] = useState<{ id: string; name: string; sub?: string } | null>(null);
+  // Selected subject is always a CRM contact. linkedAthleteId is present on the
+  // contact when it already has an academy athlete profile.
+  const [subject, setSubject] = useState<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    type?: string | null;
+    sub?: string;
+    linkedAthleteId?: string | null;
+  } | null>(null);
   // Duplicate-assign guard — the subject's existing ACTIVE/PENDING memberships.
   // Multiple memberships are allowed, so this is a deliberate confirm, not a block.
   const [existingMemberships, setExistingMemberships] = useState<Membership[]>([]);
@@ -2386,6 +2396,12 @@ function AssignMembershipDialog({
   // Optional ID capture — writes back to the selected subject before assigning.
   const [idType, setIdType] = useState("NATIONAL_ID");
   const [idNumber, setIdNumber] = useState("");
+  // Athlete provisioning fields — only used for academy plans where the chosen
+  // contact has no linked athlete yet.
+  const [athleteDob, setAthleteDob] = useState("");
+  const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
+  const [athleteJersey, setAthleteJersey] = useState("");
+  const [athleteNationality, setAthleteNationality] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -2403,16 +2419,10 @@ function AssignMembershipDialog({
     })();
   }, []);
 
-  // Reset the picker whenever the subject type toggles.
-  useEffect(() => {
-    setSubject(null);
-    setSearch("");
-    setResults([]);
-  }, [subjectType]);
-
   // When a subject is picked, look up their existing memberships so we can warn
-  // before assigning a second active/pending one. Clears whenever the subject
-  // changes (including back to none).
+  // before assigning a second active/pending one. Covers both the contact and
+  // its linked athlete (academy memberships are tied to the athlete). Clears
+  // whenever the subject changes (including back to none).
   useEffect(() => {
     setExistingMemberships([]);
     setConfirmDuplicate(false);
@@ -2424,12 +2434,15 @@ function AssignMembershipDialog({
     setCheckingExisting(true);
     (async () => {
       try {
-        const params =
-          subjectType === "ACADEMY"
-            ? { athleteId: subject.id, limit: 50 }
-            : { crmContactId: subject.id, limit: 50 };
-        const res = await api.memberships.list(params);
-        const list: Membership[] = Array.isArray(res) ? res : (res as any)?.data || [];
+        const calls: Promise<any>[] = [
+          api.memberships.list({ crmContactId: subject.id, limit: 50 }),
+        ];
+        if (subject.linkedAthleteId)
+          calls.push(api.memberships.list({ athleteId: subject.linkedAthleteId, limit: 50 }));
+        const resList = await Promise.all(calls);
+        const list: Membership[] = resList.flatMap((r) =>
+          Array.isArray(r) ? r : (r as any)?.data || [],
+        );
         if (!cancelled) setExistingMemberships(list);
       } catch {
         // Non-fatal — if the lookup fails we simply skip the warning.
@@ -2441,9 +2454,9 @@ function AssignMembershipDialog({
     return () => {
       cancelled = true;
     };
-  }, [subject, subjectType]);
+  }, [subject]);
 
-  // Debounced server-side search (~300ms) for the active subject type.
+  // Debounced server-side contact search (~300ms) — one search over all contacts.
   useEffect(() => {
     const term = search.trim();
     if (!term) {
@@ -2454,14 +2467,8 @@ function AssignMembershipDialog({
     setSearching(true);
     const handle = setTimeout(async () => {
       try {
-        let list: any[] = [];
-        if (subjectType === "ACADEMY") {
-          const res = await api.athletes.list({ search: term, limit: 20 });
-          list = Array.isArray(res) ? res : (res as any)?.data || [];
-        } else {
-          const res = await api.crm.list({ q: term, limit: 20 });
-          list = Array.isArray(res) ? res : (res as any)?.data || [];
-        }
+        const res = await api.crm.list({ q: term, limit: 20 });
+        const list = Array.isArray(res) ? res : (res as any)?.data || [];
         setResults(list);
       } catch (err: any) {
         toast.error(err?.message || "Search failed");
@@ -2471,7 +2478,7 @@ function AssignMembershipDialog({
       }
     }, 300);
     return () => clearTimeout(handle);
-  }, [search, subjectType]);
+  }, [search]);
 
   // Auto-fill end date when plan changes if it has durationDays
   useEffect(() => {
@@ -2493,6 +2500,14 @@ function AssignMembershipDialog({
     return { name, sub };
   };
 
+  // The chosen plan drives athlete provisioning: academy plans (requiresAthlete)
+  // must be tied to an athlete. Reuse the contact's linked athlete if it has one;
+  // otherwise capture details to provision a new athlete profile.
+  const selectedPlan = plans.find((p) => p.id === planId);
+  const requiresAthlete = !!selectedPlan?.requiresAthlete;
+  const linkedAthleteId = subject?.linkedAthleteId;
+  const needsAthleteDetails = requiresAthlete && !linkedAthleteId;
+
   // Existing memberships that already grant (ACTIVE) or will grant (PENDING)
   // access — these drive the duplicate-assign confirm.
   const activeOrPending = existingMemberships.filter((m) =>
@@ -2503,16 +2518,27 @@ function AssignMembershipDialog({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject?.id) {
-      toast.error(
-        subjectType === "ACADEMY"
-          ? "Select an academy athlete"
-          : "Select a leisure member",
-      );
+      toast.error("Select a contact");
       return;
     }
     if (!planId) {
       toast.error("Plan is required");
       return;
+    }
+    // Academy plans need a complete athlete profile when the contact has none yet.
+    if (needsAthleteDetails) {
+      if (!athleteDob) {
+        toast.error("Date of birth is required to create the athlete profile.");
+        return;
+      }
+      if (!athleteJersey.trim()) {
+        toast.error("Jersey number is required to create the athlete profile.");
+        return;
+      }
+      if (!athletePosition) {
+        toast.error("Pick a playing position for the athlete.");
+        return;
+      }
     }
     // Multiple memberships are allowed, but assigning a second active/pending one
     // must be deliberate — require the confirm checkbox first.
@@ -2520,38 +2546,81 @@ function AssignMembershipDialog({
       toast.error(`${subject.name} already has an active/pending membership — tick the box to add another.`);
       return;
     }
-    const selectedPlan = plans.find((p) => p.id === planId);
     const price = Number(selectedPlan?.price) || 0;
     setSaving(true);
     try {
-      // Capture the ID onto the subject first (skip when left blank so we never
-      // wipe an existing value).
-      if (idNumber.trim()) {
-        if (subjectType === "ACADEMY") {
-          await api.athletes.update(subject.id, { idType, idNumber: idNumber.trim() });
-        } else {
+      if (needsAthleteDetails) {
+        // Academy plan + contact has no athlete: provision the athlete (creates a
+        // user login + auto-links the CRM contact), then bill via athleteId.
+        const athlete = await api.athletes.create({
+          firstName: subject.firstName,
+          lastName: subject.lastName,
+          email: subject.email,
+          phone: subject.phone,
+          dob: new Date(athleteDob).toISOString(),
+          position: athletePosition,
+          jerseyNumber: Number(athleteJersey) || 0,
+          nationality: athleteNationality.trim() || undefined,
+          idType: idNumber.trim() ? idType : undefined,
+          idNumber: idNumber.trim() || undefined,
+        });
+        const res = await api.memberships.assign({
+          athleteId: athlete.id,
+          planId,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          notes: notes?.trim() || undefined,
+          autoRenew: !!autoRenew,
+          payNow: price > 0 ? payNow : true,
+          paymentMethod,
+          paymentReference: paymentReference.trim() || undefined,
+        });
+        const memStatus = res?.membership?.status;
+        if (price <= 0) toast.success("Athlete profile created — membership activated (free plan)");
+        else if (memStatus === "ACTIVE")
+          toast.success("Athlete profile created + membership active — they can log into the platform");
+        else toast.success("Athlete profile created — invoice raised, membership pending until paid");
+      } else if (requiresAthlete && linkedAthleteId) {
+        // Academy plan, contact already has an athlete — bill via athleteId.
+        if (idNumber.trim()) {
+          await api.athletes.update(linkedAthleteId, { idType, idNumber: idNumber.trim() });
+        }
+        const res = await api.memberships.assign({
+          athleteId: linkedAthleteId,
+          planId,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          notes: notes?.trim() || undefined,
+          autoRenew: !!autoRenew,
+          payNow: price > 0 ? payNow : true,
+          paymentMethod,
+          paymentReference: paymentReference.trim() || undefined,
+        });
+        const memStatus = res?.membership?.status;
+        if (price <= 0) toast.success("Free plan assigned — membership activated");
+        else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
+        else toast.success("Invoice raised — membership pending until paid");
+      } else {
+        // Leisure plan (no athlete needed) — bill directly to the CRM contact.
+        if (idNumber.trim()) {
           await api.crm.update(subject.id, { idType, nationalId: idNumber.trim() });
         }
+        const res = await api.memberships.assign({
+          crmContactId: subject.id,
+          planId,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          notes: notes?.trim() || undefined,
+          autoRenew: !!autoRenew,
+          payNow: price > 0 ? payNow : true,
+          paymentMethod,
+          paymentReference: paymentReference.trim() || undefined,
+        });
+        const memStatus = res?.membership?.status;
+        if (price <= 0) toast.success("Free plan assigned — membership activated");
+        else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
+        else toast.success("Invoice raised — membership pending until paid");
       }
-      // Route through billing: creates a PENDING membership + an invoice, and
-      // (payNow) records the payment which activates it. Free plans auto-activate.
-      const res = await api.memberships.assign({
-        ...(subjectType === "ACADEMY"
-          ? { athleteId: subject.id }
-          : { crmContactId: subject.id }),
-        planId,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-        notes: notes?.trim() || undefined,
-        autoRenew: !!autoRenew,
-        payNow: price > 0 ? payNow : true,
-        paymentMethod,
-        paymentReference: paymentReference.trim() || undefined,
-      });
-      const memStatus = res?.membership?.status;
-      if (price <= 0) toast.success("Free plan assigned — membership activated");
-      else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
-      else toast.success("Invoice raised — membership pending until paid");
       onCreated();
     } catch (err: any) {
       toast.error(err?.message || "Failed to assign membership");
@@ -2572,7 +2641,7 @@ function AssignMembershipDialog({
           <DialogHeader className="border-b p-6">
             <DialogTitle>Assign Membership</DialogTitle>
             <DialogDescription>
-              Assign a plan to an academy athlete or a leisure member.
+              Search any contact and assign a plan — academy plans create or reuse an athlete automatically.
             </DialogDescription>
           </DialogHeader>
 
@@ -2580,33 +2649,9 @@ function AssignMembershipDialog({
             <div className="p-10 text-center text-muted-foreground">Loading…</div>
           ) : (
             <div className="flex-1 space-y-5 overflow-y-auto p-6">
-              {/* Subject type toggle */}
-              <Field label="Assign to *">
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      { v: "ACADEMY", label: "Academy (athlete)" },
-                      { v: "LEISURE", label: "Leisure (member)" },
-                    ] as const
-                  ).map((t) => (
-                    <Button
-                      key={t.v}
-                      type="button"
-                      size="sm"
-                      variant={subjectType === t.v ? "default" : "outline"}
-                      onClick={() => setSubjectType(t.v)}
-                    >
-                      {t.label}
-                    </Button>
-                  ))}
-                </div>
-              </Field>
-
-              {/* Searchable subject picker */}
-              <Field
-                label={subjectType === "ACADEMY" ? "Athlete *" : "Member / contact *"}
-                htmlFor="am-subject-search"
-              >
+              {/* Searchable contact picker — one search over all contacts. The
+                  chosen plan decides whether an athlete is created/used. */}
+              <Field label="Member / contact *" htmlFor="am-subject-search">
                 {subject ? (
                   <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2">
                     <div className="min-w-0">
@@ -2634,11 +2679,7 @@ function AssignMembershipDialog({
                       id="am-subject-search"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder={
-                        subjectType === "ACADEMY"
-                          ? "Search athletes by name or email…"
-                          : "Search members by name, email or phone…"
-                      }
+                      placeholder="Search members by name, email or phone…"
                       autoComplete="off"
                     />
                     {search.trim() ? (
@@ -2650,19 +2691,37 @@ function AssignMembershipDialog({
                         ) : (
                           results.map((r) => {
                             const { name, sub } = subjectLabel(r);
+                            const typeBadge = contactTypeBadge(
+                              (String(r.type || "").toUpperCase() as Person["contactType"]) || null,
+                            );
                             return (
                               <button
                                 key={r.id}
                                 type="button"
                                 onClick={() => {
-                                  setSubject({ id: r.id, name, sub });
+                                  setSubject({
+                                    id: r.id,
+                                    firstName: r.firstName || "",
+                                    lastName: r.lastName || "",
+                                    name,
+                                    email: r.email ?? null,
+                                    phone: r.phone ?? null,
+                                    type: r.type ?? null,
+                                    sub,
+                                    linkedAthleteId: r.linkedAthleteId ?? null,
+                                  });
                                   setResults([]);
                                 }}
-                                className="flex w-full flex-col items-start gap-0.5 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/50"
+                                className="flex w-full items-center justify-between gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted/50"
                               >
-                                <span className="text-sm font-medium">{name}</span>
-                                {sub ? (
-                                  <span className="text-xs text-muted-foreground">{sub}</span>
+                                <span className="flex min-w-0 flex-col items-start gap-0.5">
+                                  <span className="truncate text-sm font-medium">{name}</span>
+                                  {sub ? (
+                                    <span className="truncate text-xs text-muted-foreground">{sub}</span>
+                                  ) : null}
+                                </span>
+                                {typeBadge ? (
+                                  <Badge variant={typeBadge.variant}>{typeBadge.label}</Badge>
                                 ) : null}
                               </button>
                             );
@@ -2670,6 +2729,9 @@ function AssignMembershipDialog({
                         )}
                       </div>
                     ) : null}
+                    <p className="text-xs text-muted-foreground">
+                      Search any contact — pick a plan; academy plans will create/use an athlete automatically.
+                    </p>
                   </div>
                 )}
               </Field>
@@ -2826,6 +2888,65 @@ function AssignMembershipDialog({
                     );
                   })()
                 : null}
+
+              {/* Athlete details — academy plans require an athlete. When the
+                  chosen contact has no linked athlete yet, capture details to
+                  provision one (with an app login) and tie the membership to it. */}
+              {needsAthleteDetails && (
+                <div className="space-y-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
+                  <div>
+                    <p className="font-medium text-foreground">Athlete details</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      This academy plan needs an athlete profile. We&apos;ll create one (with an app
+                      login) and tie the membership to it — all in one click.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Date of birth *" htmlFor="am-athlete-dob">
+                      <Input
+                        id="am-athlete-dob"
+                        type="date"
+                        value={athleteDob}
+                        onChange={(e) => setAthleteDob(e.target.value)}
+                      />
+                    </Field>
+                    <Field label="Jersey number *" htmlFor="am-athlete-jersey">
+                      <Input
+                        id="am-athlete-jersey"
+                        type="number"
+                        min={0}
+                        value={athleteJersey}
+                        onChange={(e) => setAthleteJersey(e.target.value)}
+                        placeholder="e.g. 10"
+                      />
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Position">
+                      <SelectField
+                        value={athletePosition}
+                        onChange={setAthletePosition}
+                        options={POSITION_OPTIONS}
+                      />
+                    </Field>
+                    <Field label="Nationality" htmlFor="am-athlete-nat">
+                      <Input
+                        id="am-athlete-nat"
+                        value={athleteNationality}
+                        onChange={(e) => setAthleteNationality(e.target.value)}
+                        placeholder="e.g. Saudi"
+                      />
+                    </Field>
+                  </div>
+                </div>
+              )}
+
+              {requiresAthlete && linkedAthleteId && (
+                <p className="text-xs text-muted-foreground">
+                  Academy plan — this membership will be tied to the contact&apos;s existing athlete
+                  profile.
+                </p>
+              )}
             </div>
           )}
 
