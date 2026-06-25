@@ -2014,7 +2014,7 @@ function FamilyMembersDialog({
         lastName: createForm.lastName.trim() || undefined,
         phone: createForm.phone.trim() || undefined,
         dob: createForm.dob ? new Date(createForm.dob).toISOString() : undefined,
-        type: "CONTACT",
+        type: "CUSTOMER",
         source: "family",
       });
       await api.crm.addFamily(contactId, {
