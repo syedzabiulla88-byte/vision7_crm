@@ -44,6 +44,15 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxList,
+  ComboboxItem,
+  ComboboxEmpty,
+} from "@/components/ui/combobox";
+import { NATIONALITY_OPTIONS } from "@/lib/nationalities";
+import {
   ArrowLeft,
   Send,
   Edit,
@@ -1098,6 +1107,49 @@ function SelectField({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+/** Searchable nationality picker — bound value stays a plain string. */
+function NationalitySelect({
+  label,
+  value,
+  onChange,
+  id,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  id?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {label}
+      </Label>
+      <Combobox
+        items={NATIONALITY_OPTIONS}
+        value={value || null}
+        onValueChange={(v) => onChange(v ?? "")}
+      >
+        <ComboboxInput
+          id={id}
+          className="w-full"
+          placeholder="Search nationality…"
+          showClear={!!value}
+        />
+        <ComboboxContent>
+          <ComboboxEmpty>No nationality found.</ComboboxEmpty>
+          <ComboboxList>
+            {(item: { value: string; label: string }) => (
+              <ComboboxItem key={item.value} value={item.value}>
+                {item.label}
+              </ComboboxItem>
+            )}
+          </ComboboxList>
+        </ComboboxContent>
+      </Combobox>
     </div>
   );
 }
@@ -2180,15 +2232,12 @@ function AssignPlanDialog({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="athlete-nationality">Nationality (optional)</Label>
-                  <Input
-                    id="athlete-nationality"
-                    value={athleteNationality}
-                    placeholder="e.g. Saudi"
-                    onChange={(e) => setAthleteNationality(e.target.value)}
-                  />
-                </div>
+                <NationalitySelect
+                  id="athlete-nationality"
+                  label="Nationality (optional)"
+                  value={athleteNationality}
+                  onChange={setAthleteNationality}
+                />
               </div>
             </div>
           )}

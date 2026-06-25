@@ -7,6 +7,15 @@ import { toast } from "sonner";
 
 import { api, uploadFile } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { NATIONALITY_OPTIONS } from "@/lib/nationalities";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
 import {
   startOfMonth,
   endOfMonth,
@@ -240,6 +249,8 @@ export default function MembersPage() {
   const [people, setPeople] = useState<Person[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [typeFilter, setTypeFilter] = useState<"ALL" | "ACADEMY" | "LEISURE">("ALL");
+  const [trainerFilter, setTrainerFilter] = useState<string>("");
+  const [coaches, setCoaches] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState<{
@@ -277,6 +288,7 @@ export default function MembersPage() {
       pageArg = 1,
       status = "ALL",
       side: "ALL" | "ACADEMY" | "LEISURE" = "ALL",
+      trainer = "",
     ) => {
       setLoading(true);
       setError(null);
@@ -286,6 +298,7 @@ export default function MembersPage() {
         if (term) params.search = term;
         if (status !== "ALL") params.status = status;
         if (side !== "ALL") params.type = side;
+        if (trainer) params.trainerId = trainer;
         const result = await api.memberships.listGrouped(params);
         const rows: Person[] = Array.isArray(result) ? result : result?.data || [];
         setPeople(rows);
@@ -302,17 +315,28 @@ export default function MembersPage() {
   );
 
   // Debounce the search term (~300ms) and re-query the server when search, page,
-  // status or side changes — all filtering happens server-side now.
+  // status, side or trainer changes — all filtering happens server-side now.
   useEffect(() => {
-    const t = setTimeout(() => load(query, page, statusFilter, typeFilter), 300);
+    const t = setTimeout(
+      () => load(query, page, statusFilter, typeFilter, trainerFilter),
+      300,
+    );
     return () => clearTimeout(t);
-  }, [query, page, statusFilter, typeFilter, load]);
+  }, [query, page, statusFilter, typeFilter, trainerFilter, load]);
+
+  // Coach pool for the trainer filter — loaded once.
+  useEffect(() => {
+    api.users
+      .list({ role: "COACH", limit: 100 })
+      .then((res: any) => setCoaches(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setCoaches([]));
+  }, []);
 
   // Re-query keeping the current filters + page so the list doesn't reset after
   // create / edit / freeze actions.
   const reload = useCallback(
-    () => load(query, page, statusFilter, typeFilter),
-    [load, query, page, statusFilter, typeFilter],
+    () => load(query, page, statusFilter, typeFilter, trainerFilter),
+    [load, query, page, statusFilter, typeFilter, trainerFilter],
   );
 
   const memberLabel = (m: Membership) => displayName(m) || "this membership";
@@ -367,7 +391,7 @@ export default function MembersPage() {
         }
       />
 
-      {/* Type filter (academy vs leisure) */}
+      {/* Type filter (academy vs leisure) + trainer filter */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="mr-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Side</span>
         {(
@@ -389,6 +413,23 @@ export default function MembersPage() {
             {t.label}
           </Button>
         ))}
+        <div className="md:ml-auto md:w-56">
+          <ComboField
+            value={trainerFilter}
+            onChange={(v) => {
+              setTrainerFilter(v);
+              setPage(1);
+            }}
+            options={[
+              { value: "", label: "All trainers" },
+              ...coaches.map((c) => ({
+                value: c.id,
+                label: c.name || c.email || "(unnamed)",
+              })),
+            ]}
+            placeholder="All trainers"
+          />
+        </div>
       </div>
 
       {/* Status filter + search */}
@@ -533,12 +574,17 @@ export default function MembersPage() {
                             </span>
                           </button>
                         ) : (
-                          <div className="flex items-center gap-2">
-                            <span>{primary?.plan?.name || "—"}</span>
-                            {primary && (
-                              <Badge variant={statusVariant(primary.status)}>
-                                {primary.status || "—"}
-                              </Badge>
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span>{primary?.plan?.name || "—"}</span>
+                              {primary && (
+                                <Badge variant={statusVariant(primary.status)}>
+                                  {primary.status || "—"}
+                                </Badge>
+                              )}
+                            </div>
+                            {primary?.trainerName && (
+                              <p className="text-xs text-muted-foreground">PT: {primary.trainerName}</p>
                             )}
                           </div>
                         )}
@@ -631,12 +677,15 @@ export default function MembersPage() {
                           <TableRow key={m.id} className="bg-muted/30">
                             <TableCell />
                             <TableCell colSpan={2}>
-                              <div className="flex items-center gap-2 pl-7">
+                              <div className="flex flex-wrap items-center gap-2 pl-7">
                                 <span className="text-sm font-medium">{m.plan?.name || "—"}</span>
                                 <Badge variant={statusVariant(m.status)}>{m.status || "—"}</Badge>
                                 <span className="text-xs text-muted-foreground">
                                   {formatDate(m.startDate)} – {formatDate(m.endDate)}
                                 </span>
+                                {m.trainerName && (
+                                  <span className="text-xs text-muted-foreground">PT: {m.trainerName}</span>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell className="text-muted-foreground">
@@ -1159,12 +1208,12 @@ function NewMemberDialog({
                       onChange={(e) => set("dob", e.target.value)}
                     />
                   </Field>
-                  <Field label="Nationality" htmlFor="nm-nat">
-                    <Input
-                      id="nm-nat"
+                  <Field label="Nationality">
+                    <ComboField
                       value={form.nationality}
-                      onChange={(e) => set("nationality", e.target.value)}
-                      placeholder="e.g. Saudi"
+                      onChange={(v) => set("nationality", v)}
+                      options={NATIONALITY_OPTIONS}
+                      placeholder="Select nationality…"
                     />
                   </Field>
                 </div>
@@ -1252,12 +1301,12 @@ function NewMemberDialog({
                       onChange={(e) => set("dob", e.target.value)}
                     />
                   </Field>
-                  <Field label="Nationality" htmlFor="nm-nat-l">
-                    <Input
-                      id="nm-nat-l"
+                  <Field label="Nationality">
+                    <ComboField
                       value={form.nationality}
-                      onChange={(e) => set("nationality", e.target.value)}
-                      placeholder="e.g. Saudi"
+                      onChange={(v) => set("nationality", v)}
+                      options={NATIONALITY_OPTIONS}
+                      placeholder="Select nationality…"
                     />
                   </Field>
                 </div>
@@ -1524,6 +1573,50 @@ function SelectField({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+// ─── Searchable combobox wrapper (string value in / out) ─────────────────────────
+
+type ComboOption = { value: string; label: string };
+
+/**
+ * Thin wrapper over the base-ui Combobox that keeps the bound value a plain
+ * string (like SelectField) while giving a searchable, type-to-filter list.
+ * The selected option object is derived from `value` each render so identity
+ * matching against `items` stays stable.
+ */
+function ComboField({
+  value,
+  onChange,
+  options,
+  placeholder = "Select…",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: ComboOption[];
+  placeholder?: string;
+}) {
+  const selected = options.find((o) => o.value === value) ?? null;
+  return (
+    <Combobox
+      items={options}
+      value={selected}
+      onValueChange={(next: ComboOption | null) => onChange(next ? next.value : "")}
+      itemToStringLabel={(o: ComboOption) => o.label}
+    >
+      <ComboboxInput placeholder={placeholder} className="w-full" showClear={!!selected} />
+      <ComboboxContent>
+        <ComboboxEmpty>No matches.</ComboboxEmpty>
+        <ComboboxList>
+          {(o: ComboOption) => (
+            <ComboboxItem key={o.value} value={o}>
+              {o.label}
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   );
 }
 
@@ -1991,6 +2084,7 @@ function FamilyMembersDialog({
       await api.crm.addFamily(contactId, {
         memberContactId: selected.id,
         relation: linkRelation,
+        membershipId,
       });
       toast.success("Family member linked");
       resetLink();
@@ -2021,6 +2115,7 @@ function FamilyMembersDialog({
       await api.crm.addFamily(contactId, {
         memberContactId: c.id,
         relation: createForm.relation,
+        membershipId,
       });
       toast.success("Family member created & linked");
       setCreateForm({ firstName: "", lastName: "", phone: "", dob: "", relation: FAMILY_RELATIONS[0] });
@@ -2402,6 +2497,9 @@ function AssignMembershipDialog({
   const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
   const [athleteJersey, setAthleteJersey] = useState("");
   const [athleteNationality, setAthleteNationality] = useState("");
+  // Optional assigned PT trainer — picked from the COACH pool, sent as trainerId.
+  const [trainerId, setTrainerId] = useState("");
+  const [coaches, setCoaches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -2417,6 +2515,15 @@ function AssignMembershipDialog({
         setLoading(false);
       }
     })();
+  }, []);
+
+  // Load the coach pool once when the dialog opens — these are the PT trainers
+  // selectable as the assigned trainer.
+  useEffect(() => {
+    api.users
+      .list({ role: "COACH", limit: 100 })
+      .then((res: any) => setCoaches(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setCoaches([]));
   }, []);
 
   // When a subject is picked, look up their existing memberships so we can warn
@@ -2571,6 +2678,7 @@ function AssignMembershipDialog({
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
+          trainerId: trainerId || undefined,
           payNow: price > 0 ? payNow : true,
           paymentMethod,
           paymentReference: paymentReference.trim() || undefined,
@@ -2592,6 +2700,7 @@ function AssignMembershipDialog({
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
+          trainerId: trainerId || undefined,
           payNow: price > 0 ? payNow : true,
           paymentMethod,
           paymentReference: paymentReference.trim() || undefined,
@@ -2612,6 +2721,7 @@ function AssignMembershipDialog({
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
+          trainerId: trainerId || undefined,
           payNow: price > 0 ? payNow : true,
           paymentMethod,
           paymentReference: paymentReference.trim() || undefined,
@@ -2633,6 +2743,12 @@ function AssignMembershipDialog({
     value: p.id,
     label: `${p.name}${p.price != null ? ` — ${formatSAR(p.price)}` : ""}`,
   }));
+
+  // Coach pool as combobox options, with a blank "none" entry at the top.
+  const trainerOptions = [
+    { value: "", label: "— none —" },
+    ...coaches.map((c) => ({ value: c.id, label: c.name || c.email || "(unnamed)" })),
+  ];
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -2825,6 +2941,15 @@ function AssignMembershipDialog({
                 <Label htmlFor="am-autorenew">Auto-renew at end date</Label>
               </div>
 
+              <Field label="Assigned trainer (PT)">
+                <ComboField
+                  value={trainerId}
+                  onChange={setTrainerId}
+                  options={trainerOptions}
+                  placeholder="Select trainer…"
+                />
+              </Field>
+
               {/* Billing — every membership is billed; no free passes. */}
               {planId
                 ? (() => {
@@ -2929,12 +3054,12 @@ function AssignMembershipDialog({
                         options={POSITION_OPTIONS}
                       />
                     </Field>
-                    <Field label="Nationality" htmlFor="am-athlete-nat">
-                      <Input
-                        id="am-athlete-nat"
+                    <Field label="Nationality">
+                      <ComboField
                         value={athleteNationality}
-                        onChange={(e) => setAthleteNationality(e.target.value)}
-                        placeholder="e.g. Saudi"
+                        onChange={setAthleteNationality}
+                        options={NATIONALITY_OPTIONS}
+                        placeholder="Select nationality…"
                       />
                     </Field>
                   </div>
