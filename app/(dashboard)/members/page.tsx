@@ -266,6 +266,8 @@ export default function MembersPage() {
   const [showAddMember, setShowAddMember] = useState(false);
   const [editing, setEditing] = useState<Membership | null>(null);
   const [familyMembership, setFamilyMembership] = useState<Membership | null>(null);
+  const [familyContactId, setFamilyContactId] = useState<string | null>(null);
+  const [familyBusy, setFamilyBusy] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Membership | null>(null);
   const [freezeTarget, setFreezeTarget] = useState<Membership | null>(null);
   const [unfreezeTarget, setUnfreezeTarget] = useState<Membership | null>(null);
@@ -340,6 +342,31 @@ export default function MembersPage() {
   );
 
   const memberLabel = (m: Membership) => displayName(m) || "this membership";
+
+  // Open the family dialog for a person. Leisure/linked members already have a
+  // contact anchor; pure academy athletes get one provisioned on demand so family
+  // linking works for them too (FamilyMember is anchored on a CrmContact).
+  const openFamily = async (person: Person, membership: Membership) => {
+    let cid = person.contactId || contactIdOf(membership);
+    if (!cid && person.athleteId) {
+      setFamilyBusy(person.athleteId);
+      try {
+        const res = (await api.athletes.ensureContact(person.athleteId)) as { id?: string; data?: { id?: string } };
+        cid = res?.id || res?.data?.id || null;
+      } catch {
+        setFamilyBusy(null);
+        toast.error("Couldn't prepare family linking for this member");
+        return;
+      }
+      setFamilyBusy(null);
+    }
+    if (!cid) {
+      toast.error("This member has no contact to link family to");
+      return;
+    }
+    setFamilyContactId(cid);
+    setFamilyMembership(membership);
+  };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
@@ -607,11 +634,12 @@ export default function MembersPage() {
                               <Share2 />
                             </Button>
                           )}
-                          {p.contactId && primary && !p.isDependent && (
+                          {(p.contactId || p.athleteId) && primary && !p.isDependent && (
                             <Button
                               variant="outline"
                               size="icon-sm"
-                              onClick={() => setFamilyMembership(primary)}
+                              onClick={() => openFamily(p, primary)}
+                              disabled={!!familyBusy && familyBusy === p.athleteId}
                               title="Family members"
                               aria-label="Family members"
                             >
@@ -791,12 +819,15 @@ export default function MembersPage() {
         />
       )}
 
-      {familyMembership && contactIdOf(familyMembership) && (
+      {familyMembership && familyContactId && (
         <FamilyMembersDialog
-          contactId={contactIdOf(familyMembership) as string}
+          contactId={familyContactId}
           membershipId={familyMembership.id}
           memberName={displayName(familyMembership) || familyMembership.plan?.name || "this member"}
-          onClose={() => setFamilyMembership(null)}
+          onClose={() => {
+            setFamilyMembership(null);
+            setFamilyContactId(null);
+          }}
         />
       )}
 

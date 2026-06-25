@@ -204,6 +204,8 @@ export const api = {
     update: (id: string, data: any) =>
       apiFetch<any>(`/athletes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     delete: (id: string) => apiFetch<any>(`/athletes/${id}`, { method: "DELETE" }),
+    ensureContact: (id: string) =>
+      apiFetch<any>(`/athletes/${id}/ensure-contact`, { method: "POST" }),
   },
 
   users: {
