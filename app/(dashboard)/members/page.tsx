@@ -2179,6 +2179,25 @@ function FamilyMembersDialog({
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Linked members — EXISTING contacts attached to this family who keep their
+  // own plan & billing. Managed through the crm family-links API, keyed on the
+  // payer's contactId.
+  const [linked, setLinked] = useState<any[]>([]);
+  const [linkedLoading, setLinkedLoading] = useState(true);
+  const [unlinkTarget, setUnlinkTarget] = useState<any | null>(null);
+  const [unlinking, setUnlinking] = useState(false);
+
+  // Add mode — "link" (attach an existing person, default) vs "new" (create a
+  // brand-new covered member via the rich form).
+  const [addMode, setAddMode] = useState<"link" | "new">("link");
+
+  // Link-existing search state.
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkSearching, setLinkSearching] = useState(false);
+  const [linkResults, setLinkResults] = useState<any[]>([]);
+  const [linkRelation, setLinkRelation] = useState("");
+  const [linkingId, setLinkingId] = useState<string | null>(null);
+
   // Service plans (non-family). A plan with requiresAthlete is an academy plan.
   const [plans, setPlans] = useState<any[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
@@ -2203,9 +2222,8 @@ function FamilyMembersDialog({
 
   // Reference void so unused props don't trip lint — membershipId is kept on the
   // contract for callers/back-compat even though covered members anchor on
-  // anchorMembershipId. contactId is still used for naming context.
+  // anchorMembershipId. contactId IS used now for linked family-link management.
   void membershipId;
-  void contactId;
 
   const loadCovered = useCallback(async () => {
     setLoading(true);
@@ -2222,9 +2240,75 @@ function FamilyMembersDialog({
     }
   }, [anchorMembershipId]);
 
+  // Linked members live on the payer's contact as family links — keep their own
+  // plan & billing (or have no plan yet). Normalize array | { data }.
+  const loadLinked = useCallback(async () => {
+    setLinkedLoading(true);
+    try {
+      const res = await api.crm.listFamily(contactId);
+      setLinked(Array.isArray(res) ? res : res?.data || []);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to load linked members");
+    } finally {
+      setLinkedLoading(false);
+    }
+  }, [contactId]);
+
   useEffect(() => {
     loadCovered();
   }, [loadCovered]);
+
+  useEffect(() => {
+    loadLinked();
+  }, [loadLinked]);
+
+  // Best display name for a linked family-link row — prefer the embedded
+  // contact, fall back to denormalized firstName/lastName on the link itself.
+  const linkedLabel = useCallback((link: any) => {
+    const c = link?.memberContact;
+    if (c) return `${c.firstName || ""} ${c.lastName || ""}`.trim() || "this member";
+    return `${link?.firstName || ""} ${link?.lastName || ""}`.trim() || "this member";
+  }, []);
+
+  // Ids already attached to this family (payer + covered + linked) so the search
+  // can hide people who are already in.
+  const excludedIds = useMemo(() => {
+    const ids = new Set<string>([contactId]);
+    for (const m of covered) {
+      if (m?.crmContact?.id) ids.add(m.crmContact.id);
+    }
+    for (const link of linked) {
+      const mid = link?.memberContactId || link?.memberContact?.id;
+      if (mid) ids.add(mid);
+    }
+    return ids;
+  }, [contactId, covered, linked]);
+
+  // Debounced contact search (~300ms) for the "Link existing" flow — mirrors the
+  // Assign dialog's pattern. Excludes people already in the family.
+  useEffect(() => {
+    if (addMode !== "link") return;
+    const term = linkSearch.trim();
+    if (!term) {
+      setLinkResults([]);
+      setLinkSearching(false);
+      return;
+    }
+    setLinkSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await api.crm.list({ q: term, limit: 8 });
+        const list = Array.isArray(res) ? res : (res as any)?.data || [];
+        setLinkResults(list.filter((r: any) => !excludedIds.has(r.id)));
+      } catch (err: any) {
+        toast.error(err?.message || "Search failed");
+        setLinkResults([]);
+      } finally {
+        setLinkSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [linkSearch, addMode, excludedIds]);
 
   // Load the service plans once. A family-package plan can't be a covered
   // service, so those are excluded from the picker.
@@ -2362,6 +2446,45 @@ function FamilyMembersDialog({
     }
   };
 
+  // Attach an existing contact to the family — they keep their own plan/billing.
+  const linkMember = async (result: any) => {
+    setLinkingId(result.id);
+    try {
+      await api.crm.addFamily(contactId, {
+        memberContactId: result.id,
+        relation: linkRelation || undefined,
+      });
+      toast.success("Linked to the family");
+      setLinkSearch("");
+      setLinkResults([]);
+      await loadLinked();
+      onChanged?.();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to link member");
+    } finally {
+      setLinkingId(null);
+    }
+  };
+
+  const confirmUnlink = async () => {
+    if (!unlinkTarget) return;
+    setUnlinking(true);
+    try {
+      await api.crm.deleteFamily(unlinkTarget.id);
+      toast.success("Member unlinked from the family");
+      setUnlinkTarget(null);
+      await loadLinked();
+      onChanged?.();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to unlink member");
+    } finally {
+      setUnlinking(false);
+    }
+  };
+
+  // Combined headcount across both kinds of family member.
+  const totalCount = covered.length + linked.length;
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-xl">
@@ -2369,16 +2492,17 @@ function FamilyMembersDialog({
           <DialogHeader className="border-b p-6">
             <DialogTitle>Members covered by this package — {memberName}</DialogTitle>
             <DialogDescription>
-              Family members covered by this package each get their own free, active
-              membership.
+              This family has {totalCount} member{totalCount === 1 ? "" : "s"}. Covered
+              members get a free membership under this package; linked members keep their
+              own plan &amp; billing.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 space-y-5 overflow-y-auto p-6">
-            {/* Covered members list */}
+            {/* Covered members list — free under the package */}
             <div>
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Covered ({covered.length})
+                Covered by package · free ({covered.length})
               </p>
               {loading ? (
                 <p className="rounded-md border px-4 py-6 text-center text-sm text-muted-foreground">
@@ -2432,15 +2556,183 @@ function FamilyMembersDialog({
               )}
             </div>
 
-            {/* Add a member */}
-            <form onSubmit={addMember} className="space-y-4 border-t pt-5">
-              <div>
-                <p className="text-sm font-semibold">Add a member</p>
-                <p className="text-xs text-muted-foreground">
-                  They get their own free, active membership under this package. Academy
-                  members also get an athlete profile.
+            {/* Linked members list — existing people who keep their own plan */}
+            <div>
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Linked · own plan ({linked.length})
+              </p>
+              {linkedLoading ? (
+                <p className="rounded-md border px-4 py-6 text-center text-sm text-muted-foreground">
+                  Loading…
                 </p>
+              ) : linked.length === 0 ? (
+                <p className="rounded-md border px-4 py-6 text-center text-sm text-muted-foreground">
+                  No linked members yet.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {linked.map((link) => {
+                    const name = linkedLabel(link);
+                    const c = link?.memberContact;
+                    const sub = c?.email || c?.phone || "";
+                    const relLabel =
+                      RELATION_OPTIONS.find((r) => r.value === link.relation)?.label ||
+                      (link.relation ? String(link.relation) : null);
+                    return (
+                      <li
+                        key={link.id}
+                        className="flex items-center gap-3 rounded-md border px-3 py-2.5"
+                      >
+                        <Avatar className="h-8 w-8 shrink-0">
+                          <AvatarFallback>
+                            {name.charAt(0).toUpperCase() || "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="truncate font-medium">{name}</span>
+                            {relLabel && <Badge variant="secondary">{relLabel}</Badge>}
+                            <Badge variant="outline">Linked · own plan</Badge>
+                          </div>
+                          {sub && (
+                            <p className="truncate text-xs text-muted-foreground">{sub}</p>
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="icon-sm"
+                          onClick={() => setUnlinkTarget(link)}
+                          title="Unlink"
+                          aria-label="Unlink member"
+                        >
+                          <Trash />
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* Add area — toggle between linking an existing person and creating
+                a new covered member. */}
+            <div className="space-y-4 border-t pt-5">
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={addMode === "link" ? "default" : "outline"}
+                  onClick={() => setAddMode("link")}
+                >
+                  Link existing
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={addMode === "new" ? "default" : "outline"}
+                  onClick={() => setAddMode("new")}
+                >
+                  Add new
+                </Button>
               </div>
+
+              {addMode === "link" ? (
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm font-semibold">Link an existing member</p>
+                    <p className="text-xs text-muted-foreground">
+                      Attach a person who is already a contact. They keep their own plan
+                      &amp; billing (or have no plan yet).
+                    </p>
+                  </div>
+
+                  <Field label="Relation">
+                    <SelectField
+                      value={linkRelation}
+                      onChange={setLinkRelation}
+                      options={RELATION_OPTIONS}
+                      placeholder="e.g. Child (optional)"
+                    />
+                  </Field>
+
+                  <Field label="Find a member" htmlFor="fm-link-search">
+                    <Input
+                      id="fm-link-search"
+                      value={linkSearch}
+                      onChange={(e) => setLinkSearch(e.target.value)}
+                      placeholder="Search by name, email or phone…"
+                      autoComplete="off"
+                    />
+                    {linkSearch.trim() ? (
+                      <div className="mt-2 max-h-56 overflow-y-auto rounded-md border">
+                        {linkSearching ? (
+                          <p className="px-3 py-2 text-sm text-muted-foreground">
+                            Searching…
+                          </p>
+                        ) : linkResults.length === 0 ? (
+                          <p className="px-3 py-2 text-sm text-muted-foreground">
+                            No matches.
+                          </p>
+                        ) : (
+                          linkResults.map((r) => {
+                            const rName =
+                              `${r.firstName || ""} ${r.lastName || ""}`.trim() ||
+                              "(unnamed)";
+                            const rSub = r.email || r.phone || "";
+                            const typeBadge = contactTypeBadge(
+                              (String(r.type || "").toUpperCase() as Person["contactType"]) ||
+                                null,
+                            );
+                            return (
+                              <div
+                                key={r.id}
+                                className="flex items-center justify-between gap-2 border-b px-3 py-2 last:border-b-0"
+                              >
+                                <span className="flex min-w-0 flex-col items-start gap-0.5">
+                                  <span className="flex items-center gap-2">
+                                    <span className="truncate text-sm font-medium">
+                                      {rName}
+                                    </span>
+                                    {typeBadge ? (
+                                      <Badge variant={typeBadge.variant}>
+                                        {typeBadge.label}
+                                      </Badge>
+                                    ) : null}
+                                  </span>
+                                  {rSub ? (
+                                    <span className="truncate text-xs text-muted-foreground">
+                                      {rSub}
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={linkingId != null}
+                                  onClick={() => linkMember(r)}
+                                >
+                                  <Plus />
+                                  {linkingId === r.id ? "Linking…" : "Link"}
+                                </Button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    ) : null}
+                  </Field>
+                </div>
+              ) : (
+                <form onSubmit={addMember} className="space-y-4">
+                  <div>
+                    <p className="text-sm font-semibold">Add a new member</p>
+                    <p className="text-xs text-muted-foreground">
+                      They get their own free, active membership under this package.
+                      Academy members also get an athlete profile.
+                    </p>
+                  </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="First name *" htmlFor="fm-first">
@@ -2559,7 +2851,9 @@ function FamilyMembersDialog({
                   {adding ? "Adding…" : "Add member"}
                 </Button>
               </div>
-            </form>
+                </form>
+              )}
+            </div>
           </div>
 
           <DialogFooter className="border-t p-4">
@@ -2579,6 +2873,17 @@ function FamilyMembersDialog({
         variant="destructive"
         loading={deleting}
         onConfirm={confirmDelete}
+      />
+
+      <ConfirmDialog
+        open={!!unlinkTarget}
+        onOpenChange={(o) => !o && setUnlinkTarget(null)}
+        title="Unlink member"
+        description={`Unlink ${unlinkTarget ? linkedLabel(unlinkTarget) : ""} from this family? Their own plan & billing are not affected.`}
+        confirmLabel="Unlink"
+        variant="destructive"
+        loading={unlinking}
+        onConfirm={confirmUnlink}
       />
     </Dialog>
   );
