@@ -22,6 +22,7 @@ export {
   Search,
   Filter,
   Plus,
+  Minus,
   Edit,
   Trash,
   Eye,

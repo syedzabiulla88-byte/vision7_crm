@@ -143,6 +143,9 @@ export const api = {
     freeze: (id: string, data: { freezeDays: number; freezeStartDate?: string }) =>
       apiFetch<any>(`/memberships/${id}/freeze`, { method: "POST", body: JSON.stringify(data) }),
     unfreeze: (id: string) => apiFetch<any>(`/memberships/${id}/unfreeze`, { method: "POST" }),
+    // Session packs: delta -1 = use a session, +1 = restore one.
+    useSession: (id: string, delta = -1) =>
+      apiFetch<any>(`/memberships/${id}/use-session`, { method: "POST", body: JSON.stringify({ delta }) }),
   },
 
   invoices: {

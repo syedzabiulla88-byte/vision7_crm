@@ -66,6 +66,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Plus,
+  Minus,
   Search,
   Trash,
   SquarePen,
@@ -203,6 +204,50 @@ function hasFamilyPlan(p: Person): boolean {
   );
 }
 
+/** Remaining-sessions readout + use/restore for session-pack memberships (1-2-1, PT). */
+function SessionControl({
+  m,
+  onAdjust,
+  busy,
+}: {
+  m: Membership;
+  onAdjust: (m: Membership, delta: number) => void;
+  busy?: boolean;
+}) {
+  const total = (m as { sessionsTotal?: number | null }).sessionsTotal;
+  if (total == null) return null;
+  const remaining = (m as { sessionsRemaining?: number | null }).sessionsRemaining ?? total;
+  return (
+    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+      <span>
+        Sessions: <span className="font-medium text-foreground">{remaining}</span> / {total}
+      </span>
+      <Button
+        variant="outline"
+        size="icon-sm"
+        className="h-5 w-5"
+        disabled={busy || remaining <= 0}
+        onClick={() => onAdjust(m, -1)}
+        title="Use a session"
+        aria-label="Use a session"
+      >
+        <Minus className="size-3" />
+      </Button>
+      <Button
+        variant="outline"
+        size="icon-sm"
+        className="h-5 w-5"
+        disabled={busy || remaining >= total}
+        onClick={() => onAdjust(m, 1)}
+        title="Restore a session"
+        aria-label="Restore a session"
+      >
+        <Plus className="size-3" />
+      </Button>
+    </div>
+  );
+}
+
 /** Best-available display name for a membership row. */
 function displayName(m: Membership): string {
   if (m?.athlete) return `${m.athlete.firstName || ""} ${m.athlete.lastName || ""}`.trim();
@@ -275,6 +320,7 @@ export default function MembersPage() {
   const [familyMembership, setFamilyMembership] = useState<Membership | null>(null);
   const [familyContactId, setFamilyContactId] = useState<string | null>(null);
   const [familyBusy, setFamilyBusy] = useState<string | null>(null);
+  const [sessionBusy, setSessionBusy] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Membership | null>(null);
   const [freezeTarget, setFreezeTarget] = useState<Membership | null>(null);
   const [unfreezeTarget, setUnfreezeTarget] = useState<Membership | null>(null);
@@ -373,6 +419,19 @@ export default function MembersPage() {
     }
     setFamilyContactId(cid);
     setFamilyMembership(membership);
+  };
+
+  // Use / restore a session on a pack membership, then refresh.
+  const adjustSession = async (m: Membership, delta: number) => {
+    setSessionBusy(m.id);
+    try {
+      await api.memberships.useSession(m.id, delta);
+      reload();
+    } catch {
+      toast.error("Couldn't update sessions");
+    } finally {
+      setSessionBusy(null);
+    }
   };
 
   const confirmDelete = async () => {
@@ -620,6 +679,9 @@ export default function MembersPage() {
                             {primary?.trainerName && (
                               <p className="text-xs text-muted-foreground">PT: {primary.trainerName}</p>
                             )}
+                            {primary && (
+                              <SessionControl m={primary} onAdjust={adjustSession} busy={sessionBusy === primary.id} />
+                            )}
                           </div>
                         )}
                       </TableCell>
@@ -721,6 +783,7 @@ export default function MembersPage() {
                                 {m.trainerName && (
                                   <span className="text-xs text-muted-foreground">PT: {m.trainerName}</span>
                                 )}
+                                <SessionControl m={m} onAdjust={adjustSession} busy={sessionBusy === m.id} />
                               </div>
                             </TableCell>
                             <TableCell className="text-muted-foreground">
