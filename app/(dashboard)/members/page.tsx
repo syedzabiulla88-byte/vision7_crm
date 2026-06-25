@@ -126,6 +126,14 @@ const LEISURE_INTERESTS = ["gym", "padel", "swim", "rooftop", "wellness", "nutri
 
 const FAMILY_ID_TYPES = ["NATIONAL_ID", "IQAMA", "PASSPORT"];
 
+const RELATION_OPTIONS = [
+  { value: "SPOUSE", label: "Spouse" },
+  { value: "CHILD", label: "Child" },
+  { value: "PARENT", label: "Parent" },
+  { value: "SIBLING", label: "Sibling" },
+  { value: "OTHER", label: "Other" },
+];
+
 const STATUS_OPTIONS = ["PENDING", "ACTIVE", "EXPIRED", "SUSPENDED", "CANCELLED"];
 
 // ─── Small format helpers (no shared format lib in the CRM app yet) ─────────────
@@ -2179,9 +2187,15 @@ function FamilyMembersDialog({
   const [form, setForm] = useState({
     firstName: "",
     lastName: "",
+    relation: "",
     planId: "",
-    dob: "",
     gender: "",
+    dob: "",
+    phone: "",
+    email: "",
+    nationality: "",
+    idType: "NATIONAL_ID",
+    idNumber: "",
   });
   const [adding, setAdding] = useState(false);
   const setField = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
@@ -2257,7 +2271,10 @@ function FamilyMembersDialog({
   };
 
   const resetForm = () =>
-    setForm({ firstName: "", lastName: "", planId: "", dob: "", gender: "" });
+    setForm({
+      firstName: "", lastName: "", relation: "", planId: "", gender: "",
+      dob: "", phone: "", email: "", nationality: "", idType: "NATIONAL_ID", idNumber: "",
+    });
 
   const addMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2265,14 +2282,20 @@ function FamilyMembersDialog({
       toast.error("First and last name are required");
       return;
     }
+    if (!form.gender) {
+      toast.error("Please select a gender");
+      return;
+    }
     if (!form.planId) {
       toast.error("Pick a service for this member");
       return;
     }
-    if (requiresAthlete && (!form.dob || !form.gender)) {
-      toast.error("Date of birth and gender are required for academy plans");
+    if (requiresAthlete && (!form.dob || !form.email.trim())) {
+      toast.error("Date of birth and email are required for academy members");
       return;
     }
+    const relationLabel =
+      RELATION_OPTIONS.find((r) => r.value === form.relation)?.label || undefined;
     setAdding(true);
     try {
       if (requiresAthlete) {
@@ -2281,23 +2304,35 @@ function FamilyMembersDialog({
           lastName: form.lastName.trim(),
           dob: new Date(form.dob).toISOString(),
           gender: form.gender,
-          email: undefined,
+          email: form.email.trim(),
+          phone: form.phone.trim() || undefined,
+          nationality: form.nationality || undefined,
+          idNumber: form.idNumber.trim() || undefined,
+          idType: form.idNumber.trim() ? form.idType : undefined,
         });
         await api.memberships.assign({
           familyMembershipId: anchorMembershipId,
           athleteId: a.id,
           planId: form.planId,
+          notes: relationLabel,
         });
       } else {
         const c = await api.crm.create({
           firstName: form.firstName.trim(),
           lastName: form.lastName.trim(),
+          gender: form.gender,
+          dob: form.dob ? new Date(form.dob).toISOString() : undefined,
+          phone: form.phone.trim() || undefined,
+          email: form.email.trim() || undefined,
+          nationalId: form.idNumber.trim() || undefined,
+          idType: form.idNumber.trim() ? form.idType : undefined,
           type: "CUSTOMER",
         });
         await api.memberships.assign({
           familyMembershipId: anchorMembershipId,
           crmContactId: c.id,
           planId: form.planId,
+          notes: relationLabel,
         });
       }
       toast.success("Member added to the family package");
@@ -2329,7 +2364,7 @@ function FamilyMembersDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-xl">
         <div className="flex max-h-[90vh] flex-col">
           <DialogHeader className="border-b p-6">
             <DialogTitle>Members covered by this package — {memberName}</DialogTitle>
@@ -2374,6 +2409,7 @@ function FamilyMembersDialog({
                               {m.status || "—"}
                             </Badge>
                             {m.athlete && <Badge variant="outline">Academy</Badge>}
+                            {m.notes && <Badge variant="secondary">{m.notes}</Badge>}
                           </div>
                           <p className="truncate text-xs text-muted-foreground">
                             {m.plan?.name || "—"}
@@ -2397,10 +2433,14 @@ function FamilyMembersDialog({
             </div>
 
             {/* Add a member */}
-            <form onSubmit={addMember} className="space-y-4 border-t pt-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Add a member
-              </p>
+            <form onSubmit={addMember} className="space-y-4 border-t pt-5">
+              <div>
+                <p className="text-sm font-semibold">Add a member</p>
+                <p className="text-xs text-muted-foreground">
+                  They get their own free, active membership under this package. Academy
+                  members also get an athlete profile.
+                </p>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="First name *" htmlFor="fm-first">
@@ -2421,6 +2461,81 @@ function FamilyMembersDialog({
                 </Field>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Relation">
+                  <SelectField
+                    value={form.relation}
+                    onChange={(v) => setField("relation", v)}
+                    options={RELATION_OPTIONS}
+                    placeholder="e.g. Child"
+                  />
+                </Field>
+                <Field label="Gender *">
+                  <SelectField
+                    value={form.gender}
+                    onChange={(v) => setField("gender", v)}
+                    options={GENDER_OPTIONS}
+                    placeholder="Select gender…"
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={requiresAthlete ? "Date of birth *" : "Date of birth"} htmlFor="fm-dob">
+                  <Input
+                    id="fm-dob"
+                    type="date"
+                    value={form.dob}
+                    onChange={(e) => setField("dob", e.target.value)}
+                  />
+                </Field>
+                <Field label="Phone" htmlFor="fm-phone">
+                  <Input
+                    id="fm-phone"
+                    value={form.phone}
+                    onChange={(e) => setField("phone", e.target.value)}
+                    placeholder="05XXXXXXXX"
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={requiresAthlete ? "Email *" : "Email"} htmlFor="fm-email">
+                  <Input
+                    id="fm-email"
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setField("email", e.target.value)}
+                  />
+                </Field>
+                <Field label="Nationality">
+                  <ComboField
+                    value={form.nationality}
+                    onChange={(v) => setField("nationality", v)}
+                    options={NATIONALITY_OPTIONS}
+                    placeholder="Select…"
+                  />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="ID type">
+                  <SelectField
+                    value={form.idType}
+                    onChange={(v) => setField("idType", v)}
+                    options={ID_TYPE_OPTIONS}
+                  />
+                </Field>
+                <Field label="ID number" htmlFor="fm-idnum">
+                  <Input
+                    id="fm-idnum"
+                    value={form.idNumber}
+                    onChange={(e) => setField("idNumber", e.target.value)}
+                    placeholder="e.g. 1234567890"
+                  />
+                </Field>
+              </div>
+
               <Field label="Service *">
                 <ComboField
                   value={form.planId}
@@ -2428,29 +2543,15 @@ function FamilyMembersDialog({
                   options={planOptions}
                   placeholder={plansLoading ? "Loading services…" : "Select a service…"}
                 />
+                {selectedPlan && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {requiresAthlete
+                      ? "Academy service — creates an athlete profile."
+                      : "Leisure service."}{" "}
+                    Covered free under this family package.
+                  </p>
+                )}
               </Field>
-
-              {requiresAthlete && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Date of birth *" htmlFor="fm-dob">
-                    <Input
-                      id="fm-dob"
-                      type="date"
-                      required
-                      value={form.dob}
-                      onChange={(e) => setField("dob", e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Gender *">
-                    <SelectField
-                      value={form.gender}
-                      onChange={(v) => setField("gender", v)}
-                      options={GENDER_OPTIONS}
-                      placeholder="Select gender…"
-                    />
-                  </Field>
-                </div>
-              )}
 
               <div className="flex justify-end">
                 <Button type="submit" disabled={adding}>
