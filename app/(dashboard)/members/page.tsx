@@ -196,6 +196,13 @@ function contactIdOf(m: Membership): string | null {
   );
 }
 
+/** Family linking is offered only to holders of a family-package plan. */
+function hasFamilyPlan(p: Person): boolean {
+  return (p.memberships || []).some(
+    (m) => !!(m.plan as { isFamilyPlan?: boolean } | undefined)?.isFamilyPlan,
+  );
+}
+
 /** Best-available display name for a membership row. */
 function displayName(m: Membership): string {
   if (m?.athlete) return `${m.athlete.firstName || ""} ${m.athlete.lastName || ""}`.trim();
@@ -634,7 +641,7 @@ export default function MembersPage() {
                               <Share2 />
                             </Button>
                           )}
-                          {(p.contactId || p.athleteId) && primary && !p.isDependent && (
+                          {hasFamilyPlan(p) && (p.contactId || p.athleteId) && primary && !p.isDependent && (
                             <Button
                               variant="outline"
                               size="icon-sm"
