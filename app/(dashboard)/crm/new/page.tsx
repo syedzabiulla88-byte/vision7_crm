@@ -196,7 +196,8 @@ export default function NewContactPage() {
         email: form.email.trim(),
         phone: form.phone.trim() || undefined,
         address: form.address.trim() || undefined,
-        type: form.type,
+        // Member status is system-managed (a contact becomes a MEMBER only when a plan
+        // is assigned in the Members page). New contacts default to LEAD server-side.
         source: form.source,
         tags,
         notes: form.notes.trim() || undefined,
@@ -436,13 +437,6 @@ export default function NewContactPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <SelectField
-                id="type"
-                label="Type"
-                value={form.type}
-                onChange={(v) => set("type", v)}
-                options={TYPES}
-              />
               <SelectField
                 id="source"
                 label="Source"

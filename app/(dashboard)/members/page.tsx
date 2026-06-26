@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { api, uploadFile } from "@/lib/api";
@@ -335,6 +335,43 @@ export default function MembersPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [showAssign, setShowAssign] = useState(false);
+  // Pre-selected contact when arriving from a contact's "Convert to member" button
+  // (Contacts route here for plan assignment via ?assign=<contactId>).
+  const [assignContact, setAssignContact] = useState<{
+    id: string; firstName: string; lastName: string; name: string;
+    email?: string | null; phone?: string | null; type?: string | null; linkedAthleteId?: string | null;
+  } | null>(null);
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const cid = searchParams.get("assign");
+    if (!cid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const c = (await api.crm.get(cid)) as any;
+        if (!cancelled && c?.id) {
+          setAssignContact({
+            id: c.id,
+            firstName: c.firstName || "",
+            lastName: c.lastName || "",
+            name: `${c.firstName || ""} ${c.lastName || ""}`.trim() || "Member",
+            email: c.email,
+            phone: c.phone,
+            type: c.type,
+            linkedAthleteId: c.linkedAthleteId,
+          });
+          setShowAssign(true);
+        }
+      } catch {
+        /* ignore — fall back to manual search */
+      } finally {
+        router.replace("/members"); // drop the param so refresh/back doesn't reopen
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, router]);
   const [showAddMember, setShowAddMember] = useState(false);
   const [editing, setEditing] = useState<Membership | null>(null);
   const [familyMembership, setFamilyMembership] = useState<Membership | null>(null);
@@ -931,9 +968,14 @@ export default function MembersPage() {
       {/* Dialogs */}
       {showAssign && (
         <AssignMembershipDialog
-          onClose={() => setShowAssign(false)}
+          initialContact={assignContact}
+          onClose={() => {
+            setShowAssign(false);
+            setAssignContact(null);
+          }}
           onCreated={() => {
             setShowAssign(false);
+            setAssignContact(null);
             reload();
           }}
         />
@@ -2894,9 +2936,21 @@ function FamilyMembersDialog({
 function AssignMembershipDialog({
   onClose,
   onCreated,
+  initialContact,
 }: {
   onClose: () => void;
   onCreated: () => void;
+  initialContact?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    type?: string | null;
+    sub?: string;
+    linkedAthleteId?: string | null;
+  } | null;
 }) {
   // ONE common contact search — the chosen PLAN decides whether an athlete is
   // needed (academy plans), so there is no academy/leisure toggle here.
@@ -2915,7 +2969,7 @@ function AssignMembershipDialog({
     type?: string | null;
     sub?: string;
     linkedAthleteId?: string | null;
-  } | null>(null);
+  } | null>(initialContact ?? null);
   // Duplicate-assign guard — the subject's existing ACTIVE/PENDING memberships.
   // Multiple memberships are allowed, so this is a deliberate confirm, not a block.
   const [existingMemberships, setExistingMemberships] = useState<Membership[]>([]);
@@ -2932,9 +2986,14 @@ function AssignMembershipDialog({
   const [payNow, setPayNow] = useState(true);
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentReference, setPaymentReference] = useState("");
-  // Optional ID capture — writes back to the selected subject before assigning.
+  // ID capture — writes back to the selected subject before assigning. Required
+  // when the chosen member has no ID on file yet (see subjectHasId / needsId).
   const [idType, setIdType] = useState("NATIONAL_ID");
   const [idNumber, setIdNumber] = useState("");
+  const [idDocumentUrl, setIdDocumentUrl] = useState("");
+  const [idUploading, setIdUploading] = useState(false);
+  // null = not checked yet; false = member has NO ID on file (capture required).
+  const [subjectHasId, setSubjectHasId] = useState<boolean | null>(null);
   // Athlete provisioning fields — only used for academy plans where the chosen
   // contact has no linked athlete yet.
   const [athleteDob, setAthleteDob] = useState("");
@@ -2977,6 +3036,7 @@ function AssignMembershipDialog({
   useEffect(() => {
     setExistingMemberships([]);
     setConfirmDuplicate(false);
+    setSubjectHasId(null);
     if (!subject?.id) {
       setCheckingExisting(false);
       return;
@@ -2995,6 +3055,14 @@ function AssignMembershipDialog({
           Array.isArray(r) ? r : (r as any)?.data || [],
         );
         if (!cancelled) setExistingMemberships(list);
+        // Does this member already have an ID on file? (contact, or linked athlete)
+        const contact = (await api.crm.get(subject.id).catch(() => null)) as any;
+        let hasId = !!(contact?.nationalId || contact?.idDocumentUrl);
+        if (!hasId && subject.linkedAthleteId) {
+          const ath = (await api.athletes.get(subject.linkedAthleteId).catch(() => null)) as any;
+          hasId = !!(ath?.idNumber || ath?.idDocumentUrl);
+        }
+        if (!cancelled) setSubjectHasId(hasId);
       } catch {
         // Non-fatal — if the lookup fails we simply skip the warning.
         if (!cancelled) setExistingMemberships([]);
@@ -3065,6 +3133,34 @@ function AssignMembershipDialog({
     ["ACTIVE", "PENDING"].includes(String(m.status || "").toUpperCase()),
   );
   const needsDuplicateConfirm = activeOrPending.length > 0;
+  // Every member must have an ID on file — when the chosen member has none, force
+  // ID capture (number + document) here before a plan can be assigned.
+  const needsId = !!subject && subjectHasId === false;
+
+  const uploadIdDoc = async (file?: File) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File too large — keep it under 10 MB");
+      return;
+    }
+    setIdUploading(true);
+    try {
+      const { url } = await uploadFile(file, {
+        folder: "members/kyc",
+        category: file.type.startsWith("image/")
+          ? "image"
+          : file.type === "application/pdf"
+            ? "pdf"
+            : "file",
+      });
+      setIdDocumentUrl(url);
+      toast.success("ID document uploaded");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setIdUploading(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3091,6 +3187,13 @@ function AssignMembershipDialog({
         return;
       }
     }
+    // ID is mandatory when the member has none on file yet.
+    if (needsId && (!idNumber.trim() || !idDocumentUrl)) {
+      toast.error(
+        "This member has no ID on file — enter the ID number and upload the ID document to assign a plan.",
+      );
+      return;
+    }
     // Multiple memberships are allowed, but assigning a second active/pending one
     // must be deliberate — require the confirm checkbox first.
     if (needsDuplicateConfirm && !confirmDuplicate) {
@@ -3114,6 +3217,7 @@ function AssignMembershipDialog({
           nationality: athleteNationality.trim() || undefined,
           idType: idNumber.trim() ? idType : undefined,
           idNumber: idNumber.trim() || undefined,
+          idDocumentUrl: idDocumentUrl || undefined,
         });
         const res = await api.memberships.assign({
           athleteId: athlete.id,
@@ -3134,8 +3238,11 @@ function AssignMembershipDialog({
         else toast.success("Athlete profile created — invoice raised, membership pending until paid");
       } else if (requiresAthlete && linkedAthleteId) {
         // Academy plan, contact already has an athlete — bill via athleteId.
-        if (idNumber.trim()) {
-          await api.athletes.update(linkedAthleteId, { idType, idNumber: idNumber.trim() });
+        if (idNumber.trim() || idDocumentUrl) {
+          await api.athletes.update(linkedAthleteId, {
+            ...(idNumber.trim() ? { idType, idNumber: idNumber.trim() } : {}),
+            ...(idDocumentUrl ? { idDocumentUrl } : {}),
+          });
         }
         const res = await api.memberships.assign({
           athleteId: linkedAthleteId,
@@ -3155,8 +3262,11 @@ function AssignMembershipDialog({
         else toast.success("Invoice raised — membership pending until paid");
       } else {
         // Leisure plan (no athlete needed) — bill directly to the CRM contact.
-        if (idNumber.trim()) {
-          await api.crm.update(subject.id, { idType, nationalId: idNumber.trim() });
+        if (idNumber.trim() || idDocumentUrl) {
+          await api.crm.update(subject.id, {
+            ...(idNumber.trim() ? { idType, nationalId: idNumber.trim() } : {}),
+            ...(idDocumentUrl ? { idDocumentUrl } : {}),
+          });
         }
         const res = await api.memberships.assign({
           crmContactId: subject.id,
@@ -3332,21 +3442,43 @@ function AssignMembershipDialog({
                 />
               </Field>
 
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="ID type">
-                  <SelectField
-                    value={idType}
-                    onChange={setIdType}
-                    options={ID_TYPE_OPTIONS}
-                  />
-                </Field>
-                <Field label="ID number" htmlFor="am-idnum">
-                  <Input
-                    id="am-idnum"
-                    className="font-mono"
-                    value={idNumber}
-                    onChange={(e) => setIdNumber(e.target.value)}
-                    placeholder="e.g. 1234567890"
+              <div className="space-y-3">
+                {needsId ? (
+                  <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    This member has no ID on file — an ID number <strong>and</strong> ID
+                    document are required to assign a plan.
+                  </p>
+                ) : subjectHasId === true ? (
+                  <p className="text-xs text-muted-foreground">
+                    ✓ ID already on file — update below only if needed (optional).
+                  </p>
+                ) : null}
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="ID type">
+                    <SelectField
+                      value={idType}
+                      onChange={setIdType}
+                      options={ID_TYPE_OPTIONS}
+                    />
+                  </Field>
+                  <Field label={needsId ? "ID number *" : "ID number"} htmlFor="am-idnum">
+                    <Input
+                      id="am-idnum"
+                      className="font-mono"
+                      value={idNumber}
+                      onChange={(e) => setIdNumber(e.target.value)}
+                      placeholder="e.g. 1234567890"
+                    />
+                  </Field>
+                </div>
+                <Field
+                  label={needsId ? "ID document (image or PDF) *" : "ID document (image or PDF)"}
+                >
+                  <KycUploadInput
+                    busy={idUploading}
+                    url={idDocumentUrl}
+                    onSelect={(file) => uploadIdDoc(file)}
+                    onClear={() => setIdDocumentUrl("")}
                   />
                 </Field>
               </div>

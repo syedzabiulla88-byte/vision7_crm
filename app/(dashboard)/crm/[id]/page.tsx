@@ -369,7 +369,6 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
   const [activityBusy, setActivityBusy] = useState(false);
 
   const [emailOpen, setEmailOpen] = useState(false);
-  const [assignOpen, setAssignOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -427,7 +426,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         lastName: form.lastName.trim() || null,
         phone: form.phone.trim() || null,
         address: form.address.trim() || null,
-        type: form.type,
+        // type (member status) intentionally NOT sent — managed via Members page.
         source: form.source || null,
         tags: form.tagsRaw.split(",").map((t) => t.trim()).filter(Boolean),
         notes: form.notes.trim() || null,
@@ -558,9 +557,11 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
           <div className="flex flex-wrap gap-2">
             {!editing ? (
               <>
+                {/* Convert/assign stays as an entry point, but the actual plan
+                    assignment happens in the Members page (Contacts is pure CRM). */}
                 <Button
                   className="bg-[#FFCF01] text-[#011b2b] hover:bg-[#FFCF01]/90"
-                  onClick={() => setAssignOpen(true)}
+                  onClick={() => router.push(`/members?assign=${contact.id}`)}
                 >
                   <UserAdd className="h-4 w-4" />{" "}
                   {String(contact.type).toUpperCase() === "MEMBER"
@@ -676,7 +677,8 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
               ) : (
                 form && (
                   <div className="space-y-3">
-                    <SelectField label="Type" value={form.type} onChange={(v) => upd("type", v)} options={TYPES} />
+                    {/* Member status (Type) is system-managed via plan assignment in the
+                        Members page — not editable here. */}
                     <TextField
                       label="Tags (comma-separated)"
                       value={form.tagsRaw}
@@ -1008,14 +1010,6 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         onOpenChange={setEmailOpen}
         contact={contact}
         onSent={load}
-      />
-
-      {/* Assign plan / convert to member dialog */}
-      <AssignPlanDialog
-        open={assignOpen}
-        onOpenChange={setAssignOpen}
-        contact={contact}
-        onAssigned={load}
       />
 
       {/* Delete confirm */}
