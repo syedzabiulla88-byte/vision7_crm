@@ -1143,6 +1143,8 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
   // Config form
   const [notifyEmail, setNotifyEmail] = useState("");
   const [bookingWindowDays, setBookingWindowDays] = useState("");
+  const [bookingStartDate, setBookingStartDate] = useState("");
+  const [bookingEndDate, setBookingEndDate] = useState("");
   const [configLoading, setConfigLoading] = useState(true);
   const [configSaving, setConfigSaving] = useState(false);
 
@@ -1174,6 +1176,8 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
       setBookingWindowDays(
         res?.bookingWindowDays != null ? String(res.bookingWindowDays) : "",
       );
+      setBookingStartDate(res?.bookingStartDate ?? "");
+      setBookingEndDate(res?.bookingEndDate ?? "");
     } catch (e) {
       toast.error(errMsg(e, "Failed to load tour settings"));
     } finally {
@@ -1259,6 +1263,8 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
       await api.tours.updateConfig({
         notifyEmail: notifyEmail.trim(),
         bookingWindowDays: Math.max(0, Number(bookingWindowDays) || 0),
+        bookingStartDate: bookingStartDate || null,
+        bookingEndDate: bookingEndDate || null,
       });
       toast.success("Tour settings saved");
     } catch (err) {
@@ -1418,7 +1424,7 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
                   </p>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="tour-window">Booking window (days)</Label>
+                  <Label htmlFor="tour-window">Rolling window (days)</Label>
                   <Input
                     id="tour-window"
                     type="number"
@@ -1428,8 +1434,38 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
                     placeholder="e.g. 30"
                     disabled={configLoading}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Used only when no fixed dates are set below.
+                  </p>
                 </div>
               </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="tour-from">Booking opens (date)</Label>
+                  <Input
+                    id="tour-from"
+                    type="date"
+                    value={bookingStartDate}
+                    onChange={(e) => setBookingStartDate(e.target.value)}
+                    disabled={configLoading}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="tour-to">Booking closes (date)</Label>
+                  <Input
+                    id="tour-to"
+                    type="date"
+                    value={bookingEndDate}
+                    min={bookingStartDate || undefined}
+                    onChange={(e) => setBookingEndDate(e.target.value)}
+                    disabled={configLoading}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Set a fixed range to only accept bookings between these dates (e.g. 2 Jul – 31
+                Jul). Leave both blank to use the rolling window above. Clear a field to remove it.
+              </p>
               <div className="flex justify-end">
                 <Button type="submit" disabled={configSaving || configLoading}>
                   {configSaving ? "Saving…" : "Save settings"}
