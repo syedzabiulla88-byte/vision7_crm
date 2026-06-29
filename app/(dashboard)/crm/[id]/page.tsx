@@ -77,6 +77,7 @@ import {
   Chat,
   UserAdd,
   Award,
+  Copy,
 } from "@/lib/icons";
 
 // ─── Option lists (ported from site/src/app/admin/crm/[id]/page.js) ─────────────
@@ -1832,14 +1833,26 @@ function AssignPlanDialog({
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
-  // Billing — every paid membership is invoiced. Three modes:
+  // Billing — every paid membership is invoiced. Modes:
   //  "now"     → collect the full price now (payNow:true)
   //  "deposit" → collect a partial amount now; balance stays owed (depositAmount)
   //  "later"   → issue an open invoice, nothing collected (payNow:false)
-  const [billingMode, setBillingMode] = useState<"now" | "deposit" | "later">("now");
+  //  "tabby" / "tamara" → BNPL pay-link: backend creates the link + emails it
+  //  "manual"  → record an externally-taken BNPL payment by reference
+  const [billingMode, setBillingMode] = useState<
+    "now" | "deposit" | "later" | "tabby" | "tamara" | "manual"
+  >("now");
   const [depositAmount, setDepositAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentReference, setPaymentReference] = useState("");
+  // Manual-reference sub-select: which BNPL provider the reference belongs to.
+  const [bnplProvider, setBnplProvider] = useState<"tabby" | "tamara">("tabby");
+  // Gateway availability — disables Tabby/Tamara when keys aren't configured.
+  const [providers, setProviders] = useState<
+    Array<{ provider: "tabby" | "tamara" | "stripe"; enabled: boolean }>
+  >([]);
+  // Pay-link result returned by assign for tabby/tamara — shown with a Copy button.
+  const [payLink, setPayLink] = useState<{ url: string; provider: string } | null>(null);
   // ID capture — recorded onto the subject (athlete or CRM contact) when provided.
   const [idType, setIdType] = useState("NATIONAL_ID");
   const [idNumber, setIdNumber] = useState("");
@@ -1874,7 +1887,19 @@ function AssignPlanDialog({
     setDepositAmount("");
     setPaymentMethod("cash");
     setPaymentReference("");
+    setBnplProvider("tabby");
+    setPayLink(null);
     let cancelled = false;
+    // Which BNPL gateways are configured — Tabby/Tamara options are disabled
+    // (with a hint to add keys in Settings) when their provider is not enabled.
+    (async () => {
+      try {
+        const res = await api.payments.providers();
+        if (!cancelled) setProviders(Array.isArray(res) ? res : []);
+      } catch {
+        if (!cancelled) setProviders([]);
+      }
+    })();
     (async () => {
       setLoadingPlans(true);
       try {
@@ -1976,11 +2001,25 @@ function AssignPlanDialog({
         return;
       }
     }
+    // BNPL pay-link modes need their gateway configured (keys in Settings).
+    if (planPrice > 0 && (billingMode === "tabby" || billingMode === "tamara")) {
+      if (!providers.find((p) => p.provider === billingMode)?.enabled) {
+        toast.error(`${billingMode === "tabby" ? "Tabby" : "Tamara"} is not configured — add keys in Settings.`);
+        return;
+      }
+    }
+    // Manual BNPL reference requires the reference text.
+    if (planPrice > 0 && billingMode === "manual" && !paymentReference.trim()) {
+      toast.error("Enter the BNPL payment reference.");
+      return;
+    }
     setSaving(true);
     // Shared billing fields for the assign payload, derived from the billing mode.
-    //  now     → payNow:true + method/ref
-    //  deposit → depositAmount + method/ref (no payNow:true; balance stays owed)
-    //  later   → neither (payNow:false)
+    //  now            → payNow:true + method/ref
+    //  deposit        → depositAmount + method/ref (no payNow:true; balance stays owed)
+    //  later          → neither (payNow:false)
+    //  tabby / tamara → paymentMethod only; backend returns a payLink (no payNow/deposit)
+    //  manual         → manual-reference + bnplProvider + paymentReference
     const billingPayload: Record<string, unknown> =
       planPrice <= 0
         ? { payNow: true }
@@ -1988,16 +2027,28 @@ function AssignPlanDialog({
           ? { payNow: true, paymentMethod, paymentReference: paymentReference.trim() || undefined }
           : billingMode === "deposit"
             ? { depositAmount: depositValue, paymentMethod, paymentReference: paymentReference.trim() || undefined }
-            : { payNow: false };
+            : billingMode === "tabby" || billingMode === "tamara"
+              ? { paymentMethod: billingMode }
+              : billingMode === "manual"
+                ? {
+                    paymentMethod: "manual-reference",
+                    bnplProvider,
+                    paymentReference: paymentReference.trim(),
+                  }
+                : { payNow: false };
     const billingToast = (status?: string) =>
       planPrice <= 0
         ? "Membership assigned — activated (free plan)"
-        : status === "ACTIVE"
-          ? "Payment recorded — contact is now an active Member"
-          : billingMode === "deposit"
-            ? "Deposit recorded — invoice raised, balance owed (membership pending)"
-            : "Invoice raised — membership pending until paid";
+        : billingMode === "manual"
+          ? "BNPL reference recorded — invoice raised against the membership"
+          : status === "ACTIVE"
+            ? "Payment recorded — contact is now an active Member"
+            : billingMode === "deposit"
+              ? "Deposit recorded — invoice raised, balance owed (membership pending)"
+              : "Invoice raised — membership pending until paid";
+    const isPayLinkMode = billingMode === "tabby" || billingMode === "tamara";
     try {
+      let res: any;
       if (needsAthleteDetails) {
         // 1. Provision the athlete (creates a user login + auto-links a CRM contact).
         const athlete = await api.athletes.create({
@@ -2015,7 +2066,7 @@ function AssignPlanDialog({
           idExpiry: idExpiry || null,
         });
         // 2. Bill for the plan, tied to the freshly created athlete.
-        const res = await api.memberships.assign({
+        res = await api.memberships.assign({
           athleteId: athlete.id,
           planId,
           startDate: startDate || undefined,
@@ -2023,11 +2074,14 @@ function AssignPlanDialog({
           notes: notes.trim() || undefined,
           ...billingPayload,
         });
-        toast.success(
-          res?.membership?.status === "ACTIVE"
-            ? "Athlete profile created + membership active — they can log into the platform"
-            : "Athlete profile created — invoice raised, membership pending until paid",
-        );
+        if (!isPayLinkMode)
+          toast.success(
+            billingMode === "manual"
+              ? "Athlete profile created — BNPL reference recorded"
+              : res?.membership?.status === "ACTIVE"
+                ? "Athlete profile created + membership active — they can log into the platform"
+                : "Athlete profile created — invoice raised, membership pending until paid",
+          );
       } else if (requiresAthlete && linkedAthleteId) {
         // Academy plan, contact already has an athlete — bill via athleteId.
         if (idNumber.trim() || idExpiry) {
@@ -2037,7 +2091,7 @@ function AssignPlanDialog({
             idExpiry: idExpiry || null,
           });
         }
-        const res = await api.memberships.assign({
+        res = await api.memberships.assign({
           athleteId: linkedAthleteId,
           planId,
           startDate: startDate || undefined,
@@ -2045,7 +2099,7 @@ function AssignPlanDialog({
           notes: notes.trim() || undefined,
           ...billingPayload,
         });
-        toast.success(billingToast(res?.membership?.status));
+        if (!isPayLinkMode) toast.success(billingToast(res?.membership?.status));
       } else {
         // Non-academy plan — bill directly to the CRM contact.
         if (idNumber.trim() || idExpiry) {
@@ -2055,7 +2109,7 @@ function AssignPlanDialog({
             idExpiry: idExpiry || null,
           });
         }
-        const res = await api.memberships.assign({
+        res = await api.memberships.assign({
           crmContactId: contact.id,
           planId,
           startDate: startDate || undefined,
@@ -2063,10 +2117,17 @@ function AssignPlanDialog({
           notes: notes.trim() || undefined,
           ...billingPayload,
         });
-        toast.success(billingToast(res?.membership?.status));
+        if (!isPayLinkMode) toast.success(billingToast(res?.membership?.status));
       }
       onAssigned?.();
-      onOpenChange(false);
+      // Pay-link modes: surface the returned link (Copy + emailed note) and keep
+      // the dialog open so staff can copy it. Other modes close as before.
+      if (isPayLinkMode && res?.payLink?.url) {
+        setPayLink({ url: res.payLink.url, provider: res.payLink.provider || billingMode });
+        toast.success(`${billingMode === "tabby" ? "Tabby" : "Tamara"} pay-link created`);
+      } else {
+        onOpenChange(false);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to assign membership");
     } finally {
@@ -2212,6 +2273,8 @@ function AssignPlanDialog({
                   );
                 }
                 const collectsPayment = billingMode === "now" || billingMode === "deposit";
+                const tabbyEnabled = providers.find((p) => p.provider === "tabby")?.enabled ?? false;
+                const tamaraEnabled = providers.find((p) => p.provider === "tamara")?.enabled ?? false;
                 return (
                   <div className="space-y-3 rounded-md border p-3">
                     <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
@@ -2237,7 +2300,36 @@ function AssignPlanDialog({
                       >
                         Invoice — pay later
                       </button>
+                      <button
+                        type="button"
+                        disabled={!tabbyEnabled}
+                        title={!tabbyEnabled ? "Add keys in Settings" : undefined}
+                        onClick={() => setBillingMode("tabby")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "tabby" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"} disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        Tabby (pay-link)
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!tamaraEnabled}
+                        title={!tamaraEnabled ? "Add keys in Settings" : undefined}
+                        onClick={() => setBillingMode("tamara")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "tamara" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"} disabled:cursor-not-allowed disabled:opacity-50`}
+                      >
+                        Tamara (pay-link)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBillingMode("manual")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "manual" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                      >
+                        Manual BNPL reference
+                      </button>
                     </div>
+                    {(billingMode === "tabby" || billingMode === "tamara") &&
+                      !(billingMode === "tabby" ? tabbyEnabled : tamaraEnabled) && (
+                        <p className="text-xs text-muted-foreground">Add keys in Settings.</p>
+                      )}
                     {billingMode === "deposit" && (
                       <div className="space-y-2">
                         <TextField
@@ -2287,6 +2379,61 @@ function AssignPlanDialog({
                           onChange={setPaymentReference}
                           placeholder="Transaction ID, cheque no., bank ref…"
                         />
+                      </>
+                    ) : billingMode === "tabby" || billingMode === "tamara" ? (
+                      payLink ? (
+                        <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                          <p className="text-xs font-medium text-foreground">
+                            {payLink.provider === "tamara" ? "Tamara" : "Tabby"} pay-link
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <Input readOnly value={payLink.url} className="text-xs" />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                navigator.clipboard
+                                  ?.writeText(payLink.url)
+                                  .then(() => toast.success("Pay-link copied"))
+                                  .catch(() => toast.error("Could not copy"));
+                              }}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Pay-link emailed to {contact.email || "the customer"}.
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          A {billingMode === "tamara" ? "Tamara" : "Tabby"} pay-link will be created and
+                          emailed to {contact.email || "the customer"}. The membership stays{" "}
+                          <strong>pending</strong> until they complete payment.
+                        </p>
+                      )
+                    ) : billingMode === "manual" ? (
+                      <>
+                        <SelectField
+                          label="BNPL provider"
+                          value={bnplProvider}
+                          onChange={(v) => setBnplProvider(v === "tamara" ? "tamara" : "tabby")}
+                          options={[
+                            { value: "tabby", label: "Tabby" },
+                            { value: "tamara", label: "Tamara" },
+                          ]}
+                        />
+                        <TextField
+                          label="Reference / Transaction ID"
+                          value={paymentReference}
+                          onChange={setPaymentReference}
+                          placeholder="BNPL order / payment reference…"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Records a payment already taken through {bnplProvider === "tamara" ? "Tamara" : "Tabby"}{" "}
+                          outside the system, by reference.
+                        </p>
                       </>
                     ) : (
                       <p className="text-xs text-muted-foreground">
@@ -2367,19 +2514,27 @@ function AssignPlanDialog({
           )}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={saving || !planId}>
-              <UserAdd className="h-4 w-4" />
-              {saving
-                ? needsAthleteDetails
-                  ? "Creating…"
-                  : "Assigning…"
-                : needsAthleteDetails
-                  ? "Create athlete + assign"
-                  : "Assign plan"}
-            </Button>
+            {payLink ? (
+              <Button type="button" onClick={() => onOpenChange(false)}>
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={saving || !planId}>
+                  <UserAdd className="h-4 w-4" />
+                  {saving
+                    ? needsAthleteDetails
+                      ? "Creating…"
+                      : "Assigning…"
+                    : needsAthleteDetails
+                      ? "Create athlete + assign"
+                      : "Assign plan"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

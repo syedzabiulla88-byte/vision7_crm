@@ -188,6 +188,12 @@ export const api = {
   // Cross-invoice payments ledger (filters: method, invoiceId, isRefund, from, to)
   payments: {
     list: (params?: Params) => apiFetch<any>(`/payments${qs(params)}`),
+    // BNPL/gateway availability — which providers have keys configured.
+    // [{ provider:"tabby"|"tamara"|"stripe", enabled:boolean }]. @Public route.
+    providers: () =>
+      apiFetch<Array<{ provider: "tabby" | "tamara" | "stripe"; enabled: boolean }>>(
+        `/payments/providers`,
+      ),
   },
 
   accounting: {

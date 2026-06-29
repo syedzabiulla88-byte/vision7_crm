@@ -81,6 +81,7 @@ import {
   ChevronDown,
   ChevronRight,
   Warning,
+  Copy,
 } from "@/lib/icons";
 
 // ─── Domain constants (ported from site/src/app/admin/members/page.js) ──────────
@@ -1134,10 +1135,11 @@ interface NewMemberForm {
   planId: string;
   startDate: string;
   endDate: string;
-  billingMode: "now" | "deposit" | "later";
+  billingMode: "now" | "deposit" | "later" | "tabby" | "tamara" | "manual";
   depositAmount: string;
   paymentMethod: string;
   paymentReference: string;
+  bnplProvider: "tabby" | "tamara";
 }
 
 const EMPTY_NEW_MEMBER: NewMemberForm = {
@@ -1167,6 +1169,7 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   depositAmount: "",
   paymentMethod: "cash",
   paymentReference: "",
+  bnplProvider: "tabby",
 };
 
 function NewMemberDialog({
@@ -1182,6 +1185,12 @@ function NewMemberDialog({
   const [saving, setSaving] = useState(false);
   const [plans, setPlans] = useState<any[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
+  // Gateway availability — disables Tabby/Tamara when keys aren't configured.
+  const [providers, setProviders] = useState<
+    Array<{ provider: "tabby" | "tamara" | "stripe"; enabled: boolean }>
+  >([]);
+  // Pay-link returned by assign for tabby/tamara — shown with a Copy button.
+  const [payLink, setPayLink] = useState<{ url: string; provider: string } | null>(null);
 
   const set = <K extends keyof NewMemberForm>(k: K, v: NewMemberForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -1193,6 +1202,14 @@ function NewMemberDialog({
       .then((res: any) => setPlans(Array.isArray(res) ? res : res?.data || []))
       .catch(() => setPlans([]))
       .finally(() => setPlansLoading(false));
+  }, []);
+
+  // Which BNPL gateways are configured.
+  useEffect(() => {
+    api.payments
+      .providers()
+      .then((res) => setProviders(Array.isArray(res) ? res : []))
+      .catch(() => setProviders([]));
   }, []);
 
   // Offer the relevant plans for the chosen side: academy plans for athletes,
@@ -1300,18 +1317,28 @@ function NewMemberDialog({
         return;
       }
     }
+    // BNPL pay-link modes need their gateway configured (keys in Settings).
+    if (planPrice > 0 && (form.billingMode === "tabby" || form.billingMode === "tamara")) {
+      if (!providers.find((p) => p.provider === form.billingMode)?.enabled) {
+        toast.error(`${form.billingMode === "tabby" ? "Tabby" : "Tamara"} is not configured — add keys in Settings.`);
+        return;
+      }
+    }
+    // Manual BNPL reference requires the reference text.
+    if (planPrice > 0 && form.billingMode === "manual" && !form.paymentReference.trim()) {
+      toast.error("Enter the BNPL payment reference.");
+      return;
+    }
 
     setSaving(true);
+    const isPayLinkMode = form.billingMode === "tabby" || form.billingMode === "tamara";
     // Billing payload differs by mode:
     //  - paid (free or "now") → payNow:true records payment + activates
     //  - deposit              → depositAmount records a partial payment, membership stays PENDING
     //  - later                → neither, just raises the invoice
-    const billingFields: {
-      payNow: boolean;
-      depositAmount?: number;
-      paymentMethod: string;
-      paymentReference?: string;
-    } =
+    //  - tabby / tamara       → paymentMethod only; backend returns a payLink
+    //  - manual               → manual-reference + bnplProvider + paymentReference
+    const billingFields: Record<string, unknown> =
       planPrice <= 0
         ? { payNow: true, paymentMethod: form.paymentMethod }
         : form.billingMode === "deposit"
@@ -1321,19 +1348,29 @@ function NewMemberDialog({
               paymentMethod: form.paymentMethod,
               paymentReference: form.paymentReference.trim() || undefined,
             }
-          : {
-              payNow: form.billingMode === "now",
-              paymentMethod: form.paymentMethod,
-              paymentReference: form.paymentReference.trim() || undefined,
-            };
+          : form.billingMode === "tabby" || form.billingMode === "tamara"
+            ? { paymentMethod: form.billingMode }
+            : form.billingMode === "manual"
+              ? {
+                  paymentMethod: "manual-reference",
+                  bnplProvider: form.bnplProvider,
+                  paymentReference: form.paymentReference.trim(),
+                }
+              : {
+                  payNow: form.billingMode === "now",
+                  paymentMethod: form.paymentMethod,
+                  paymentReference: form.paymentReference.trim() || undefined,
+                };
     const billingToast = (status: string | undefined, label: string) =>
       planPrice <= 0
         ? `${label} — activated (free plan)`
-        : form.billingMode === "deposit"
-          ? `${label} — deposit recorded, balance owed, membership pending`
-          : status === "ACTIVE"
-            ? `${label} — payment recorded, membership active`
-            : `${label} — invoice raised, membership pending until paid`;
+        : form.billingMode === "manual"
+          ? `${label} — BNPL reference recorded`
+          : form.billingMode === "deposit"
+            ? `${label} — deposit recorded, balance owed, membership pending`
+            : status === "ACTIVE"
+              ? `${label} — payment recorded, membership active`
+              : `${label} — invoice raised, membership pending until paid`;
     try {
       if (memberType === "ACADEMY") {
         // Athlete = full academy record (creates linked User + CRM contact server-side)
@@ -1362,8 +1399,13 @@ function NewMemberDialog({
           endDate: form.endDate || undefined,
           ...billingFields,
         });
-        toast.success(billingToast(res?.membership?.status, "Academy member created"));
-        onCreated({ type: "ACADEMY", email: form.email.trim() });
+        if (isPayLinkMode && res?.payLink?.url) {
+          setPayLink({ url: res.payLink.url, provider: res.payLink.provider || form.billingMode });
+          toast.success(`${form.billingMode === "tamara" ? "Tamara" : "Tabby"} pay-link created`);
+        } else {
+          toast.success(billingToast(res?.membership?.status, "Academy member created"));
+          onCreated({ type: "ACADEMY", email: form.email.trim() });
+        }
       } else {
         // Leisure = CRM contact with type=MEMBER + leisure tags + wellness profile
         const contact = await api.crm.create({
@@ -1390,8 +1432,13 @@ function NewMemberDialog({
           endDate: form.endDate || undefined,
           ...billingFields,
         });
-        toast.success(billingToast(res?.membership?.status, "Leisure member created"));
-        onCreated({ type: "LEISURE", email: form.email.trim() });
+        if (isPayLinkMode && res?.payLink?.url) {
+          setPayLink({ url: res.payLink.url, provider: res.payLink.provider || form.billingMode });
+          toast.success(`${form.billingMode === "tamara" ? "Tamara" : "Tabby"} pay-link created`);
+        } else {
+          toast.success(billingToast(res?.membership?.status, "Leisure member created"));
+          onCreated({ type: "LEISURE", email: form.email.trim() });
+        }
       }
     } catch (err: any) {
       toast.error(err?.message || "Failed to create member");
@@ -1732,6 +1779,9 @@ function NewMemberDialog({
                         </div>
                       );
                     }
+                    const tabbyEnabled = providers.find((p) => p.provider === "tabby")?.enabled ?? false;
+                    const tamaraEnabled = providers.find((p) => p.provider === "tamara")?.enabled ?? false;
+                    const bnplDisabled: Record<string, boolean> = { tabby: !tabbyEnabled, tamara: !tamaraEnabled };
                     return (
                       <div className="space-y-3 rounded-md border p-3">
                         <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
@@ -1741,18 +1791,30 @@ function NewMemberDialog({
                               { v: "now", label: "Pay in full now" },
                               { v: "deposit", label: "Take a deposit" },
                               { v: "later", label: "Invoice — pay later" },
+                              { v: "tabby", label: "Tabby (pay-link)" },
+                              { v: "tamara", label: "Tamara (pay-link)" },
+                              { v: "manual", label: "Manual BNPL reference" },
                             ] as const
-                          ).map((m) => (
-                            <button
-                              key={m.v}
-                              type="button"
-                              onClick={() => set("billingMode", m.v)}
-                              className={`rounded-md border px-3 py-2 text-sm ${form.billingMode === m.v ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
-                            >
-                              {m.label}
-                            </button>
-                          ))}
+                          ).map((m) => {
+                            const disabled = bnplDisabled[m.v] === true;
+                            return (
+                              <button
+                                key={m.v}
+                                type="button"
+                                disabled={disabled}
+                                title={disabled ? "Add keys in Settings" : undefined}
+                                onClick={() => set("billingMode", m.v)}
+                                className={`rounded-md border px-3 py-2 text-sm ${form.billingMode === m.v ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"} disabled:cursor-not-allowed disabled:opacity-50`}
+                              >
+                                {m.label}
+                              </button>
+                            );
+                          })}
                         </div>
+                        {(form.billingMode === "tabby" || form.billingMode === "tamara") &&
+                          bnplDisabled[form.billingMode] && (
+                            <p className="text-xs text-muted-foreground">Add keys in Settings.</p>
+                          )}
                         {form.billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="nm-deposit">
                             <Input
@@ -1809,6 +1871,64 @@ function NewMemberDialog({
                               />
                             </Field>
                           </>
+                        ) : form.billingMode === "tabby" || form.billingMode === "tamara" ? (
+                          payLink ? (
+                            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                              <p className="text-xs font-medium text-foreground">
+                                {payLink.provider === "tamara" ? "Tamara" : "Tabby"} pay-link
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <Input readOnly value={payLink.url} className="text-xs" />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    navigator.clipboard
+                                      ?.writeText(payLink.url)
+                                      .then(() => toast.success("Pay-link copied"))
+                                      .catch(() => toast.error("Could not copy"));
+                                  }}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </Button>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Pay-link emailed to {form.email.trim() || "the customer"}.
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              A {form.billingMode === "tamara" ? "Tamara" : "Tabby"} pay-link will be
+                              created and emailed to {form.email.trim() || "the customer"}. The membership
+                              stays <strong>pending</strong> until they complete payment.
+                            </p>
+                          )
+                        ) : form.billingMode === "manual" ? (
+                          <>
+                            <Field label="BNPL provider">
+                              <SelectField
+                                value={form.bnplProvider}
+                                onChange={(v) => set("bnplProvider", v === "tamara" ? "tamara" : "tabby")}
+                                options={[
+                                  { value: "tabby", label: "Tabby" },
+                                  { value: "tamara", label: "Tamara" },
+                                ]}
+                              />
+                            </Field>
+                            <Field label="Reference / Transaction ID" htmlFor="nm-bnpl-ref">
+                              <Input
+                                id="nm-bnpl-ref"
+                                value={form.paymentReference}
+                                onChange={(e) => set("paymentReference", e.target.value)}
+                                placeholder="BNPL order / payment reference…"
+                              />
+                            </Field>
+                            <p className="text-xs text-muted-foreground">
+                              Records a payment already taken through{" "}
+                              {form.bnplProvider === "tamara" ? "Tamara" : "Tabby"} outside the system, by reference.
+                            </p>
+                          </>
                         ) : (
                           <p className="text-xs text-muted-foreground">
                             An invoice will be issued. The member stays <strong>pending</strong> (no access) until it&rsquo;s paid.
@@ -1822,12 +1942,23 @@ function NewMemberDialog({
           </div>
 
           <DialogFooter className="border-t p-4">
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Create Member"}
-            </Button>
+            {payLink ? (
+              <Button
+                type="button"
+                onClick={() => onCreated({ type: memberType, email: form.email.trim() })}
+              >
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={saving}>
+                  {saving ? "Saving…" : "Create Member"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>
@@ -3115,11 +3246,21 @@ function AssignMembershipDialog({
   const [notes, setNotes] = useState("");
   const [autoRenew, setAutoRenew] = useState(false);
   // Billing — every paid membership is invoiced; pay in full now, take a deposit
-  // (partial payment, balance owed), or issue an open invoice to pay later.
-  const [billingMode, setBillingMode] = useState<"now" | "deposit" | "later">("now");
+  // (partial payment, balance owed), issue an open invoice to pay later, send a
+  // Tabby/Tamara BNPL pay-link, or record an external BNPL payment by reference.
+  const [billingMode, setBillingMode] = useState<
+    "now" | "deposit" | "later" | "tabby" | "tamara" | "manual"
+  >("now");
   const [depositAmount, setDepositAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentReference, setPaymentReference] = useState("");
+  const [bnplProvider, setBnplProvider] = useState<"tabby" | "tamara">("tabby");
+  // Gateway availability — disables Tabby/Tamara when keys aren't configured.
+  const [providers, setProviders] = useState<
+    Array<{ provider: "tabby" | "tamara" | "stripe"; enabled: boolean }>
+  >([]);
+  // Pay-link returned by assign for tabby/tamara — shown with a Copy button.
+  const [payLink, setPayLink] = useState<{ url: string; provider: string } | null>(null);
   // ID capture — writes back to the selected subject before assigning. Required
   // when the chosen member has no ID on file yet (see subjectHasId / needsId).
   const [idType, setIdType] = useState("NATIONAL_ID");
@@ -3162,6 +3303,15 @@ function AssignMembershipDialog({
       .list({ role: "COACH", limit: 100 })
       .then((res: any) => setCoaches(Array.isArray(res) ? res : res?.data || []))
       .catch(() => setCoaches([]));
+  }, []);
+
+  // Which BNPL gateways are configured — Tabby/Tamara options are disabled
+  // (hint: add keys in Settings) when their provider is not enabled.
+  useEffect(() => {
+    api.payments
+      .providers()
+      .then((res) => setProviders(Array.isArray(res) ? res : []))
+      .catch(() => setProviders([]));
   }, []);
 
   // When a subject is picked, look up their existing memberships so we can warn
@@ -3352,18 +3502,27 @@ function AssignMembershipDialog({
         return;
       }
     }
+    // BNPL pay-link modes need their gateway configured (keys in Settings).
+    if (price > 0 && (billingMode === "tabby" || billingMode === "tamara")) {
+      if (!providers.find((p) => p.provider === billingMode)?.enabled) {
+        toast.error(`${billingMode === "tabby" ? "Tabby" : "Tamara"} is not configured — add keys in Settings.`);
+        return;
+      }
+    }
+    // Manual BNPL reference requires the reference text.
+    if (price > 0 && billingMode === "manual" && !paymentReference.trim()) {
+      toast.error("Enter the BNPL payment reference.");
+      return;
+    }
 
     setSaving(true);
     // Billing payload differs by mode:
     //  - paid (free or "now") → payNow:true records payment + activates
     //  - deposit              → depositAmount records a partial payment, membership stays PENDING
     //  - later                → neither, just raises the invoice
-    const billingFields: {
-      payNow: boolean;
-      depositAmount?: number;
-      paymentMethod: string;
-      paymentReference?: string;
-    } =
+    //  - tabby / tamara       → paymentMethod only; backend returns a payLink
+    //  - manual               → manual-reference + bnplProvider + paymentReference
+    const billingFields: Record<string, unknown> =
       price <= 0
         ? { payNow: true, paymentMethod }
         : billingMode === "deposit"
@@ -3373,12 +3532,23 @@ function AssignMembershipDialog({
               paymentMethod,
               paymentReference: paymentReference.trim() || undefined,
             }
-          : {
-              payNow: billingMode === "now",
-              paymentMethod,
-              paymentReference: paymentReference.trim() || undefined,
-            };
+          : billingMode === "tabby" || billingMode === "tamara"
+            ? { paymentMethod: billingMode }
+            : billingMode === "manual"
+              ? {
+                  paymentMethod: "manual-reference",
+                  bnplProvider,
+                  paymentReference: paymentReference.trim(),
+                }
+              : {
+                  payNow: billingMode === "now",
+                  paymentMethod,
+                  paymentReference: paymentReference.trim() || undefined,
+                };
+    const isPayLinkMode = billingMode === "tabby" || billingMode === "tamara";
+    const payLinkLabel = billingMode === "tamara" ? "Tamara" : "Tabby";
     try {
+      let res: any;
       if (needsAthleteDetails) {
         // Academy plan + contact has no athlete: provision the athlete (creates a
         // user login + auto-links the CRM contact), then bill via athleteId.
@@ -3396,7 +3566,7 @@ function AssignMembershipDialog({
           idExpiry: idExpiry || null,
           idDocumentUrl: idDocumentUrl || undefined,
         });
-        const res = await api.memberships.assign({
+        res = await api.memberships.assign({
           athleteId: athlete.id,
           planId,
           startDate: startDate || undefined,
@@ -3407,7 +3577,11 @@ function AssignMembershipDialog({
           ...billingFields,
         });
         const memStatus = res?.membership?.status;
-        if (price <= 0) toast.success("Athlete profile created — membership activated (free plan)");
+        if (isPayLinkMode) {
+          /* pay-link toast handled below */
+        } else if (price <= 0) toast.success("Athlete profile created — membership activated (free plan)");
+        else if (billingMode === "manual")
+          toast.success("Athlete profile created — BNPL reference recorded");
         else if (billingMode === "deposit")
           toast.success("Athlete profile created — deposit recorded, balance owed, membership pending");
         else if (memStatus === "ACTIVE")
@@ -3422,7 +3596,7 @@ function AssignMembershipDialog({
             ...(idExpiry ? { idExpiry } : {}),
           });
         }
-        const res = await api.memberships.assign({
+        res = await api.memberships.assign({
           athleteId: linkedAthleteId,
           planId,
           startDate: startDate || undefined,
@@ -3433,7 +3607,11 @@ function AssignMembershipDialog({
           ...billingFields,
         });
         const memStatus = res?.membership?.status;
-        if (price <= 0) toast.success("Free plan assigned — membership activated");
+        if (isPayLinkMode) {
+          /* pay-link toast handled below */
+        } else if (price <= 0) toast.success("Free plan assigned — membership activated");
+        else if (billingMode === "manual")
+          toast.success("BNPL reference recorded — invoice raised against the membership");
         else if (billingMode === "deposit")
           toast.success("Deposit recorded — balance owed, membership pending until paid in full");
         else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
@@ -3447,7 +3625,7 @@ function AssignMembershipDialog({
             ...(idExpiry ? { idExpiry } : {}),
           });
         }
-        const res = await api.memberships.assign({
+        res = await api.memberships.assign({
           crmContactId: subject.id,
           planId,
           startDate: startDate || undefined,
@@ -3458,13 +3636,24 @@ function AssignMembershipDialog({
           ...billingFields,
         });
         const memStatus = res?.membership?.status;
-        if (price <= 0) toast.success("Free plan assigned — membership activated");
+        if (isPayLinkMode) {
+          /* pay-link toast handled below */
+        } else if (price <= 0) toast.success("Free plan assigned — membership activated");
+        else if (billingMode === "manual")
+          toast.success("BNPL reference recorded — invoice raised against the membership");
         else if (billingMode === "deposit")
           toast.success("Deposit recorded — balance owed, membership pending until paid in full");
         else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
         else toast.success("Invoice raised — membership pending until paid");
       }
-      onCreated();
+      // Pay-link modes: surface the returned link (Copy + emailed note) and keep
+      // the dialog open so staff can copy it. Other modes close via onCreated().
+      if (isPayLinkMode && res?.payLink?.url) {
+        setPayLink({ url: res.payLink.url, provider: res.payLink.provider || billingMode });
+        toast.success(`${payLinkLabel} pay-link created`);
+      } else {
+        onCreated();
+      }
     } catch (err: any) {
       toast.error(err?.message || "Failed to assign membership");
     } finally {
@@ -3725,6 +3914,9 @@ function AssignMembershipDialog({
                         </div>
                       );
                     }
+                    const tabbyEnabled = providers.find((p) => p.provider === "tabby")?.enabled ?? false;
+                    const tamaraEnabled = providers.find((p) => p.provider === "tamara")?.enabled ?? false;
+                    const bnplDisabled: Record<string, boolean> = { tabby: !tabbyEnabled, tamara: !tamaraEnabled };
                     return (
                       <div className="space-y-3 rounded-md border p-3">
                         <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
@@ -3734,18 +3926,30 @@ function AssignMembershipDialog({
                               { v: "now", label: "Pay in full now" },
                               { v: "deposit", label: "Take a deposit" },
                               { v: "later", label: "Invoice — pay later" },
+                              { v: "tabby", label: "Tabby (pay-link)" },
+                              { v: "tamara", label: "Tamara (pay-link)" },
+                              { v: "manual", label: "Manual BNPL reference" },
                             ] as const
-                          ).map((m) => (
-                            <button
-                              key={m.v}
-                              type="button"
-                              onClick={() => setBillingMode(m.v)}
-                              className={`rounded-md border px-3 py-2 text-sm ${billingMode === m.v ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
-                            >
-                              {m.label}
-                            </button>
-                          ))}
+                          ).map((m) => {
+                            const disabled = bnplDisabled[m.v] === true;
+                            return (
+                              <button
+                                key={m.v}
+                                type="button"
+                                disabled={disabled}
+                                title={disabled ? "Add keys in Settings" : undefined}
+                                onClick={() => setBillingMode(m.v)}
+                                className={`rounded-md border px-3 py-2 text-sm ${billingMode === m.v ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"} disabled:cursor-not-allowed disabled:opacity-50`}
+                              >
+                                {m.label}
+                              </button>
+                            );
+                          })}
                         </div>
+                        {(billingMode === "tabby" || billingMode === "tamara") &&
+                          bnplDisabled[billingMode] && (
+                            <p className="text-xs text-muted-foreground">Add keys in Settings.</p>
+                          )}
                         {billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
                             <Input
@@ -3801,6 +4005,64 @@ function AssignMembershipDialog({
                                 placeholder="Transaction ID, cheque no., bank ref…"
                               />
                             </Field>
+                          </>
+                        ) : billingMode === "tabby" || billingMode === "tamara" ? (
+                          payLink ? (
+                            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                              <p className="text-xs font-medium text-foreground">
+                                {payLink.provider === "tamara" ? "Tamara" : "Tabby"} pay-link
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <Input readOnly value={payLink.url} className="text-xs" />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    navigator.clipboard
+                                      ?.writeText(payLink.url)
+                                      .then(() => toast.success("Pay-link copied"))
+                                      .catch(() => toast.error("Could not copy"));
+                                  }}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </Button>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Pay-link emailed to {subject?.email || "the customer"}.
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              A {billingMode === "tamara" ? "Tamara" : "Tabby"} pay-link will be created
+                              and emailed to {subject?.email || "the customer"}. The membership stays{" "}
+                              <strong>pending</strong> until they complete payment.
+                            </p>
+                          )
+                        ) : billingMode === "manual" ? (
+                          <>
+                            <Field label="BNPL provider">
+                              <SelectField
+                                value={bnplProvider}
+                                onChange={(v) => setBnplProvider(v === "tamara" ? "tamara" : "tabby")}
+                                options={[
+                                  { value: "tabby", label: "Tabby" },
+                                  { value: "tamara", label: "Tamara" },
+                                ]}
+                              />
+                            </Field>
+                            <Field label="Reference / Transaction ID" htmlFor="assign-bnpl-ref">
+                              <Input
+                                id="assign-bnpl-ref"
+                                value={paymentReference}
+                                onChange={(e) => setPaymentReference(e.target.value)}
+                                placeholder="BNPL order / payment reference…"
+                              />
+                            </Field>
+                            <p className="text-xs text-muted-foreground">
+                              Records a payment already taken through{" "}
+                              {bnplProvider === "tamara" ? "Tamara" : "Tabby"} outside the system, by reference.
+                            </p>
                           </>
                         ) : (
                           <p className="text-xs text-muted-foreground">
@@ -3874,15 +4136,23 @@ function AssignMembershipDialog({
           )}
 
           <DialogFooter className="border-t p-4">
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={saving || loading || (needsDuplicateConfirm && !confirmDuplicate)}
-            >
-              {saving ? "Saving…" : "Assign"}
-            </Button>
+            {payLink ? (
+              <Button type="button" onClick={() => onCreated()}>
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={saving || loading || (needsDuplicateConfirm && !confirmDuplicate)}
+                >
+                  {saving ? "Saving…" : "Assign"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>
