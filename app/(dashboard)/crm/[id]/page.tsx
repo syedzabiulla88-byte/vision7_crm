@@ -52,6 +52,7 @@ import {
   ComboboxEmpty,
 } from "@/components/ui/combobox";
 import { NATIONALITY_OPTIONS } from "@/lib/nationalities";
+import { idExpiryStatus, toDateInputValue } from "@/lib/id-expiry";
 import {
   ArrowLeft,
   Send,
@@ -324,6 +325,21 @@ function statusBadgeClass(s?: string): string {
   }
 }
 
+/** Small badge flagging an expired / soon-to-expire ID. Renders nothing when fine. */
+function IdExpiryBadge({ value }: { value?: string | null }) {
+  const status = idExpiryStatus(value);
+  if (!status) return null;
+  const tone =
+    status.tone === "red"
+      ? "bg-rose-500/10 text-rose-700 border-rose-500/30 dark:text-rose-400"
+      : "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-400";
+  return (
+    <Badge variant="outline" className={tone}>
+      {status.label}
+    </Badge>
+  );
+}
+
 // ─── Form types ──────────────────────────────────────────────────────────────
 
 interface EditForm {
@@ -339,6 +355,7 @@ interface EditForm {
   gender: string;
   nationalId: string;
   idType: string;
+  idExpiry: string;
   dob: string;
   maritalStatus: string;
   occupation: string;
@@ -390,6 +407,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         gender: c.gender || "",
         nationalId: c.nationalId || "",
         idType: c.idType || "",
+        idExpiry: toDateInputValue(c.idExpiry),
         dob: toDateInput(c.dob),
         maritalStatus: c.maritalStatus || "",
         occupation: c.occupation || "",
@@ -433,6 +451,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         gender: form.gender || null,
         nationalId: form.nationalId.trim() || null,
         idType: form.idType || null,
+        idExpiry: form.idExpiry || null,
         dob: form.dob || null,
         maritalStatus: form.maritalStatus || null,
         occupation: form.occupation.trim() || null,
@@ -713,6 +732,16 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                       value={form.nationalId}
                       onChange={(v) => upd("nationalId", v)}
                     />
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">
+                        ID expiry date (optional)
+                      </Label>
+                      <Input
+                        type="date"
+                        value={form.idExpiry}
+                        onChange={(e) => upd("idExpiry", e.target.value)}
+                      />
+                    </div>
                     <SelectField
                       label="Marital status"
                       value={form.maritalStatus}
@@ -1163,6 +1192,7 @@ function DemographicsView({ contact }: { contact: any }) {
     work ||
     contact.dob ||
     contact.nationalId ||
+    contact.idExpiry ||
     contact.occupation ||
     contact.workInfo ||
     hasChildren ||
@@ -1181,9 +1211,17 @@ function DemographicsView({ contact }: { contact: any }) {
           {formatDate(contact.dob)}
         </DetailRow>
       )}
-      {(idType || contact.nationalId) && (
+      {(idType || contact.nationalId || contact.idExpiry) && (
         <DetailRow icon={<Tag className="h-4 w-4" />} label="ID">
-          {[idType, contact.nationalId].filter(Boolean).join(" · ") || "—"}
+          <div className="flex flex-wrap items-center gap-2">
+            <span>{[idType, contact.nationalId].filter(Boolean).join(" · ") || "—"}</span>
+            <IdExpiryBadge value={contact.idExpiry} />
+          </div>
+          {contact.idExpiry && (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Expires {formatDate(contact.idExpiry)}
+            </p>
+          )}
         </DetailRow>
       )}
       {marital && (
@@ -1805,6 +1843,7 @@ function AssignPlanDialog({
   // ID capture — recorded onto the subject (athlete or CRM contact) when provided.
   const [idType, setIdType] = useState("NATIONAL_ID");
   const [idNumber, setIdNumber] = useState("");
+  const [idExpiry, setIdExpiry] = useState("");
 
   // Athlete provisioning fields (only used for academy plans without a linked athlete).
   const [athleteDob, setAthleteDob] = useState("");
@@ -1830,6 +1869,7 @@ function AssignPlanDialog({
     setAthleteNationality("");
     setIdType(contact?.idType || "NATIONAL_ID");
     setIdNumber(contact?.nationalId || "");
+    setIdExpiry(toDateInputValue(contact?.idExpiry));
     setBillingMode("now");
     setDepositAmount("");
     setPaymentMethod("cash");
@@ -1972,6 +2012,7 @@ function AssignPlanDialog({
           gender: contact.gender || undefined,
           idType,
           idNumber: idNumber.trim() || undefined,
+          idExpiry: idExpiry || null,
         });
         // 2. Bill for the plan, tied to the freshly created athlete.
         const res = await api.memberships.assign({
@@ -1989,8 +2030,12 @@ function AssignPlanDialog({
         );
       } else if (requiresAthlete && linkedAthleteId) {
         // Academy plan, contact already has an athlete — bill via athleteId.
-        if (idNumber.trim()) {
-          await api.athletes.update(linkedAthleteId, { idType, idNumber: idNumber.trim() });
+        if (idNumber.trim() || idExpiry) {
+          await api.athletes.update(linkedAthleteId, {
+            idType,
+            idNumber: idNumber.trim() || undefined,
+            idExpiry: idExpiry || null,
+          });
         }
         const res = await api.memberships.assign({
           athleteId: linkedAthleteId,
@@ -2003,8 +2048,12 @@ function AssignPlanDialog({
         toast.success(billingToast(res?.membership?.status));
       } else {
         // Non-academy plan — bill directly to the CRM contact.
-        if (idNumber.trim()) {
-          await api.crm.update(contact.id, { idType, nationalId: idNumber.trim() });
+        if (idNumber.trim() || idExpiry) {
+          await api.crm.update(contact.id, {
+            idType,
+            nationalId: idNumber.trim() || undefined,
+            idExpiry: idExpiry || null,
+          });
         }
         const res = await api.memberships.assign({
           crmContactId: contact.id,
@@ -2138,6 +2187,15 @@ function AssignPlanDialog({
                 value={idNumber}
                 onChange={(e) => setIdNumber(e.target.value)}
                 placeholder="e.g. 1xxxxxxxxx"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="assign-id-expiry">ID expiry date (optional)</Label>
+              <Input
+                id="assign-id-expiry"
+                type="date"
+                value={idExpiry}
+                onChange={(e) => setIdExpiry(e.target.value)}
               />
             </div>
           </div>

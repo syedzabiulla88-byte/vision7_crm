@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { api, uploadFile } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { idExpiryStatus, toDateInputValue } from "@/lib/id-expiry";
 import { NATIONALITY_OPTIONS } from "@/lib/nationalities";
 import {
   Combobox,
@@ -177,6 +178,7 @@ interface Person {
   email: string | null;
   phone: string | null;
   idNumber: string | null;
+  idExpiry: string | null;
   avatar: string | null;
   contactId: string | null;
   contactType: "MEMBER" | "CUSTOMER" | "LEAD" | "FORMER" | null;
@@ -309,6 +311,29 @@ function contactTypeBadge(
     default:
       return null;
   }
+}
+
+/**
+ * Small badge flagging an expired / soon-to-expire ID. Renders nothing when the
+ * shared rule returns null (no date, or comfortably in the future). Red tone =
+ * already expired, amber tone = expiring within 30 days.
+ */
+function IdExpiryBadge({ value }: { value?: string | Date | null }) {
+  const status = idExpiryStatus(value);
+  if (!status) return null;
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        status.tone === "red"
+          ? "border-destructive/40 bg-destructive/10 text-destructive dark:bg-destructive/20"
+          : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+      )}
+      title={status.label}
+    >
+      {status.label}
+    </Badge>
+  );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -728,7 +753,12 @@ export default function MembersPage() {
                       <TableCell>
                         <div className="min-w-0 space-y-0.5 text-xs text-muted-foreground">
                           <p className="truncate">{p.phone || "—"}</p>
-                          {p.idNumber && <p className="truncate font-mono">ID {p.idNumber}</p>}
+                          {p.idNumber && (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <p className="truncate font-mono">ID {p.idNumber}</p>
+                              <IdExpiryBadge value={p.idExpiry} />
+                            </div>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -1093,6 +1123,7 @@ interface NewMemberForm {
   jerseyNumber: string;
   idType: string;
   idNumber: string;
+  idExpiry: string;
   idDocumentUrl: string;
   passportNumber: string;
   passportDocumentUrl: string;
@@ -1121,6 +1152,7 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   jerseyNumber: "0",
   idType: "NATIONAL_ID",
   idNumber: "",
+  idExpiry: "",
   idDocumentUrl: "",
   passportNumber: "",
   passportDocumentUrl: "",
@@ -1317,6 +1349,7 @@ function NewMemberDialog({
           nationality: form.nationality.trim() || undefined,
           idType: form.idNumber.trim() ? form.idType : undefined,
           idNumber: form.idNumber.trim() || undefined,
+          idExpiry: form.idExpiry || null,
           idDocumentUrl: form.idDocumentUrl || undefined,
           passportNumber: form.passportNumber.trim() || undefined,
           passportDocumentUrl: form.passportDocumentUrl || undefined,
@@ -1347,6 +1380,7 @@ function NewMemberDialog({
           preferredLanguage: form.preferredLanguage || undefined,
           idType: form.idNumber.trim() ? form.idType : undefined,
           nationalId: form.idNumber.trim() || undefined,
+          idExpiry: form.idExpiry || null,
         });
         // Bill for the plan: PENDING membership + invoice; payNow records payment & activates.
         const res = await api.memberships.assign({
@@ -1517,6 +1551,14 @@ function NewMemberDialog({
                       />
                     </Field>
                   </div>
+                  <Field label="ID expiry date (optional)" htmlFor="nm-idexpiry">
+                    <Input
+                      id="nm-idexpiry"
+                      type="date"
+                      value={form.idExpiry}
+                      onChange={(e) => set("idExpiry", e.target.value)}
+                    />
+                  </Field>
                   <Field label="ID document (image or PDF)">
                     <KycUploadInput
                       busy={uploads.id}
@@ -1586,6 +1628,15 @@ function NewMemberDialog({
                     />
                   </Field>
                 </div>
+
+                <Field label="ID expiry date (optional)" htmlFor="nm-idexpiry-l">
+                  <Input
+                    id="nm-idexpiry-l"
+                    type="date"
+                    value={form.idExpiry}
+                    onChange={(e) => set("idExpiry", e.target.value)}
+                  />
+                </Field>
 
                 <Field label="Client goal">
                   <SelectField
@@ -2326,6 +2377,7 @@ function FamilyMembersDialog({
     nationality: "",
     idType: "NATIONAL_ID",
     idNumber: "",
+    idExpiry: "",
   });
   const [adding, setAdding] = useState(false);
   const setField = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
@@ -2468,7 +2520,7 @@ function FamilyMembersDialog({
   const resetForm = () =>
     setForm({
       firstName: "", lastName: "", relation: "", planId: "", gender: "",
-      dob: "", phone: "", email: "", nationality: "", idType: "NATIONAL_ID", idNumber: "",
+      dob: "", phone: "", email: "", nationality: "", idType: "NATIONAL_ID", idNumber: "", idExpiry: "",
     });
 
   const addMember = async (e: React.FormEvent) => {
@@ -2504,6 +2556,7 @@ function FamilyMembersDialog({
           nationality: form.nationality || undefined,
           idNumber: form.idNumber.trim() || undefined,
           idType: form.idNumber.trim() ? form.idType : undefined,
+          idExpiry: form.idExpiry || null,
         });
         await api.memberships.assign({
           familyMembershipId: anchorMembershipId,
@@ -2521,6 +2574,7 @@ function FamilyMembersDialog({
           email: form.email.trim() || undefined,
           nationalId: form.idNumber.trim() || undefined,
           idType: form.idNumber.trim() ? form.idType : undefined,
+          idExpiry: form.idExpiry || null,
           type: "CUSTOMER",
         });
         await api.memberships.assign({
@@ -2939,6 +2993,15 @@ function FamilyMembersDialog({
                 </Field>
               </div>
 
+              <Field label="ID expiry date (optional)" htmlFor="fm-idexpiry">
+                <Input
+                  id="fm-idexpiry"
+                  type="date"
+                  value={form.idExpiry}
+                  onChange={(e) => setField("idExpiry", e.target.value)}
+                />
+              </Field>
+
               <Field label="Service *">
                 <ComboField
                   value={form.planId}
@@ -3061,6 +3124,7 @@ function AssignMembershipDialog({
   // when the chosen member has no ID on file yet (see subjectHasId / needsId).
   const [idType, setIdType] = useState("NATIONAL_ID");
   const [idNumber, setIdNumber] = useState("");
+  const [idExpiry, setIdExpiry] = useState("");
   const [idDocumentUrl, setIdDocumentUrl] = useState("");
   const [idUploading, setIdUploading] = useState(false);
   // null = not checked yet; false = member has NO ID on file (capture required).
@@ -3108,6 +3172,7 @@ function AssignMembershipDialog({
     setExistingMemberships([]);
     setConfirmDuplicate(false);
     setSubjectHasId(null);
+    setIdExpiry("");
     if (!subject?.id) {
       setCheckingExisting(false);
       return;
@@ -3129,11 +3194,17 @@ function AssignMembershipDialog({
         // Does this member already have an ID on file? (contact, or linked athlete)
         const contact = (await api.crm.get(subject.id).catch(() => null)) as any;
         let hasId = !!(contact?.nationalId || contact?.idDocumentUrl);
+        // Seed the expiry input from the loaded record so it can be edited in place.
+        let expiry: string | null | undefined = contact?.idExpiry;
         if (!hasId && subject.linkedAthleteId) {
           const ath = (await api.athletes.get(subject.linkedAthleteId).catch(() => null)) as any;
           hasId = !!(ath?.idNumber || ath?.idDocumentUrl);
+          if (ath?.idExpiry) expiry = ath.idExpiry;
         }
-        if (!cancelled) setSubjectHasId(hasId);
+        if (!cancelled) {
+          setSubjectHasId(hasId);
+          if (expiry) setIdExpiry(toDateInputValue(expiry));
+        }
       } catch {
         // Non-fatal — if the lookup fails we simply skip the warning.
         if (!cancelled) setExistingMemberships([]);
@@ -3322,6 +3393,7 @@ function AssignMembershipDialog({
           nationality: athleteNationality.trim() || undefined,
           idType: idNumber.trim() ? idType : undefined,
           idNumber: idNumber.trim() || undefined,
+          idExpiry: idExpiry || null,
           idDocumentUrl: idDocumentUrl || undefined,
         });
         const res = await api.memberships.assign({
@@ -3343,10 +3415,11 @@ function AssignMembershipDialog({
         else toast.success("Athlete profile created — invoice raised, membership pending until paid");
       } else if (requiresAthlete && linkedAthleteId) {
         // Academy plan, contact already has an athlete — bill via athleteId.
-        if (idNumber.trim() || idDocumentUrl) {
+        if (idNumber.trim() || idDocumentUrl || idExpiry) {
           await api.athletes.update(linkedAthleteId, {
             ...(idNumber.trim() ? { idType, idNumber: idNumber.trim() } : {}),
             ...(idDocumentUrl ? { idDocumentUrl } : {}),
+            ...(idExpiry ? { idExpiry } : {}),
           });
         }
         const res = await api.memberships.assign({
@@ -3367,10 +3440,11 @@ function AssignMembershipDialog({
         else toast.success("Invoice raised — membership pending until paid");
       } else {
         // Leisure plan (no athlete needed) — bill directly to the CRM contact.
-        if (idNumber.trim() || idDocumentUrl) {
+        if (idNumber.trim() || idDocumentUrl || idExpiry) {
           await api.crm.update(subject.id, {
             ...(idNumber.trim() ? { idType, nationalId: idNumber.trim() } : {}),
             ...(idDocumentUrl ? { idDocumentUrl } : {}),
+            ...(idExpiry ? { idExpiry } : {}),
           });
         }
         const res = await api.memberships.assign({
@@ -3576,6 +3650,14 @@ function AssignMembershipDialog({
                     />
                   </Field>
                 </div>
+                <Field label="ID expiry date (optional)" htmlFor="am-idexpiry">
+                  <Input
+                    id="am-idexpiry"
+                    type="date"
+                    value={idExpiry}
+                    onChange={(e) => setIdExpiry(e.target.value)}
+                  />
+                </Field>
                 <Field
                   label={needsId ? "ID document (image or PDF) *" : "ID document (image or PDF)"}
                 >

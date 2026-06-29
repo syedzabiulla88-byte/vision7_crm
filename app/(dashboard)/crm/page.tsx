@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { idExpiryStatus } from "@/lib/id-expiry";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { Button } from "@/components/ui/button";
@@ -103,6 +104,7 @@ interface CrmContact {
   type?: string;
   stage?: string;
   source?: string | null;
+  idExpiry?: string | null;
   tags?: string[];
   enquiryCount?: number;
   lastContactAt?: string | null;
@@ -319,6 +321,7 @@ export default function CrmContactsPage() {
                     const invoices = c._count?.invoices ?? 0;
                     const enquiries = c.enquiryCount ?? 0;
                     const tags = c.tags || [];
+                    const expiry = idExpiryStatus(c.idExpiry);
                     return (
                       <TableRow key={c.id}>
                         <TableCell>
@@ -342,6 +345,18 @@ export default function CrmContactsPage() {
                                     className="bg-amber-500/10 text-amber-700 border-amber-500/30 text-[10px] dark:text-amber-400"
                                   >
                                     {enquiries} {enquiries === 1 ? "enquiry" : "enquiries"}
+                                  </Badge>
+                                )}
+                                {expiry && (
+                                  <Badge
+                                    variant="outline"
+                                    className={
+                                      expiry.tone === "red"
+                                        ? "bg-red-500/10 text-red-700 border-red-500/30 text-[10px] dark:text-red-400"
+                                        : "bg-amber-500/10 text-amber-700 border-amber-500/30 text-[10px] dark:text-amber-400"
+                                    }
+                                  >
+                                    {expiry.label}
                                   </Badge>
                                 )}
                               </div>

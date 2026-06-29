@@ -95,6 +95,7 @@ interface FormState {
   gender: string;
   nationalId: string;
   idType: string;
+  idExpiry: string;
   dob: string;
   maritalStatus: string;
   occupation: string;
@@ -119,6 +120,7 @@ const INITIAL: FormState = {
   gender: "",
   nationalId: "",
   idType: "",
+  idExpiry: "",
   dob: "",
   maritalStatus: "",
   occupation: "",
@@ -204,6 +206,7 @@ export default function NewContactPage() {
         gender: form.gender || undefined,
         nationalId: form.nationalId.trim() || undefined,
         idType: form.idType || undefined,
+        idExpiry: form.idExpiry || null,
         dob: form.dob || undefined,
         maritalStatus: form.maritalStatus || undefined,
         occupation: form.occupation.trim() || undefined,
@@ -383,6 +386,15 @@ export default function NewContactPage() {
                 id="nationalId"
                 value={form.nationalId}
                 onChange={(e) => set("nationalId", e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="idExpiry">ID expiry date</Label>
+              <Input
+                id="idExpiry"
+                type="date"
+                value={form.idExpiry}
+                onChange={(e) => set("idExpiry", e.target.value)}
               />
             </div>
             <SelectField
