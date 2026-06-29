@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
@@ -71,14 +72,42 @@ import {
 // ─── Domain types (loose — backend payloads are `any` in the api client) ────────
 
 type SubjectKind = "ATHLETE" | "CRM_CONTACT" | "USER" | "FAMILY_MEMBER";
+type PersonKind = "STAFF" | "MEMBER";
+type PersonBadge = "Academy" | "Leisure" | "Family" | "Staff";
+type MembershipStatusValue =
+  | "ACTIVE"
+  | "PENDING"
+  | "EXPIRED"
+  | "FROZEN"
+  | "SUSPENDED"
+  | "CANCELLED"
+  | "NONE";
 
+interface MembershipLite {
+  id: string;
+  status: string;
+  valid: boolean;
+  planId?: string | null;
+  planName?: string | null;
+  accessDoorIds?: string[];
+}
+
+// Enriched unified person row from GET /access-control/members.
 interface MemberPick {
   subjectKind: SubjectKind;
   subjectId: string;
   name: string;
   email?: string | null;
   phone?: string | null;
-  membershipStatus?: string | null;
+  idNumber?: string | null;
+  kind?: PersonKind;
+  badge?: PersonBadge | string | null;
+  role?: string | null;
+  memberships?: MembershipLite[];
+  plans?: string[];
+  membershipStatus?: MembershipStatusValue | string | null;
+  grantedDoorIds?: string[];
+  hasCard?: boolean;
   cardCount?: number;
 }
 
@@ -156,12 +185,41 @@ const SUBJECT_KIND_LABEL: Record<string, string> = {
   FAMILY_MEMBER: "Family",
 };
 
+/** Prefer the backend's `badge` field; fall back to the subjectKind label. */
+function personBadge(m: MemberPick): string {
+  return m.badge || SUBJECT_KIND_LABEL[m.subjectKind] || m.subjectKind;
+}
+
 function membershipVariant(status: unknown): "default" | "secondary" | "destructive" | "outline" {
   const s = String(status || "").toUpperCase();
   if (s === "ACTIVE") return "default";
   if (s === "PENDING" || s === "FROZEN") return "secondary";
   if (s === "EXPIRED" || s === "CANCELLED" || s === "SUSPENDED") return "destructive";
   return "outline";
+}
+
+/**
+ * Tailwind classes for a membership-status pill, colored per the access-list
+ * contract: ACTIVE=emerald, PENDING=amber, FROZEN/SUSPENDED=blue/amber,
+ * EXPIRED/CANCELLED=muted/destructive, NONE=muted.
+ */
+function statusPillClass(status: unknown): string {
+  switch (String(status || "").toUpperCase()) {
+    case "ACTIVE":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
+    case "PENDING":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400";
+    case "FROZEN":
+      return "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400";
+    case "SUSPENDED":
+      return "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300";
+    case "CANCELLED":
+      return "border-destructive/30 bg-destructive/10 text-destructive";
+    case "EXPIRED":
+    case "NONE":
+    default:
+      return "border-border bg-muted/40 text-muted-foreground";
+  }
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -600,6 +658,14 @@ function StatusChip() {
 
 // ─── Member picker (searchable) ──────────────────────────────────────────────────
 
+type KindFilter = "ALL" | "MEMBER" | "STAFF";
+
+const KIND_FILTERS: { value: KindFilter; label: string }[] = [
+  { value: "ALL", label: "All" },
+  { value: "MEMBER", label: "Members" },
+  { value: "STAFF", label: "Staff" },
+];
+
 function MemberPicker({
   selectedId,
   onSelect,
@@ -608,38 +674,70 @@ function MemberPicker({
   onSelect: (pick: MemberPick) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
+  const [hasCardOnly, setHasCardOnly] = useState(false);
   const [rows, setRows] = useState<MemberPick[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (q: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.accessControl.members(q.trim() ? { q: q.trim() } : undefined);
-      const list: MemberPick[] = Array.isArray(res) ? res : res?.data || [];
-      setRows(list);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load members");
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (q: string, kind: KindFilter, hasCard: boolean) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params: Record<string, unknown> = {};
+        if (q.trim()) params.q = q.trim();
+        if (kind !== "ALL") params.kind = kind;
+        if (hasCard) params.hasCard = "true";
+        const res = await api.accessControl.members(
+          Object.keys(params).length ? params : undefined,
+        );
+        const list: MemberPick[] = Array.isArray(res) ? res : res?.data || [];
+        setRows(list);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load list");
+        setRows([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
-  // Debounce the search.
+  // Debounce the search; refetch whenever the filters change.
   useEffect(() => {
-    const t = setTimeout(() => load(query), 300);
+    const t = setTimeout(() => load(query, kindFilter, hasCardOnly), 300);
     return () => clearTimeout(t);
-  }, [query, load]);
+  }, [query, kindFilter, hasCardOnly, load]);
 
   return (
     <Card className="overflow-hidden">
       <CardHeader>
-        <CardTitle className="text-base">Members</CardTitle>
-        <CardDescription>Pick a member to manage their access.</CardDescription>
+        <CardTitle className="text-base">People</CardTitle>
+        <CardDescription>
+          Staff and members — pick one to manage their access.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Segmented All / Members / Staff filter */}
+        <div className="flex items-center gap-1 rounded-md bg-muted p-1">
+          {KIND_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => setKindFilter(f.value)}
+              className={cn(
+                "flex-1 rounded px-2 py-1 text-xs font-medium transition-colors",
+                kindFilter === f.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -647,67 +745,127 @@ function MemberPicker({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, phone, ID…"
             className="pl-9"
-            aria-label="Search members"
+            aria-label="Search people"
           />
         </div>
+
+        {/* Has-card toggle */}
+        <button
+          type="button"
+          onClick={() => setHasCardOnly((v) => !v)}
+          aria-pressed={hasCardOnly}
+          className={cn(
+            "flex w-full items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+            hasCardOnly
+              ? "border-primary/30 bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}
+        >
+          <IdCard className="h-3.5 w-3.5" />
+          Has card only
+        </button>
 
         <div className="max-h-[28rem] space-y-1 overflow-y-auto">
           {loading ? (
             Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
+              <Skeleton key={i} className="h-14 w-full" />
             ))
           ) : error ? (
             <div className="space-y-2 py-6 text-center">
               <p className="text-sm text-destructive">{error}</p>
-              <Button variant="outline" size="sm" onClick={() => load(query)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => load(query, kindFilter, hasCardOnly)}
+              >
                 Retry
               </Button>
             </div>
           ) : rows.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
-              {query.trim() ? "No members match your search." : "No members found."}
+              {query.trim() || kindFilter !== "ALL" || hasCardOnly
+                ? "No one matches these filters."
+                : "No people found."}
             </p>
           ) : (
-            rows.map((m) => {
-              const id = `${m.subjectKind}:${m.subjectId}`;
-              const active = id === selectedId;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => onSelect(m)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors",
-                    active ? "bg-primary/10 ring-1 ring-primary/30" : "hover:bg-muted",
-                  )}
-                >
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback>{(m.name?.charAt(0) || "?").toUpperCase()}</AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <p className="truncate text-sm font-medium">{m.name || "—"}</p>
-                      <Badge variant="outline" className="shrink-0 text-[10px]">
-                        {SUBJECT_KIND_LABEL[m.subjectKind] || m.subjectKind}
-                      </Badge>
-                    </div>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {m.phone || m.email || "—"}
-                    </p>
-                  </div>
-                  {(m.cardCount ?? 0) > 0 && (
-                    <Badge variant="secondary" className="shrink-0 gap-1 text-[10px]">
-                      <CreditCard className="h-3 w-3" />
-                      {m.cardCount}
-                    </Badge>
-                  )}
-                </button>
-              );
-            })
+            rows.map((m) => (
+              <PersonRow
+                key={`${m.subjectKind}:${m.subjectId}`}
+                m={m}
+                active={`${m.subjectKind}:${m.subjectId}` === selectedId}
+                onSelect={onSelect}
+              />
+            ))
           )}
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/** One row in the unified staff + members picker. */
+function PersonRow({
+  m,
+  active,
+  onSelect,
+}: {
+  m: MemberPick;
+  active: boolean;
+  onSelect: (pick: MemberPick) => void;
+}) {
+  const isStaff = m.kind === "STAFF" || m.subjectKind === "USER";
+  const status = String(m.membershipStatus || (isStaff ? "" : "NONE")).toUpperCase();
+
+  // Plan line: staff → "Staff access"; members → plan name(s) or muted "No plan".
+  const planNames = m.plans && m.plans.length > 0 ? m.plans.join(", ") : "";
+  let planLine: ReactNode;
+  if (isStaff) {
+    planLine = <span className="text-muted-foreground">Staff access{m.role ? ` · ${m.role}` : ""}</span>;
+  } else if (planNames) {
+    planLine = <span className="truncate text-foreground/80">{planNames}</span>;
+  } else {
+    planLine = <span className="text-muted-foreground/70">No plan</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(m)}
+      className={cn(
+        "flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left transition-colors",
+        active ? "bg-primary/10 ring-1 ring-primary/30" : "hover:bg-muted",
+      )}
+    >
+      <Avatar className="mt-0.5 h-8 w-8">
+        <AvatarFallback>{(m.name?.charAt(0) || "?").toUpperCase()}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0 flex-1">
+        {/* Name + type badge */}
+        <div className="flex items-center gap-1.5">
+          <p className="truncate text-sm font-medium">{m.name || "—"}</p>
+          <Badge variant="outline" className="shrink-0 text-[10px]">
+            {personBadge(m)}
+          </Badge>
+        </div>
+        {/* Plan(s) / staff-access line */}
+        <p className="truncate text-xs">{planLine}</p>
+        {/* Status pill + card indicator */}
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <Badge
+            variant="outline"
+            className={cn("text-[10px]", statusPillClass(status))}
+          >
+            {isStaff && status === "NONE" ? "Staff" : status || "NONE"}
+          </Badge>
+          {m.hasCard ? (
+            <Badge variant="secondary" className="shrink-0 gap-1 text-[10px]">
+              <IdCard className="h-3 w-3" />
+              Card{(m.cardCount ?? 0) > 1 ? ` ×${m.cardCount}` : ""}
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+    </button>
   );
 }
 
