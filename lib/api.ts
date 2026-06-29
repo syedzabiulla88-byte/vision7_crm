@@ -297,7 +297,9 @@ export const api = {
     sendEmail: (id: string, data: any) =>
       apiFetch<any>(`/crm/contacts/${id}/emails`, { method: "POST", body: JSON.stringify(data) }),
     // Kanban / pipeline
-    board: () => apiFetch<any>(`/crm/board`),
+    // No args → grouped initial load. With { stage } → that column's next page.
+    board: (params?: { stage?: string; page?: number; limit?: number }) =>
+      apiFetch<any>(`/crm/board${qs(params)}`),
     setStage: (id: string, stage: string, position?: number) =>
       apiFetch<any>(`/crm/contacts/${id}/stage`, {
         method: "PATCH",

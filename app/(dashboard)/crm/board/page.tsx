@@ -73,6 +73,12 @@ interface BoardContact {
 interface BoardColumn {
   stage: StageKey;
   contacts: BoardContact[];
+  /** True stage size (may exceed contacts.length when paginated). */
+  total: number;
+  /** Last page loaded for this column (1-based). */
+  page: number;
+  /** A "load more" request is in flight for this column. */
+  loadingMore: boolean;
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
@@ -92,7 +98,20 @@ export default function CrmBoardPage() {
     setError(null);
     try {
       const res = await api.crm.board();
-      setColumns((res?.stages || []) as BoardColumn[]);
+      const stages = (res?.stages || []) as Array<{
+        stage: StageKey;
+        contacts?: BoardContact[];
+        total?: number;
+      }>;
+      setColumns(
+        stages.map((s) => ({
+          stage: s.stage,
+          contacts: s.contacts || [],
+          total: s.total ?? (s.contacts?.length || 0),
+          page: 1,
+          loadingMore: false,
+        })),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load board";
       setError(message);
@@ -125,6 +144,9 @@ export default function CrmBoardPage() {
         moved.stage = toStage;
         movedName = [moved.firstName, moved.lastName].filter(Boolean).join(" ") || "Contact";
         toCol.contacts.unshift(moved);
+        // Keep the true stage sizes in sync with the move.
+        fromCol.total = Math.max(0, fromCol.total - 1);
+        toCol.total += 1;
         return next;
       });
 
@@ -140,6 +162,42 @@ export default function CrmBoardPage() {
     },
     [load],
   );
+
+  /** Append the next page of cards to a single column. Guards against double-calls. */
+  const loadMore = useCallback(async (stage: StageKey) => {
+    let nextPage = 0;
+    setColumns((prev) => {
+      const col = prev.find((c) => c.stage === stage);
+      if (!col || col.loadingMore || col.contacts.length >= col.total) return prev;
+      nextPage = col.page + 1;
+      return prev.map((c) => (c.stage === stage ? { ...c, loadingMore: true } : c));
+    });
+    if (nextPage === 0) return; // guarded out above
+
+    try {
+      const res = await api.crm.board({ stage, page: nextPage, limit: 20 });
+      const more = (res?.contacts || []) as BoardContact[];
+      setColumns((prev) =>
+        prev.map((c) =>
+          c.stage === stage
+            ? {
+                ...c,
+                contacts: [...c.contacts, ...more],
+                page: nextPage,
+                total: res?.meta?.total ?? c.total,
+                loadingMore: false,
+              }
+            : c,
+        ),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load more contacts";
+      toast.error(message);
+      setColumns((prev) =>
+        prev.map((c) => (c.stage === stage ? { ...c, loadingMore: false } : c)),
+      );
+    }
+  }, []);
 
   // Drag handlers.
   const onDragStart = (id: string, fromStage: StageKey) => {
@@ -163,7 +221,7 @@ export default function CrmBoardPage() {
     if (id && from) moveContact(id, from, toStage);
   };
 
-  const totalContacts = columns.reduce((sum, c) => sum + (c.contacts?.length || 0), 0);
+  const totalContacts = columns.reduce((sum, c) => sum + (c.total || 0), 0);
 
   return (
     <PermissionGate
@@ -199,13 +257,18 @@ export default function CrmBoardPage() {
             action={{ label: "Try again", onClick: load }}
           />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          <div className="flex gap-4 overflow-x-auto pb-2">
             {STAGES.map((stage) => {
-              const col = columns.find((c) => c.stage === stage.key) || {
-                stage: stage.key,
-                contacts: [],
-              };
+              const col: BoardColumn =
+                columns.find((c) => c.stage === stage.key) || {
+                  stage: stage.key,
+                  contacts: [],
+                  total: 0,
+                  page: 1,
+                  loadingMore: false,
+                };
               const isHover = hoverStage === stage.key;
+              const remaining = Math.max(0, col.total - col.contacts.length);
               return (
                 <div
                   key={stage.key}
@@ -213,40 +276,56 @@ export default function CrmBoardPage() {
                   onDragLeave={() => setHoverStage((h) => (h === stage.key ? null : h))}
                   onDrop={(e) => onDrop(e, stage.key)}
                   className={cn(
-                    "flex min-h-[220px] flex-col rounded-lg border transition-colors",
+                    "flex min-h-[220px] max-h-[calc(100vh-13rem)] w-72 shrink-0 flex-col rounded-lg border transition-colors",
                     isHover ? "border-primary bg-primary/5" : "border-border",
                   )}
                 >
                   <div
                     className={cn(
-                      "flex items-center justify-between rounded-t-lg border-b px-3 py-2",
+                      "flex shrink-0 items-center justify-between rounded-t-lg border-b px-3 py-2",
                       stage.accent,
                       stage.tint,
                     )}
                   >
                     <p className="text-xs font-semibold uppercase tracking-wider">{stage.label}</p>
                     <Badge variant="secondary" className="tabular-nums">
-                      {col.contacts.length}
+                      {col.total}
                     </Badge>
                   </div>
 
-                  <div className="flex-1 space-y-2 p-2">
+                  <div className="flex-1 space-y-2 overflow-y-auto p-2">
                     {col.contacts.length === 0 ? (
                       <p className="py-8 text-center text-xs italic text-muted-foreground/70">
                         Drop contacts here
                       </p>
                     ) : (
-                      col.contacts.map((contact) => (
-                        <ContactCard
-                          key={contact.id}
-                          contact={contact}
-                          stage={stage.key}
-                          isDragging={dragId === contact.id}
-                          onDragStart={onDragStart}
-                          onDragEnd={clearDrag}
-                          onMove={moveContact}
-                        />
-                      ))
+                      <>
+                        {col.contacts.map((contact) => (
+                          <ContactCard
+                            key={contact.id}
+                            contact={contact}
+                            stage={stage.key}
+                            isDragging={dragId === contact.id}
+                            onDragStart={onDragStart}
+                            onDragEnd={clearDrag}
+                            onMove={moveContact}
+                          />
+                        ))}
+                        {col.contacts.length < col.total && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="w-full"
+                            disabled={col.loadingMore}
+                            onClick={() => loadMore(stage.key)}
+                          >
+                            {col.loadingMore && (
+                              <span className="h-3 w-3 animate-spin rounded-full border border-primary border-t-transparent" />
+                            )}
+                            {col.loadingMore ? "Loading…" : `Load more (${remaining} remaining)`}
+                          </Button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -403,14 +482,17 @@ function ContactCard({
 
 function BoardSkeleton() {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+    <div className="flex gap-4 overflow-x-auto pb-2">
       {STAGES.map((stage) => (
-        <div key={stage.key} className="flex min-h-[220px] flex-col rounded-lg border border-border">
-          <div className="flex items-center justify-between rounded-t-lg border-b border-border px-3 py-2">
+        <div
+          key={stage.key}
+          className="flex min-h-[220px] max-h-[calc(100vh-13rem)] w-72 shrink-0 flex-col rounded-lg border border-border"
+        >
+          <div className="flex shrink-0 items-center justify-between rounded-t-lg border-b border-border px-3 py-2">
             <Skeleton className="h-4 w-16" />
             <Skeleton className="h-5 w-5 rounded-full" />
           </div>
-          <div className="flex-1 space-y-2 p-2">
+          <div className="flex-1 space-y-2 overflow-y-auto p-2">
             {Array.from({ length: 2 }).map((_, i) => (
               <div key={i} className="space-y-2 rounded-md border border-border p-3">
                 <Skeleton className="h-4 w-24" />
