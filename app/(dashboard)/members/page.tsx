@@ -1103,7 +1103,8 @@ interface NewMemberForm {
   planId: string;
   startDate: string;
   endDate: string;
-  payNow: boolean;
+  billingMode: "now" | "deposit" | "later";
+  depositAmount: string;
   paymentMethod: string;
   paymentReference: string;
 }
@@ -1130,7 +1131,8 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   planId: "",
   startDate: toDateInput(new Date()),
   endDate: "",
-  payNow: true,
+  billingMode: "now",
+  depositAmount: "",
   paymentMethod: "cash",
   paymentReference: "",
 };
@@ -1256,14 +1258,50 @@ function NewMemberDialog({
       return;
     }
 
-    setSaving(true);
     const planPrice = Number(plans.find((p) => p.id === form.planId)?.price) || 0;
+
+    // Validate the deposit before any network call: must be > 0 and < the plan total.
+    const depositNum = Number(form.depositAmount);
+    if (planPrice > 0 && form.billingMode === "deposit") {
+      if (!Number.isFinite(depositNum) || depositNum <= 0 || depositNum >= planPrice) {
+        toast.error(`Deposit must be greater than 0 and less than ${formatSAR(planPrice)}`);
+        return;
+      }
+    }
+
+    setSaving(true);
+    // Billing payload differs by mode:
+    //  - paid (free or "now") → payNow:true records payment + activates
+    //  - deposit              → depositAmount records a partial payment, membership stays PENDING
+    //  - later                → neither, just raises the invoice
+    const billingFields: {
+      payNow: boolean;
+      depositAmount?: number;
+      paymentMethod: string;
+      paymentReference?: string;
+    } =
+      planPrice <= 0
+        ? { payNow: true, paymentMethod: form.paymentMethod }
+        : form.billingMode === "deposit"
+          ? {
+              payNow: false,
+              depositAmount: depositNum,
+              paymentMethod: form.paymentMethod,
+              paymentReference: form.paymentReference.trim() || undefined,
+            }
+          : {
+              payNow: form.billingMode === "now",
+              paymentMethod: form.paymentMethod,
+              paymentReference: form.paymentReference.trim() || undefined,
+            };
     const billingToast = (status: string | undefined, label: string) =>
       planPrice <= 0
         ? `${label} — activated (free plan)`
-        : status === "ACTIVE"
-          ? `${label} — payment recorded, membership active`
-          : `${label} — invoice raised, membership pending until paid`;
+        : form.billingMode === "deposit"
+          ? `${label} — deposit recorded, balance owed, membership pending`
+          : status === "ACTIVE"
+            ? `${label} — payment recorded, membership active`
+            : `${label} — invoice raised, membership pending until paid`;
     try {
       if (memberType === "ACADEMY") {
         // Athlete = full academy record (creates linked User + CRM contact server-side)
@@ -1289,9 +1327,7 @@ function NewMemberDialog({
           planId: form.planId,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
-          payNow: planPrice > 0 ? form.payNow : true,
-          paymentMethod: form.paymentMethod,
-          paymentReference: form.paymentReference.trim() || undefined,
+          ...billingFields,
         });
         toast.success(billingToast(res?.membership?.status, "Academy member created"));
         onCreated({ type: "ACADEMY", email: form.email.trim() });
@@ -1318,9 +1354,7 @@ function NewMemberDialog({
           planId: form.planId,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
-          payNow: planPrice > 0 ? form.payNow : true,
-          paymentMethod: form.paymentMethod,
-          paymentReference: form.paymentReference.trim() || undefined,
+          ...billingFields,
         });
         toast.success(billingToast(res?.membership?.status, "Leisure member created"));
         onCreated({ type: "LEISURE", email: form.email.trim() });
@@ -1650,23 +1684,58 @@ function NewMemberDialog({
                     return (
                       <div className="space-y-3 rounded-md border p-3">
                         <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => set("payNow", true)}
-                            className={`rounded-md border px-3 py-2 text-sm ${form.payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
-                          >
-                            Collect payment now
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => set("payNow", false)}
-                            className={`rounded-md border px-3 py-2 text-sm ${!form.payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
-                          >
-                            Invoice — pay later
-                          </button>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(
+                            [
+                              { v: "now", label: "Pay in full now" },
+                              { v: "deposit", label: "Take a deposit" },
+                              { v: "later", label: "Invoice — pay later" },
+                            ] as const
+                          ).map((m) => (
+                            <button
+                              key={m.v}
+                              type="button"
+                              onClick={() => set("billingMode", m.v)}
+                              className={`rounded-md border px-3 py-2 text-sm ${form.billingMode === m.v ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                            >
+                              {m.label}
+                            </button>
+                          ))}
                         </div>
-                        {form.payNow ? (
+                        {form.billingMode === "deposit" && (
+                          <Field label="Deposit amount (SAR)" htmlFor="nm-deposit">
+                            <Input
+                              id="nm-deposit"
+                              type="number"
+                              min={0}
+                              max={price}
+                              step="0.01"
+                              value={form.depositAmount}
+                              onChange={(e) => set("depositAmount", e.target.value)}
+                              placeholder={`0 – ${formatSAR(price)}`}
+                            />
+                            <div className="mt-2 flex gap-2">
+                              {[0.25, 0.5, 0.75].map((pct) => (
+                                <Button
+                                  key={pct}
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    set("depositAmount", String(Math.round(price * pct * 100) / 100))
+                                  }
+                                >
+                                  {pct * 100}%
+                                </Button>
+                              ))}
+                            </div>
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              The deposit is recorded as a partial payment. The balance stays owed and
+                              the member remains <strong>pending</strong> until paid in full.
+                            </p>
+                          </Field>
+                        )}
+                        {form.billingMode === "now" || form.billingMode === "deposit" ? (
                           <>
                             <Field label="Payment method">
                               <SelectField
@@ -2982,8 +3051,10 @@ function AssignMembershipDialog({
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
   const [autoRenew, setAutoRenew] = useState(false);
-  // Billing — every paid membership is invoiced; collect now or issue an open invoice.
-  const [payNow, setPayNow] = useState(true);
+  // Billing — every paid membership is invoiced; pay in full now, take a deposit
+  // (partial payment, balance owed), or issue an open invoice to pay later.
+  const [billingMode, setBillingMode] = useState<"now" | "deposit" | "later">("now");
+  const [depositAmount, setDepositAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentReference, setPaymentReference] = useState("");
   // ID capture — writes back to the selected subject before assigning. Required
@@ -3201,7 +3272,41 @@ function AssignMembershipDialog({
       return;
     }
     const price = Number(selectedPlan?.price) || 0;
+
+    // Validate the deposit before any network call: must be > 0 and < the plan total.
+    const depositNum = Number(depositAmount);
+    if (price > 0 && billingMode === "deposit") {
+      if (!Number.isFinite(depositNum) || depositNum <= 0 || depositNum >= price) {
+        toast.error(`Deposit must be greater than 0 and less than ${formatSAR(price)}`);
+        return;
+      }
+    }
+
     setSaving(true);
+    // Billing payload differs by mode:
+    //  - paid (free or "now") → payNow:true records payment + activates
+    //  - deposit              → depositAmount records a partial payment, membership stays PENDING
+    //  - later                → neither, just raises the invoice
+    const billingFields: {
+      payNow: boolean;
+      depositAmount?: number;
+      paymentMethod: string;
+      paymentReference?: string;
+    } =
+      price <= 0
+        ? { payNow: true, paymentMethod }
+        : billingMode === "deposit"
+          ? {
+              payNow: false,
+              depositAmount: depositNum,
+              paymentMethod,
+              paymentReference: paymentReference.trim() || undefined,
+            }
+          : {
+              payNow: billingMode === "now",
+              paymentMethod,
+              paymentReference: paymentReference.trim() || undefined,
+            };
     try {
       if (needsAthleteDetails) {
         // Academy plan + contact has no athlete: provision the athlete (creates a
@@ -3227,12 +3332,12 @@ function AssignMembershipDialog({
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
           trainerId: trainerId || undefined,
-          payNow: price > 0 ? payNow : true,
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
+          ...billingFields,
         });
         const memStatus = res?.membership?.status;
         if (price <= 0) toast.success("Athlete profile created — membership activated (free plan)");
+        else if (billingMode === "deposit")
+          toast.success("Athlete profile created — deposit recorded, balance owed, membership pending");
         else if (memStatus === "ACTIVE")
           toast.success("Athlete profile created + membership active — they can log into the platform");
         else toast.success("Athlete profile created — invoice raised, membership pending until paid");
@@ -3252,12 +3357,12 @@ function AssignMembershipDialog({
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
           trainerId: trainerId || undefined,
-          payNow: price > 0 ? payNow : true,
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
+          ...billingFields,
         });
         const memStatus = res?.membership?.status;
         if (price <= 0) toast.success("Free plan assigned — membership activated");
+        else if (billingMode === "deposit")
+          toast.success("Deposit recorded — balance owed, membership pending until paid in full");
         else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
         else toast.success("Invoice raised — membership pending until paid");
       } else {
@@ -3276,12 +3381,12 @@ function AssignMembershipDialog({
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
           trainerId: trainerId || undefined,
-          payNow: price > 0 ? payNow : true,
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
+          ...billingFields,
         });
         const memStatus = res?.membership?.status;
         if (price <= 0) toast.success("Free plan assigned — membership activated");
+        else if (billingMode === "deposit")
+          toast.success("Deposit recorded — balance owed, membership pending until paid in full");
         else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
         else toast.success("Invoice raised — membership pending until paid");
       }
@@ -3541,23 +3646,58 @@ function AssignMembershipDialog({
                     return (
                       <div className="space-y-3 rounded-md border p-3">
                         <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setPayNow(true)}
-                            className={`rounded-md border px-3 py-2 text-sm ${payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
-                          >
-                            Collect payment now
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPayNow(false)}
-                            className={`rounded-md border px-3 py-2 text-sm ${!payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
-                          >
-                            Invoice — pay later
-                          </button>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(
+                            [
+                              { v: "now", label: "Pay in full now" },
+                              { v: "deposit", label: "Take a deposit" },
+                              { v: "later", label: "Invoice — pay later" },
+                            ] as const
+                          ).map((m) => (
+                            <button
+                              key={m.v}
+                              type="button"
+                              onClick={() => setBillingMode(m.v)}
+                              className={`rounded-md border px-3 py-2 text-sm ${billingMode === m.v ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                            >
+                              {m.label}
+                            </button>
+                          ))}
                         </div>
-                        {payNow ? (
+                        {billingMode === "deposit" && (
+                          <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
+                            <Input
+                              id="assign-deposit"
+                              type="number"
+                              min={0}
+                              max={price}
+                              step="0.01"
+                              value={depositAmount}
+                              onChange={(e) => setDepositAmount(e.target.value)}
+                              placeholder={`0 – ${formatSAR(price)}`}
+                            />
+                            <div className="mt-2 flex gap-2">
+                              {[0.25, 0.5, 0.75].map((pct) => (
+                                <Button
+                                  key={pct}
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    setDepositAmount(String(Math.round(price * pct * 100) / 100))
+                                  }
+                                >
+                                  {pct * 100}%
+                                </Button>
+                              ))}
+                            </div>
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              The deposit is recorded as a partial payment. The balance stays owed and
+                              the member remains <strong>pending</strong> until paid in full.
+                            </p>
+                          </Field>
+                        )}
+                        {billingMode === "now" || billingMode === "deposit" ? (
                           <>
                             <Field label="Payment method">
                               <SelectField

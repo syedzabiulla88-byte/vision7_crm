@@ -1794,8 +1794,12 @@ function AssignPlanDialog({
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
-  // Billing — every paid membership is invoiced; collect now or issue an open invoice.
-  const [payNow, setPayNow] = useState(true);
+  // Billing — every paid membership is invoiced. Three modes:
+  //  "now"     → collect the full price now (payNow:true)
+  //  "deposit" → collect a partial amount now; balance stays owed (depositAmount)
+  //  "later"   → issue an open invoice, nothing collected (payNow:false)
+  const [billingMode, setBillingMode] = useState<"now" | "deposit" | "later">("now");
+  const [depositAmount, setDepositAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentReference, setPaymentReference] = useState("");
   // ID capture — recorded onto the subject (athlete or CRM contact) when provided.
@@ -1826,6 +1830,9 @@ function AssignPlanDialog({
     setAthleteNationality("");
     setIdType(contact?.idType || "NATIONAL_ID");
     setIdNumber(contact?.nationalId || "");
+    setBillingMode("now");
+    setDepositAmount("");
+    setPaymentMethod("cash");
     setPaymentReference("");
     let cancelled = false;
     (async () => {
@@ -1916,14 +1923,40 @@ function AssignPlanDialog({
       toast.error("This person already has an active/pending membership — tick the box to add another.");
       return;
     }
-    setSaving(true);
     const planPrice = Number(selectedPlan?.price) || 0;
+    // Deposit mode: validate 0 < amount < plan price before we hit the API.
+    const depositValue = Number(depositAmount);
+    if (planPrice > 0 && billingMode === "deposit") {
+      if (!Number.isFinite(depositValue) || depositValue <= 0) {
+        toast.error("Enter a deposit amount greater than 0.");
+        return;
+      }
+      if (depositValue >= planPrice) {
+        toast.error("Deposit must be less than the full price — use “Pay in full now” for the full amount.");
+        return;
+      }
+    }
+    setSaving(true);
+    // Shared billing fields for the assign payload, derived from the billing mode.
+    //  now     → payNow:true + method/ref
+    //  deposit → depositAmount + method/ref (no payNow:true; balance stays owed)
+    //  later   → neither (payNow:false)
+    const billingPayload: Record<string, unknown> =
+      planPrice <= 0
+        ? { payNow: true }
+        : billingMode === "now"
+          ? { payNow: true, paymentMethod, paymentReference: paymentReference.trim() || undefined }
+          : billingMode === "deposit"
+            ? { depositAmount: depositValue, paymentMethod, paymentReference: paymentReference.trim() || undefined }
+            : { payNow: false };
     const billingToast = (status?: string) =>
       planPrice <= 0
         ? "Membership assigned — activated (free plan)"
         : status === "ACTIVE"
           ? "Payment recorded — contact is now an active Member"
-          : "Invoice raised — membership pending until paid";
+          : billingMode === "deposit"
+            ? "Deposit recorded — invoice raised, balance owed (membership pending)"
+            : "Invoice raised — membership pending until paid";
     try {
       if (needsAthleteDetails) {
         // 1. Provision the athlete (creates a user login + auto-links a CRM contact).
@@ -1947,9 +1980,7 @@ function AssignPlanDialog({
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
-          payNow: planPrice > 0 ? payNow : true,
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
+          ...billingPayload,
         });
         toast.success(
           res?.membership?.status === "ACTIVE"
@@ -1967,9 +1998,7 @@ function AssignPlanDialog({
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
-          payNow: planPrice > 0 ? payNow : true,
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
+          ...billingPayload,
         });
         toast.success(billingToast(res?.membership?.status));
       } else {
@@ -1983,9 +2012,7 @@ function AssignPlanDialog({
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
-          payNow: planPrice > 0 ? payNow : true,
-          paymentMethod,
-          paymentReference: paymentReference.trim() || undefined,
+          ...billingPayload,
         });
         toast.success(billingToast(res?.membership?.status));
       }
@@ -2126,26 +2153,64 @@ function AssignPlanDialog({
                     </div>
                   );
                 }
+                const collectsPayment = billingMode === "now" || billingMode === "deposit";
                 return (
                   <div className="space-y-3 rounded-md border p-3">
                     <span className="text-sm font-medium">Billing — {formatSAR(price)}</span>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
-                        onClick={() => setPayNow(true)}
-                        className={`rounded-md border px-3 py-2 text-sm ${payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                        onClick={() => setBillingMode("now")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "now" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
                       >
-                        Collect payment now
+                        Pay in full now
                       </button>
                       <button
                         type="button"
-                        onClick={() => setPayNow(false)}
-                        className={`rounded-md border px-3 py-2 text-sm ${!payNow ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                        onClick={() => setBillingMode("deposit")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "deposit" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                      >
+                        Take a deposit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBillingMode("later")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "later" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
                       >
                         Invoice — pay later
                       </button>
                     </div>
-                    {payNow ? (
+                    {billingMode === "deposit" && (
+                      <div className="space-y-2">
+                        <TextField
+                          label="Deposit amount (SAR)"
+                          type="number"
+                          value={depositAmount}
+                          onChange={setDepositAmount}
+                          placeholder={`0 – ${price}`}
+                        />
+                        <div className="flex flex-wrap gap-2">
+                          {[0.25, 0.5, 0.75].map((pct) => (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() =>
+                                setDepositAmount(String(Math.round(price * pct * 100) / 100))
+                              }
+                              className="rounded-md border px-2.5 py-1 text-xs hover:bg-muted/50"
+                            >
+                              {Math.round(pct * 100)}% · {formatSAR(Math.round(price * pct * 100) / 100)}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          The deposit is collected now via the method below. An invoice is raised and
+                          the remaining balance stays <strong>owed</strong> — the member stays{" "}
+                          <strong>pending</strong> until it&apos;s settled.
+                        </p>
+                      </div>
+                    )}
+                    {collectsPayment ? (
                       <>
                         <SelectField
                           label="Payment method"
