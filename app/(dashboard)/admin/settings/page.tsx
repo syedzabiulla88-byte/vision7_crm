@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Settings, Save, Eye, Warning, Wifi, WifiOff, DoorOpen, RefreshCw } from "@/lib/icons";
+import { Settings, Save, Eye, Warning, Wifi, WifiOff, DoorOpen, RefreshCw, Download } from "@/lib/icons";
 import { usePermissions } from "@/components/hooks/use-permissions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -522,6 +522,19 @@ function BiostarConnectionCard() {
               )}
             </div>
           )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 border-t pt-4">
+          <Button variant="outline" render={<a href="/downloads/vision7-biostar-agent.zip" download />}>
+            <Download className="h-4 w-4" />
+            Download agent
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            The on-premise bridge. Install on a premises PC (needs Node 18+): unzip, copy{" "}
+            <code className="font-mono">config.env.example</code> →{" "}
+            <code className="font-mono">config.env</code>, paste the agent key, then run{" "}
+            <code className="font-mono">start.cmd</code>. Full steps in the README inside.
+          </p>
         </div>
 
         <p className="text-xs text-muted-foreground">
