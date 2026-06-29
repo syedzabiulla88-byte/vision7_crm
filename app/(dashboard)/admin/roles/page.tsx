@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
@@ -43,11 +43,29 @@ import {
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
+type PermAction = "view" | "create" | "edit" | "delete" | "manage" | "use" | "allocate";
+
 interface Permission {
   key: string;
   label?: string;
   group?: string;
+  module?: string;
+  action?: PermAction;
 }
+
+// Column order for the matrix. The four CRUD actions get fixed leading columns;
+// any module-specific extras (manage/use/allocate) follow, in this order.
+const PRIMARY_ACTIONS: PermAction[] = ["view", "create", "edit", "delete"];
+const EXTRA_ACTIONS: PermAction[] = ["manage", "use", "allocate"];
+const ACTION_LABEL: Record<PermAction, string> = {
+  view: "View",
+  create: "Create",
+  edit: "Edit",
+  delete: "Delete",
+  manage: "Manage",
+  use: "Use",
+  allocate: "Allocate",
+};
 
 interface Role {
   id: string;
@@ -111,7 +129,7 @@ export default function AdminRolesPage() {
 
   return (
     <PermissionGate
-      permission="users:manage"
+      permission="roles:manage"
       fallback={
         <EmptyState
           icon={<Shield className="h-6 w-6 text-muted-foreground" />}
@@ -284,15 +302,50 @@ function RoleFormDialog({
   const [selected, setSelected] = useState<Set<string>>(() => new Set(role?.permissions ?? []));
   const [saving, setSaving] = useState(false);
 
-  // Group permissions by their `group` field, preserving first-seen order.
-  const groups = useMemo(() => {
-    const map = new Map<string, Permission[]>();
+  // Build the module × action matrix. Each catalog entry is keyed `module:action`.
+  // We collapse entries into one ROW per module (carrying its label + the set of
+  // actions it exposes), grouped by `group`, preserving first-seen order. The
+  // union of action columns to render is derived from what modules actually use.
+  const { matrixGroups, columns, allKeys } = useMemo(() => {
+    const groupMap = new Map<
+      string,
+      Map<string, { module: string; label: string; actions: Map<PermAction, string> }>
+    >();
+    const usedExtras = new Set<PermAction>();
+    const keys: string[] = [];
+
     for (const p of permissions) {
-      const g = p.group || "Other";
-      if (!map.has(g)) map.set(g, []);
-      map.get(g)!.push(p);
+      const action = (p.action ?? (p.key.split(":")[1] as PermAction)) as PermAction | undefined;
+      const moduleKey = p.module ?? p.key.split(":")[0];
+      if (!action || !moduleKey) continue;
+      keys.push(p.key);
+      if (EXTRA_ACTIONS.includes(action)) usedExtras.add(action);
+
+      const groupName = p.group || "Other";
+      if (!groupMap.has(groupName)) groupMap.set(groupName, new Map());
+      const mods = groupMap.get(groupName)!;
+      if (!mods.has(moduleKey)) {
+        // Derive a clean module label by stripping the action word from the
+        // catalog label (e.g. "View CRM Contacts" → "CRM Contacts").
+        const actionWord = ACTION_LABEL[action];
+        const derived =
+          p.label && actionWord && p.label.startsWith(actionWord + " ")
+            ? p.label.slice(actionWord.length + 1)
+            : p.label || moduleKey;
+        mods.set(moduleKey, { module: moduleKey, label: derived, actions: new Map() });
+      }
+      mods.get(moduleKey)!.actions.set(action, p.key);
     }
-    return Array.from(map.entries()).map(([group, perms]) => ({ group, perms }));
+
+    const cols: PermAction[] = [
+      ...PRIMARY_ACTIONS,
+      ...EXTRA_ACTIONS.filter((a) => usedExtras.has(a)),
+    ];
+    const groups = Array.from(groupMap.entries()).map(([group, mods]) => ({
+      group,
+      modules: Array.from(mods.values()),
+    }));
+    return { matrixGroups: groups, columns: cols, allKeys: keys };
   }, [permissions]);
 
   // A role holding the '*' wildcard has everything — surface that, but the
@@ -308,16 +361,23 @@ function RoleFormDialog({
     });
   };
 
-  const toggleGroup = (perms: Permission[], allOn: boolean) => {
+  // Add (on=true) or remove (on=false) a batch of keys at once — used by the
+  // per-row select-all and the matrix-wide header select-all.
+  const setKeys = (keys: string[], on: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      for (const p of perms) {
-        if (allOn) next.delete(p.key);
-        else next.add(p.key);
+      for (const k of keys) {
+        if (on) next.add(k);
+        else next.delete(k);
       }
       return next;
     });
   };
+
+  // Whole-matrix select-all state (tri-state).
+  const allCount = allKeys.filter((k) => selected.has(k)).length;
+  const allChecked = allKeys.length > 0 && allCount === allKeys.length;
+  const someChecked = allCount > 0 && !allChecked;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -412,58 +472,101 @@ function RoleFormDialog({
                 <span className="text-xs text-muted-foreground">{grantedCount} selected</span>
               </div>
 
-              {groups.length === 0 ? (
+              {matrixGroups.length === 0 ? (
                 <p className="rounded-md border border-border p-4 text-sm text-muted-foreground">
                   No permissions available.
                 </p>
               ) : (
-                <div className="space-y-3">
-                  {groups.map(({ group, perms }) => {
-                    const allOn = perms.every((p) => selected.has(p.key));
-                    return (
-                      <div key={group} className="overflow-hidden rounded-md border border-border">
-                        <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-2">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            {group}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-auto py-1 text-xs"
-                            onClick={() => toggleGroup(perms, allOn)}
-                          >
-                            {allOn ? "Clear all" : "Select all"}
-                          </Button>
-                        </div>
-                        <div className="grid grid-cols-1 gap-1 p-3 sm:grid-cols-2">
-                          {perms.map((p) => {
-                            const on = selected.has(p.key);
-                            const inputId = `perm-${p.key}`;
-                            return (
-                              <label
-                                key={p.key}
-                                htmlFor={inputId}
-                                className={
-                                  "flex cursor-pointer items-center gap-2.5 rounded-md border px-2.5 py-2 transition-colors " +
-                                  (on
-                                    ? "border-primary/40 bg-primary/5"
-                                    : "border-transparent hover:bg-muted/50")
-                                }
+                <div className="overflow-hidden rounded-md border border-border">
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/40">
+                          <TableHead className="w-[40%] min-w-[10rem]">
+                            <div className="flex items-center gap-2.5">
+                              <Checkbox
+                                aria-label="Select all permissions"
+                                checked={allChecked}
+                                indeterminate={someChecked}
+                                onCheckedChange={() => setKeys(allKeys, !allChecked)}
+                              />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Module
+                              </span>
+                            </div>
+                          </TableHead>
+                          {columns.map((a) => (
+                            <TableHead key={a} className="text-center text-xs font-medium">
+                              {ACTION_LABEL[a]}
+                            </TableHead>
+                          ))}
+                          <TableHead className="w-px text-center text-xs font-medium">All</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {matrixGroups.map(({ group, modules }) => (
+                          <Fragment key={group}>
+                            <TableRow className="hover:bg-transparent">
+                              <TableCell
+                                colSpan={columns.length + 2}
+                                className="bg-muted/20 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                               >
-                                <Checkbox
-                                  id={inputId}
-                                  checked={on}
-                                  onCheckedChange={() => toggle(p.key)}
-                                />
-                                <span className="text-sm leading-tight">{p.label || p.key}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
+                                {group}
+                              </TableCell>
+                            </TableRow>
+                            {modules.map((mod) => {
+                              const rowKeys = Array.from(mod.actions.values());
+                              const rowOn = rowKeys.filter((k) => selected.has(k)).length;
+                              const rowAll = rowOn === rowKeys.length;
+                              const rowSome = rowOn > 0 && !rowAll;
+                              return (
+                                <TableRow key={mod.module}>
+                                  <TableCell className="font-medium">
+                                    {mod.label}
+                                    <span className="ml-1.5 font-mono text-xs text-muted-foreground">
+                                      {mod.module}
+                                    </span>
+                                  </TableCell>
+                                  {columns.map((a) => {
+                                    const key = mod.actions.get(a);
+                                    if (!key) {
+                                      return (
+                                        <TableCell key={a} className="text-center text-muted-foreground/30">
+                                          —
+                                        </TableCell>
+                                      );
+                                    }
+                                    const on = selected.has(key);
+                                    return (
+                                      <TableCell key={a} className="text-center">
+                                        <div className="flex justify-center">
+                                          <Checkbox
+                                            aria-label={`${ACTION_LABEL[a]} ${mod.label}`}
+                                            checked={on}
+                                            onCheckedChange={() => toggle(key)}
+                                          />
+                                        </div>
+                                      </TableCell>
+                                    );
+                                  })}
+                                  <TableCell className="text-center">
+                                    <div className="flex justify-center">
+                                      <Checkbox
+                                        aria-label={`Select all for ${mod.label}`}
+                                        checked={rowAll}
+                                        indeterminate={rowSome}
+                                        onCheckedChange={() => setKeys(rowKeys, !rowAll)}
+                                      />
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </Fragment>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </div>
               )}
             </div>

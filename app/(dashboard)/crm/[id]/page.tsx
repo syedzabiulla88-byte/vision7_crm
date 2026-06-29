@@ -15,6 +15,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { PermissionGate } from "@/components/shared/permission-gate";
 import {
   Table,
   TableBody,
@@ -591,12 +592,16 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 <Button onClick={() => setEmailOpen(true)}>
                   <Send className="h-4 w-4" /> Send Email
                 </Button>
-                <Button variant="outline" onClick={() => setEditing(true)}>
-                  <Edit className="h-4 w-4" /> Edit
-                </Button>
-                <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
-                  <Trash className="h-4 w-4" /> Delete
-                </Button>
+                <PermissionGate permission="crm:edit">
+                  <Button variant="outline" onClick={() => setEditing(true)}>
+                    <Edit className="h-4 w-4" /> Edit
+                  </Button>
+                </PermissionGate>
+                <PermissionGate permission="crm:delete">
+                  <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
+                    <Trash className="h-4 w-4" /> Delete
+                  </Button>
+                </PermissionGate>
               </>
             ) : (
               <>

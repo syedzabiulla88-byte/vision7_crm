@@ -133,7 +133,7 @@ export default function DuplicatesPage() {
 
   return (
     <PermissionGate
-      permission="users:manage"
+      permission="crm:view"
       fallback={
         <div className="space-y-6">
           <PageHeader title="Duplicate contacts" description="Find and merge contacts that share a phone number." />

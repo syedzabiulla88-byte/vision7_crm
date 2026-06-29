@@ -174,7 +174,9 @@ interface CustomRole {
 
 export default function UsersDirectoryPage() {
   const { can } = usePermissions();
-  const canManage = can("users:manage");
+  const canEdit = can("users:edit");
+  const canDelete = can("users:delete");
+  const canRowAction = canEdit || canDelete;
 
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -289,7 +291,7 @@ export default function UsersDirectoryPage() {
         description="Every Vision7 account — staff, coaches, sales, and the members, athletes and parents who log into the apps. Assign built-in or custom roles, manage status, and send login credentials."
         onRefresh={load}
         actions={
-          <PermissionGate permission="users:manage">
+          <PermissionGate permission="users:create">
             <Button onClick={() => setEditing("new")}>
               <UserAdd className="h-4 w-4" />
               New User
@@ -465,25 +467,29 @@ export default function UsersDirectoryPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
-                          <PermissionGate permission="users:manage">
-                            <Button
-                              variant="outline"
-                              size="icon-sm"
-                              onClick={() => setLoginTarget(u)}
-                              aria-label="Send login credentials"
-                              title="Send login credentials"
-                            >
-                              <Send className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="icon-sm"
-                              onClick={() => setEditing(u)}
-                              aria-label="Edit user"
-                              title="Edit"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
+                          {canEdit && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="icon-sm"
+                                onClick={() => setLoginTarget(u)}
+                                aria-label="Send login credentials"
+                                title="Send login credentials"
+                              >
+                                <Send className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon-sm"
+                                onClick={() => setEditing(u)}
+                                aria-label="Edit user"
+                                title="Edit"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
+                          {canDelete && (
                             <Button
                               variant="outline"
                               size="icon-sm"
@@ -493,8 +499,8 @@ export default function UsersDirectoryPage() {
                             >
                               <Trash className="h-4 w-4 text-destructive" />
                             </Button>
-                          </PermissionGate>
-                          {!canManage && <span className="text-xs text-muted-foreground">—</span>}
+                          )}
+                          {!canRowAction && <span className="text-xs text-muted-foreground">—</span>}
                         </div>
                       </TableCell>
                     </TableRow>

@@ -35,6 +35,8 @@ import {
 import { PageHeader } from "@/components/shared/page-header";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Pagination } from "@/components/shared/pagination";
+import { PermissionGate } from "@/components/shared/permission-gate";
+import { usePermissions } from "@/components/hooks/use-permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -341,6 +343,9 @@ function IdExpiryBadge({ value }: { value?: string | Date | null }) {
 
 export default function MembersPage() {
   const router = useRouter();
+  const { can } = usePermissions();
+  const canEdit = can("members:edit");
+  const canDelete = can("members:delete");
   const [loading, setLoading] = useState(true);
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -563,14 +568,18 @@ export default function MembersPage() {
         onRefresh={reload}
         actions={
           <>
-            <Button variant="outline" onClick={() => setShowAddMember(true)}>
-              <Plus />
-              New Member
-            </Button>
-            <Button onClick={() => setShowAssign(true)}>
-              <Plus />
-              Assign Membership
-            </Button>
+            <PermissionGate permission="members:create">
+              <Button variant="outline" onClick={() => setShowAddMember(true)}>
+                <Plus />
+                New Member
+              </Button>
+            </PermissionGate>
+            <PermissionGate permission="memberships:allocate">
+              <Button onClick={() => setShowAssign(true)}>
+                <Plus />
+                Assign Membership
+              </Button>
+            </PermissionGate>
           </>
         }
       />
@@ -827,45 +836,50 @@ export default function MembersPage() {
                               for multi they live in the expanded sub-rows. */}
                           {!multi && primary && (
                             <>
-                              {primaryFrozen ? (
+                              {canEdit &&
+                                (primaryFrozen ? (
+                                  <Button
+                                    variant="outline"
+                                    size="icon-sm"
+                                    onClick={() => setUnfreezeTarget(primary)}
+                                    title="Unfreeze membership"
+                                    aria-label="Unfreeze membership"
+                                  >
+                                    <PlayCircle />
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="outline"
+                                    size="icon-sm"
+                                    onClick={() => setFreezeTarget(primary)}
+                                    title="Freeze membership"
+                                    aria-label="Freeze membership"
+                                  >
+                                    <Clock />
+                                  </Button>
+                                ))}
+                              {canEdit && (
                                 <Button
                                   variant="outline"
                                   size="icon-sm"
-                                  onClick={() => setUnfreezeTarget(primary)}
-                                  title="Unfreeze membership"
-                                  aria-label="Unfreeze membership"
+                                  onClick={() => setEditing(primary)}
+                                  title="Edit"
+                                  aria-label="Edit membership"
                                 >
-                                  <PlayCircle />
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="outline"
-                                  size="icon-sm"
-                                  onClick={() => setFreezeTarget(primary)}
-                                  title="Freeze membership"
-                                  aria-label="Freeze membership"
-                                >
-                                  <Clock />
+                                  <SquarePen />
                                 </Button>
                               )}
-                              <Button
-                                variant="outline"
-                                size="icon-sm"
-                                onClick={() => setEditing(primary)}
-                                title="Edit"
-                                aria-label="Edit membership"
-                              >
-                                <SquarePen />
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="icon-sm"
-                                onClick={() => setDeleteTarget(primary)}
-                                title="Delete"
-                                aria-label="Delete membership"
-                              >
-                                <Trash />
-                              </Button>
+                              {canDelete && (
+                                <Button
+                                  variant="destructive"
+                                  size="icon-sm"
+                                  onClick={() => setDeleteTarget(primary)}
+                                  title="Delete"
+                                  aria-label="Delete membership"
+                                >
+                                  <Trash />
+                                </Button>
+                              )}
                             </>
                           )}
                         </div>
@@ -899,45 +913,50 @@ export default function MembersPage() {
                             </TableCell>
                             <TableCell>
                               <div className="flex justify-end gap-1">
-                                {subFrozen ? (
+                                {canEdit &&
+                                  (subFrozen ? (
+                                    <Button
+                                      variant="outline"
+                                      size="icon-sm"
+                                      onClick={() => setUnfreezeTarget(m)}
+                                      title="Unfreeze membership"
+                                      aria-label="Unfreeze membership"
+                                    >
+                                      <PlayCircle />
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      variant="outline"
+                                      size="icon-sm"
+                                      onClick={() => setFreezeTarget(m)}
+                                      title="Freeze membership"
+                                      aria-label="Freeze membership"
+                                    >
+                                      <Clock />
+                                    </Button>
+                                  ))}
+                                {canEdit && (
                                   <Button
                                     variant="outline"
                                     size="icon-sm"
-                                    onClick={() => setUnfreezeTarget(m)}
-                                    title="Unfreeze membership"
-                                    aria-label="Unfreeze membership"
+                                    onClick={() => setEditing(m)}
+                                    title="Edit"
+                                    aria-label="Edit membership"
                                   >
-                                    <PlayCircle />
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    variant="outline"
-                                    size="icon-sm"
-                                    onClick={() => setFreezeTarget(m)}
-                                    title="Freeze membership"
-                                    aria-label="Freeze membership"
-                                  >
-                                    <Clock />
+                                    <SquarePen />
                                   </Button>
                                 )}
-                                <Button
-                                  variant="outline"
-                                  size="icon-sm"
-                                  onClick={() => setEditing(m)}
-                                  title="Edit"
-                                  aria-label="Edit membership"
-                                >
-                                  <SquarePen />
-                                </Button>
-                                <Button
-                                  variant="destructive"
-                                  size="icon-sm"
-                                  onClick={() => setDeleteTarget(m)}
-                                  title="Delete"
-                                  aria-label="Delete membership"
-                                >
-                                  <Trash />
-                                </Button>
+                                {canDelete && (
+                                  <Button
+                                    variant="destructive"
+                                    size="icon-sm"
+                                    onClick={() => setDeleteTarget(m)}
+                                    title="Delete"
+                                    aria-label="Delete membership"
+                                  >
+                                    <Trash />
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>

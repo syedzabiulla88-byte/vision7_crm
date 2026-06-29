@@ -79,7 +79,7 @@ export default function PlansPage() {
   };
 
   const newPlanAction = (
-    <PermissionGate permission="memberships:manage">
+    <PermissionGate permission="memberships:create">
       <Button render={<Link href="/memberships/plans/new" />}>
         <Plus className="h-4 w-4" />
         New Plan
@@ -115,7 +115,7 @@ export default function PlansPage() {
             title="No plans yet"
             description="Create your first membership plan to start assigning memberships and feeding the public pricing pages."
           />
-          <PermissionGate permission="memberships:manage">
+          <PermissionGate permission="memberships:create">
             <div className="flex justify-center pb-16">
               <Button render={<Link href="/memberships/plans/new" />}>
                 <Plus className="h-4 w-4" />
@@ -283,7 +283,7 @@ function PlanCard({ plan, onDelete }: { plan: Plan; onDelete: () => void }) {
             <Pencil className="h-3.5 w-3.5" />
             Edit
           </Button>
-          <PermissionGate permission="memberships:manage">
+          <PermissionGate permission="memberships:edit">
             <Button
               variant="destructive"
               size="icon-sm"

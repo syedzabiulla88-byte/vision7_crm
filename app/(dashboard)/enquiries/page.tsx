@@ -8,6 +8,7 @@ import * as XLSX from "xlsx";
 
 import { api } from "@/lib/api";
 import { PermissionGate } from "@/components/shared/permission-gate";
+import { usePermissions } from "@/components/hooks/use-permissions";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
@@ -347,6 +348,8 @@ function resolveOther(choice: string, other: string): string {
 
 export default function EnquiriesPage() {
   const router = useRouter();
+  const { can } = usePermissions();
+  const canEdit = can("enquiries:edit");
 
   const [status, setStatus] = useState<EnquiryStatus>("NEW");
   const [items, setItems] = useState<Enquiry[]>([]);
@@ -634,20 +637,22 @@ export default function EnquiriesPage() {
             await Promise.all([load(), loadNewCount()]);
           }}
           actions={
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" onClick={downloadTemplate}>
-                <Download />
-                Download template
-              </Button>
-              <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-                <Upload />
-                Import
-              </Button>
-              <Button onClick={() => setAddOpen(true)}>
-                <Plus />
-                Add enquiry
-              </Button>
-            </div>
+            <PermissionGate permission="enquiries:create">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" onClick={downloadTemplate}>
+                  <Download />
+                  Download template
+                </Button>
+                <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                  <Upload />
+                  Import
+                </Button>
+                <Button onClick={() => setAddOpen(true)}>
+                  <Plus />
+                  Add enquiry
+                </Button>
+              </div>
+            </PermissionGate>
           }
         />
 
@@ -834,7 +839,7 @@ export default function EnquiriesPage() {
                             <Eye />
                             Open
                           </Button>
-                          {e.status === "NEW" ? (
+                          {e.status === "NEW" && canEdit ? (
                             <>
                               <Button
                                 size="sm"
@@ -1019,7 +1024,7 @@ export default function EnquiriesPage() {
               </div>
 
               <DialogFooter showCloseButton>
-                {viewing.status === "NEW" ? (
+                {viewing.status === "NEW" && canEdit ? (
                   <>
                     <Button
                       variant="outline"

@@ -8,6 +8,8 @@ import { api } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { PermissionGate } from "@/components/shared/permission-gate";
+import { usePermissions } from "@/components/hooks/use-permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -85,6 +87,10 @@ function recipientName(inv: Invoice): { name: string; walkIn: boolean } {
 const PAGE_SIZE = 20;
 
 export default function InvoicesPage() {
+  const { can } = usePermissions();
+  const canEdit = can("invoices:edit");
+  const canDelete = can("invoices:delete");
+  const canRecordPayment = can("payments:create");
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
@@ -240,10 +246,12 @@ export default function InvoicesPage() {
         description="Track billed amounts, payments, and outstanding balances."
         onRefresh={load}
         actions={
-          <Button render={<Link href="/billing/invoices/new" />}>
-            <Plus className="h-4 w-4" />
-            New Invoice
-          </Button>
+          <PermissionGate permission="invoices:create">
+            <Button render={<Link href="/billing/invoices/new" />}>
+              <Plus className="h-4 w-4" />
+              New Invoice
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -450,7 +458,7 @@ export default function InvoicesPage() {
                                       <Eye className="h-4 w-4" />
                                       View
                                     </DropdownMenuItem>
-                                    {isDraft && (
+                                    {isDraft && canEdit && (
                                       <DropdownMenuItem
                                         render={
                                           <Link href={`/billing/invoices/${inv.id}/edit`} />
@@ -460,19 +468,19 @@ export default function InvoicesPage() {
                                         Edit
                                       </DropdownMenuItem>
                                     )}
-                                    {isDraft && (
+                                    {isDraft && canEdit && (
                                       <DropdownMenuItem onClick={() => handleSend(inv, false)}>
                                         <Send className="h-4 w-4" />
                                         Send
                                       </DropdownMenuItem>
                                     )}
-                                    {isSent && (
+                                    {isSent && canEdit && (
                                       <DropdownMenuItem onClick={() => handleSend(inv, true)}>
                                         <Send className="h-4 w-4" />
                                         Resend
                                       </DropdownMenuItem>
                                     )}
-                                    {isDraft && (
+                                    {isDraft && canEdit && (
                                       <DropdownMenuItem
                                         onClick={() =>
                                           runRowAction(
@@ -485,13 +493,13 @@ export default function InvoicesPage() {
                                         Mark as sent (no email)
                                       </DropdownMenuItem>
                                     )}
-                                    {isSent && (
+                                    {isSent && canRecordPayment && (
                                       <DropdownMenuItem onClick={() => setPaying(inv)}>
                                         <CirclePlus className="h-4 w-4" />
                                         Record payment
                                       </DropdownMenuItem>
                                     )}
-                                    {isSent && (
+                                    {isSent && canEdit && (
                                       <DropdownMenuItem
                                         onClick={() =>
                                           setConfirm({ type: "markPaid", invoice: inv })
@@ -501,7 +509,7 @@ export default function InvoicesPage() {
                                         Mark as paid
                                       </DropdownMenuItem>
                                     )}
-                                    {isCancelled && (
+                                    {isCancelled && canEdit && (
                                       <DropdownMenuItem
                                         onClick={() =>
                                           runRowAction(
@@ -518,8 +526,8 @@ export default function InvoicesPage() {
                                       <Download className="h-4 w-4" />
                                       Download PDF
                                     </DropdownMenuItem>
-                                    {!isPaid && !isCancelled && <DropdownMenuSeparator />}
-                                    {!isPaid && !isCancelled && (
+                                    {!isPaid && !isCancelled && canDelete && <DropdownMenuSeparator />}
+                                    {!isPaid && !isCancelled && canDelete && (
                                       <DropdownMenuItem
                                         variant="destructive"
                                         onClick={() =>
@@ -530,7 +538,7 @@ export default function InvoicesPage() {
                                         Cancel
                                       </DropdownMenuItem>
                                     )}
-                                    {isDraft && (
+                                    {isDraft && canDelete && (
                                       <DropdownMenuItem
                                         variant="destructive"
                                         onClick={() =>

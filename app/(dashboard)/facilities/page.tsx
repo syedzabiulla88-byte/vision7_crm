@@ -159,7 +159,7 @@ export default function FacilitiesPage() {
 
   return (
     <PermissionGate
-      permission="facilities:manage"
+      permission="facilities:view"
       fallback={
         <EmptyState
           icon={<MapPin className="h-6 w-6 text-muted-foreground" />}

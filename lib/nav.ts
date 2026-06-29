@@ -27,8 +27,8 @@ export const NAV: NavGroup[] = [
   {
     label: "Sales & CRM",
     items: [
-      { label: "Enquiries", href: "/enquiries", icon: "ClipboardCheck", permission: "crm:view" },
-      { label: "Tours", href: "/tours", icon: "MapPin", permission: "crm:view" },
+      { label: "Enquiries", href: "/enquiries", icon: "ClipboardCheck", permission: "enquiries:view" },
+      { label: "Tours", href: "/tours", icon: "MapPin", permission: "tours:view" },
       { label: "Contacts", href: "/crm", icon: "Users", permission: "crm:view" },
       { label: "Pipeline", href: "/crm/board", icon: "Layers", permission: "crm:view" },
       { label: "Follow-ups", href: "/crm/followups", icon: "ClipboardCheck", permission: "followups:view" },
@@ -39,14 +39,14 @@ export const NAV: NavGroup[] = [
     label: "Memberships",
     items: [
       { label: "Members", href: "/members", icon: "UsersMultiple", permission: "members:view" },
-      { label: "Plans", href: "/memberships/plans", icon: "Award", permission: "memberships:manage" },
+      { label: "Plans", href: "/memberships/plans", icon: "Award", permission: "memberships:view" },
     ],
   },
   {
     label: "Operations",
     items: [
       { label: "Bookings", href: "/bookings", icon: "Calendar", permission: "bookings:view" },
-      { label: "Facilities", href: "/facilities", icon: "MapPin", permission: "facilities:manage" },
+      { label: "Facilities", href: "/facilities", icon: "MapPin", permission: "facilities:view" },
     ],
   },
   {

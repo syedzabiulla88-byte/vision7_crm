@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { usePermissions } from "@/components/hooks/use-permissions";
 import {
   Dialog,
   DialogContent,
@@ -57,6 +58,11 @@ import {
 export default function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { can } = usePermissions();
+  const canEdit = can("invoices:edit");
+  const canDelete = can("invoices:delete");
+  const canRecordPayment = can("payments:create");
+  const canManageRefund = can("refunds:manage");
 
   const [loading, setLoading] = useState(true);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
@@ -206,7 +212,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
       {/* Actions bar */}
       <div className="flex flex-wrap gap-2 print:hidden">
-        {isDraft && (
+        {isDraft && canEdit && (
           <>
             <Button onClick={() => setConfirm("send")}>
               <Send className="h-4 w-4" />
@@ -216,29 +222,31 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               <Pencil className="h-4 w-4" />
               Edit
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => setConfirm("delete")}
-              className="text-destructive hover:text-destructive"
-            >
-              <Trash className="h-4 w-4" />
-              Delete
-            </Button>
           </>
         )}
-        {canResend && (
+        {isDraft && canDelete && (
+          <Button
+            variant="outline"
+            onClick={() => setConfirm("delete")}
+            className="text-destructive hover:text-destructive"
+          >
+            <Trash className="h-4 w-4" />
+            Delete
+          </Button>
+        )}
+        {canResend && canEdit && (
           <Button variant="outline" onClick={() => setConfirm("resend")}>
             <Send className="h-4 w-4" />
             Resend
           </Button>
         )}
-        {canPay && (
+        {canPay && canRecordPayment && (
           <Button onClick={() => setShowPayment(true)}>
             <Download className="h-4 w-4" />
             Record Payment
           </Button>
         )}
-        {canRefund && (
+        {canRefund && canManageRefund && (
           <Button variant="outline" onClick={() => setShowRefund(true)}>
             <RotateCcw className="h-4 w-4" />
             Record refund
@@ -246,25 +254,25 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         )}
 
         {/* Change status (guided / safe) */}
-        {canPay && (
+        {canPay && canEdit && (
           <Button variant="outline" onClick={() => setConfirm("markPaid")}>
             <CheckCircle className="h-4 w-4" />
             Mark as paid
           </Button>
         )}
-        {isDraft && (
+        {isDraft && canEdit && (
           <Button variant="outline" onClick={() => setConfirm("markSent")}>
             <Send className="h-4 w-4" />
             Mark as sent
           </Button>
         )}
-        {isCancelled && (
+        {isCancelled && canEdit && (
           <Button variant="outline" onClick={() => setConfirm("reopen")}>
             <RotateCcw className="h-4 w-4" />
             Reopen
           </Button>
         )}
-        {!isPaid && !isCancelled && (
+        {!isPaid && !isCancelled && canDelete && (
           <Button
             variant="outline"
             onClick={() => setConfirm("cancel")}

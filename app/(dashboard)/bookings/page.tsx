@@ -330,7 +330,7 @@ export default function BookingsPage() {
         description="Every pitch, padel court, gym and swim slot booked from the public website and by staff."
         onRefresh={load}
         actions={
-          <PermissionGate permission="bookings:manage">
+          <PermissionGate permission="bookings:create">
             <Button onClick={() => setShowCreate(true)}>
               <Plus className="h-4 w-4" />
               New Booking
@@ -843,7 +843,7 @@ function BookingDetailDialog({
                 )}
               </div>
 
-              <PermissionGate permission="bookings:manage">
+              <PermissionGate permission="bookings:edit">
                 <Separator />
                 <DialogFooter className="flex-row flex-wrap items-center gap-2 sm:justify-start">
                   {status === "PENDING" && (

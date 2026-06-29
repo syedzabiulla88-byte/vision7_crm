@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { idExpiryStatus } from "@/lib/id-expiry";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
+import { PermissionGate } from "@/components/shared/permission-gate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -180,10 +181,12 @@ export default function CrmContactsPage() {
         description="Every person who has interacted with Vision7 — website bookings, walk-ins, invoiced customers, academy families."
         onRefresh={load}
         actions={
-          <Button render={<Link href="/crm/new" />}>
-            <UserAdd className="h-4 w-4" />
-            New Contact
-          </Button>
+          <PermissionGate permission="crm:create">
+            <Button render={<Link href="/crm/new" />}>
+              <UserAdd className="h-4 w-4" />
+              New Contact
+            </Button>
+          </PermissionGate>
         }
       />
 
