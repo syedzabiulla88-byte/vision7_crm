@@ -22,8 +22,14 @@ const PLATFORM_URL = process.env.NEXT_PUBLIC_PLATFORM_URL || "https://platform.v
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://vision7.sa";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.vision7.sa/api";
 
-// The shared backend health probe target (Swagger always answers on /docs).
-const API_DOCS = API_URL.replace(/\/+$/, "").replace(/\/api$/, "") + "/api/docs";
+// The shared backend health probe. We hit the Swagger JSON (a real CORS-enabled
+// JSON endpoint) with a normal readable fetch — the SAME mechanism the CRM's API
+// calls use — so it reports online wherever the backend is actually reachable.
+// (The old no-cors probe returned an opaque response that cross-origin-isolation
+// policies like COEP/CORP can block, falsely showing "Unreachable".)
+const API_ORIGIN = API_URL.replace(/\/+$/, "").replace(/\/api$/, "");
+const API_DOCS = API_ORIGIN + "/api/docs";
+const API_HEALTH = API_ORIGIN + "/api/docs-json";
 
 type Health = "checking" | "online" | "offline" | "unknown";
 
@@ -118,8 +124,8 @@ export default function ConnectedAppsPage() {
   const checkHealth = useCallback(async () => {
     setApiHealth("checking");
     try {
-      await fetch(API_DOCS, { method: "GET", mode: "no-cors" });
-      setApiHealth("online");
+      const res = await fetch(API_HEALTH, { method: "GET", cache: "no-store" });
+      setApiHealth(res.ok ? "online" : "offline");
     } catch {
       setApiHealth("offline");
     }
@@ -127,9 +133,9 @@ export default function ConnectedAppsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(API_DOCS, { method: "GET", mode: "no-cors" })
-      .then(() => {
-        if (!cancelled) setApiHealth("online");
+    fetch(API_HEALTH, { method: "GET", cache: "no-store" })
+      .then((res) => {
+        if (!cancelled) setApiHealth(res.ok ? "online" : "offline");
       })
       .catch(() => {
         if (!cancelled) setApiHealth("offline");
