@@ -1,9 +1,10 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 
 import { api } from "@/lib/api";
 import { PermissionGate } from "@/components/shared/permission-gate";
@@ -54,6 +55,8 @@ import {
   ChevronRight,
   Plus,
   Eye,
+  Upload,
+  Download,
 } from "@/lib/icons";
 
 // ─── Types (mirror the live backend contract) ────────────────────────────────────
@@ -169,6 +172,75 @@ function truncate(text: string, max = 80): string {
 
 function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
+}
+
+// ─── Import (CSV / XLSX) ──────────────────────────────────────────────────────────
+
+// Canonical fields accepted by the backend importer.
+const IMPORT_FIELDS = [
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "source",
+  "interest",
+  "kind",
+  "message",
+] as const;
+
+type ImportField = (typeof IMPORT_FIELDS)[number] | "name";
+
+interface ImportRow {
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  source?: string;
+  interest?: string;
+  kind?: string;
+  message?: string;
+}
+
+// Map common header variants (lowercased, trimmed) → canonical field name.
+const HEADER_ALIASES: Record<string, ImportField> = {
+  "first name": "firstName",
+  firstname: "firstName",
+  "last name": "lastName",
+  lastname: "lastName",
+  name: "name",
+  "full name": "name",
+  fullname: "name",
+  email: "email",
+  "email address": "email",
+  phone: "phone",
+  mobile: "phone",
+  "phone number": "phone",
+  contact: "phone",
+  source: "source",
+  interest: "interest",
+  program: "interest",
+  kind: "kind",
+  type: "kind",
+  message: "message",
+  notes: "message",
+};
+
+// Normalize one raw sheet row's keys case-insensitively to the canonical fields.
+function normalizeImportRow(raw: Record<string, unknown>): ImportRow {
+  const out: ImportRow = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const canonical = HEADER_ALIASES[key.trim().toLowerCase()];
+    if (!canonical) continue;
+    const str = value === null || value === undefined ? "" : String(value).trim();
+    if (str) out[canonical] = str;
+  }
+  return out;
+}
+
+// A row contributes nothing if it has neither name parts, email, nor phone.
+function importRowName(r: ImportRow): string {
+  return r.name || `${r.firstName || ""} ${r.lastName || ""}`.trim();
 }
 
 // "fitnessGoal" → "Fitness Goal", "dob" → "Dob", "preferred_time" → "Preferred Time"
@@ -295,6 +367,11 @@ export default function EnquiriesPage() {
   const [addKind, setAddKind] = useState<EnquiryKind>("academy");
   const [form, setForm] = useState<NewEnquiryForm>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
+
+  // Import (CSV / XLSX) — preview dialog + commit.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importRows, setImportRows] = useState<ImportRow[] | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const setField = useCallback(
     (key: keyof NewEnquiryForm, value: string) =>
@@ -463,6 +540,73 @@ export default function EnquiriesPage() {
     }
   };
 
+  // ── Import (CSV / XLSX) ──────────────────────────────────────────────────────────
+
+  const downloadTemplate = () => {
+    const example = {
+      firstName: "Sara",
+      lastName: "Al-Otaibi",
+      email: "sara@example.com",
+      phone: "+966 5x xxx xxxx",
+      source: "walk-in",
+      interest: "Academy",
+      kind: "academy",
+      message: "Interested in the junior program",
+    };
+    const ws = XLSX.utils.json_to_sheet([example], {
+      header: ["firstName", "lastName", "email", "phone", "source", "interest", "kind", "message"],
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Enquiries");
+    XLSX.writeFile(wb, "enquiries-template.xlsx");
+  };
+
+  const onFileSelected = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const firstSheetName = wb.SheetNames[0];
+      const sheet = firstSheetName ? wb.Sheets[firstSheetName] : undefined;
+      if (!sheet) throw new Error("The file has no sheets");
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      const rows = raw.map(normalizeImportRow);
+      if (rows.length === 0) {
+        toast.error("No rows found in that file");
+        return;
+      }
+      setImportRows(rows);
+    } catch (err) {
+      toast.error(errMsg(err, "Could not read that file"));
+    }
+  };
+
+  const commitImport = async () => {
+    if (!importRows) return;
+    setImporting(true);
+    try {
+      const res = await api.crm.importEnquiries({ rows: importRows });
+      toast.success(
+        `Imported ${res.created} of ${res.totalRows} (skipped ${res.skipped.length})`,
+      );
+      if (res.skipped.length) {
+        const sample = res.skipped
+          .slice(0, 3)
+          .map((s) => `row ${s.row}: ${s.reason}`)
+          .join("; ");
+        const more = res.skipped.length > 3 ? ` …and ${res.skipped.length - 3} more` : "";
+        toast.message(`Skipped ${res.skipped.length}`, { description: sample + more });
+      }
+      setImportRows(null);
+      if (status !== "NEW") setStatus("NEW");
+      else load();
+      loadNewCount();
+    } catch (err) {
+      toast.error(errMsg(err, "Could not import enquiries"));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   // Details for the currently-viewed enquiry, memoized.
   const viewingEntries = useMemo(
     () => (viewing ? detailEntries(viewing.details) : []),
@@ -490,11 +634,34 @@ export default function EnquiriesPage() {
             await Promise.all([load(), loadNewCount()]);
           }}
           actions={
-            <Button onClick={() => setAddOpen(true)}>
-              <Plus />
-              Add enquiry
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={downloadTemplate}>
+                <Download />
+                Download template
+              </Button>
+              <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                <Upload />
+                Import
+              </Button>
+              <Button onClick={() => setAddOpen(true)}>
+                <Plus />
+                Add enquiry
+              </Button>
+            </div>
           }
+        />
+
+        {/* Hidden file picker for CSV / XLSX import */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls"
+          className="hidden"
+          onChange={(e) => {
+            void onFileSelected(e.target.files?.[0]);
+            // Reset so picking the same file again re-triggers onChange.
+            e.target.value = "";
+          }}
         />
 
         {/* Status tabs */}
@@ -878,6 +1045,79 @@ export default function EnquiriesPage() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Import preview dialog ─────────────────────────────────────────────── */}
+      <Dialog
+        open={!!importRows}
+        onOpenChange={(o) => {
+          if (!o && !importing) setImportRows(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Import enquiries</DialogTitle>
+            <DialogDescription>
+              {importRows
+                ? `${importRows.length} row${importRows.length === 1 ? "" : "s"} parsed. Preview of the first ${Math.min(10, importRows.length)} below.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {importRows && (
+            <>
+              <div className="max-h-[55vh] overflow-y-auto rounded-lg border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Phone</TableHead>
+                      <TableHead>Source</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importRows.slice(0, 10).map((r, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium">
+                          {importRowName(r) || <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {r.email || "—"}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {r.phone || "—"}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {r.source || "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Rows missing both email &amp; phone, or duplicates, will be skipped.
+              </p>
+            </>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setImportRows(null)}
+              disabled={importing}
+            >
+              Cancel
+            </Button>
+            <Button onClick={commitImport} disabled={importing || !importRows}>
+              {importing
+                ? "Importing…"
+                : `Import ${importRows?.length ?? 0} row${(importRows?.length ?? 0) === 1 ? "" : "s"}`}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -336,6 +336,12 @@ export const api = {
     enquiries: (params?: Params) => apiFetch<any>(`/crm/enquiries${qs(params)}`),
     createEnquiry: (data: any) =>
       apiFetch<any>(`/crm/enquiries`, { method: "POST", body: JSON.stringify(data) }),
+    // Bulk import — dedups by email/phone against existing contacts + enquiries + within the file.
+    importEnquiries: (data: { rows: any[] }) =>
+      apiFetch<{ created: number; skipped: { row: number; reason: string }[]; totalRows: number }>(
+        `/crm/enquiries/import`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
     convertEnquiry: (id: string) =>
       apiFetch<any>(`/crm/enquiries/${id}/convert`, { method: "POST" }),
     updateEnquiry: (id: string, data: { status?: string }) =>
