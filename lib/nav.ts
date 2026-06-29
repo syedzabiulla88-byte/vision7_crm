@@ -47,7 +47,7 @@ export const NAV: NavGroup[] = [
     items: [
       { label: "Bookings", href: "/bookings", icon: "Calendar", permission: "bookings:view" },
       { label: "Facilities", href: "/facilities", icon: "MapPin", permission: "facilities:view" },
-      { label: "Door Access", href: "/access-control", icon: "DoorOpen", permission: "accesscontrol:view" },
+      { label: "Card Access", href: "/access-control", icon: "DoorOpen", permission: "accesscontrol:view" },
     ],
   },
   {

@@ -81,8 +81,6 @@ export interface Plan {
   color?: string | null;
   maxFreezeDays?: number | null;
   requiresAthlete?: boolean | null;
-  /** Cached BioStar door ids this plan grants card access to. */
-  accessDoorIds?: string[] | null;
 }
 
 export function formatSAR(n: number | string | null | undefined): string {
