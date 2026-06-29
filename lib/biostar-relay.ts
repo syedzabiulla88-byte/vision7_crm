@@ -265,13 +265,25 @@ export async function listDevices(relayUrl: string): Promise<BiostarDevice[]> {
 export async function scanCard(
   relayUrl: string,
   deviceId: string,
-): Promise<{ cardId?: string; cardType?: unknown }> {
-  const res = await relayFetch<{ card_id?: string; card_type?: unknown }>(
+): Promise<{ cardId?: string; cardType?: unknown; raw?: unknown }> {
+  const res = await relayFetch<Record<string, any>>(
     relayUrl,
     `/api/devices/${encodeURIComponent(deviceId)}/scan_card`,
     { method: "POST" },
   );
-  return { cardId: res?.card_id, cardType: res?.card_type };
+  // BioStar nests the scanned card differently across versions/readers:
+  //   { Card: { card_id, display_card_id, card_type } }   (most common)
+  //   { CSNCardCollection: { rows: [{ card_id, … }] } }
+  //   { CardCollection:    { rows: [{ card_id, … }] } }
+  //   { card_id }                                         (rare / top-level)
+  const card =
+    res?.Card ??
+    res?.card ??
+    res?.CSNCardCollection?.rows?.[0] ??
+    res?.CardCollection?.rows?.[0] ??
+    res;
+  const raw = card?.card_id ?? card?.display_card_id;
+  return { cardId: raw != null && raw !== "" ? String(raw) : undefined, cardType: card?.card_type, raw: res };
 }
 
 // ─── Orchestrated assign (user → card → assign → access groups) ───────────────────

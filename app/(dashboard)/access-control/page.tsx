@@ -1213,11 +1213,18 @@ function BiostarAssignDialog({
         toast.success(`Read card ${res.cardId}`);
         setScanOpen(false);
       } else {
-        toast.error("No card read — tap a card on the reader and try again.");
+        // 2xx but no recognizable card — log the raw shape so we can map it.
+        console.warn("scan_card returned no card id; raw response:", res.raw);
+        toast.error("Reader returned no card. Tap again, or type the number below.");
       }
     } catch (err) {
-      // scan_card can time out if no card is presented — handle gracefully.
-      toast.error(err instanceof Error ? err.message : "Scan failed or timed out");
+      // scan_card times out (~15s) if no card is tapped — make that legible.
+      const msg = err instanceof Error ? err.message : "Scan failed";
+      toast.error(
+        /not respond|timeout/i.test(msg)
+          ? "Reader timed out — click Scan and tap the card within a few seconds."
+          : msg,
+      );
     } finally {
       setScanning(false);
     }
