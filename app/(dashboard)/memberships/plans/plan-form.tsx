@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -19,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Close } from "@/lib/icons";
+import { ArrowLeft, Plus, Close, DoorOpen } from "@/lib/icons";
 import {
   PLAN_TYPES,
   BILLING_CYCLES,
@@ -42,6 +43,7 @@ interface PlanFormState {
   color: string;
   maxFreezeDays: string;
   requiresAthlete: boolean;
+  accessDoorIds: string[];
 }
 
 function emptyPlan(): PlanFormState {
@@ -61,6 +63,7 @@ function emptyPlan(): PlanFormState {
     color: "",
     maxFreezeDays: "",
     requiresAthlete: true,
+    accessDoorIds: [],
   };
 }
 
@@ -90,6 +93,7 @@ function fromPlan(initial: Plan): PlanFormState {
       initial.requiresAthlete != null
         ? initial.requiresAthlete
         : selectorType === "ACADEMY",
+    accessDoorIds: Array.isArray(initial.accessDoorIds) ? initial.accessDoorIds : [],
   };
 }
 
@@ -104,9 +108,40 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
     initial ? fromPlan(initial) : emptyPlan(),
   );
   const [saving, setSaving] = useState(false);
+  // BioStar doors for the "Door Access" section. Loaded best-effort: if access
+  // control isn't configured (or the user lacks the permission) the section just
+  // shows an empty hint and the rest of the form still works.
+  const [doors, setDoors] = useState<Array<{ id: string; name: string }>>([]);
+  const [doorsLoading, setDoorsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.accessControl
+      .doors()
+      .then((res) => {
+        if (!cancelled) setDoors(Array.isArray(res) ? res : []);
+      })
+      .catch(() => {
+        if (!cancelled) setDoors([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDoorsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const set = <K extends keyof PlanFormState>(key: K, value: PlanFormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  const toggleDoor = (doorId: string) =>
+    setForm((f) => ({
+      ...f,
+      accessDoorIds: f.accessDoorIds.includes(doorId)
+        ? f.accessDoorIds.filter((d) => d !== doorId)
+        : [...f.accessDoorIds, doorId],
+    }));
 
   // Single Academy/Leisure category selector drives the backend `type` +
   // `category`, and defaults requiresAthlete (still overridable below).
@@ -153,6 +188,7 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
         maxFreezeDays:
           form.maxFreezeDays === "" ? null : Number(form.maxFreezeDays),
         requiresAthlete: form.requiresAthlete,
+        accessDoorIds: form.accessDoorIds,
       };
 
       if (editingId) {
@@ -463,6 +499,53 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
                   )}
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <DoorOpen className="h-4 w-4 text-muted-foreground" />
+                Door Access
+              </CardTitle>
+              <CardDescription>
+                Doors a member on this plan can open with their access card. Cards
+                issued to members are granted exactly these doors.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {doorsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading doors…</p>
+              ) : doors.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No doors available. Connect BioStar and sync devices under{" "}
+                  <Link href="/admin/settings" className="underline underline-offset-2">
+                    System Settings
+                  </Link>
+                  , then doors will appear here.
+                </p>
+              ) : (
+                <div className="space-y-2.5">
+                  {doors.map((door) => {
+                    const checked = form.accessDoorIds.includes(door.id);
+                    return (
+                      <label
+                        key={door.id}
+                        className="flex cursor-pointer items-center gap-2.5 text-sm"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => toggleDoor(door.id)}
+                        />
+                        <span>{door.name || door.id}</span>
+                      </label>
+                    );
+                  })}
+                  <p className="pt-1 text-xs text-muted-foreground">
+                    {form.accessDoorIds.length} of {doors.length} doors selected.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

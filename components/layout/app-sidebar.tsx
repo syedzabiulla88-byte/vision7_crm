@@ -21,6 +21,7 @@ import {
   ShieldUser,
   Shield,
   Settings,
+  DoorOpen,
 } from "@/lib/icons";
 
 type IconProps = { className?: string };
@@ -39,6 +40,7 @@ const ICONS: Record<string, ComponentType<IconProps>> = {
   ShieldUser,
   Shield,
   Settings,
+  DoorOpen,
 };
 
 /** True when pathname equals href or is nested under it (for non-root hrefs). */

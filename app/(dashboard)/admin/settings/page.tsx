@@ -21,7 +21,8 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Settings, Save, Eye, Warning } from "@/lib/icons";
+import { Settings, Save, Eye, Warning, Wifi, WifiOff, DoorOpen, RefreshCw } from "@/lib/icons";
+import { usePermissions } from "@/components/hooks/use-permissions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -237,6 +238,7 @@ export default function SystemSettingsPage() {
           </Card>
         ) : (
           <div className="space-y-6">
+            <BiostarConnectionCard />
             {groups.map(([group, entries]) => (
               <Card key={group}>
                 <CardHeader>
@@ -398,5 +400,135 @@ function SettingField({ meta, value, onChange, disabled }: SettingFieldProps) {
         className="max-w-md"
       />
     </div>
+  );
+}
+
+// ─── BioStar connection — Test connection helper ─────────────────────────────────
+//
+// The BioStar connection fields (host, port, app login id, app password, agent
+// key, enabled, dry-run, enrollment reader) live in the catalog below under the
+// "Integrations Biostar" group — they're rendered like any other typed setting,
+// with the password + agent key masked/write-only. This card sits on top of them
+// to explain the integration and offer a live "Test connection" that pings the
+// on-premise agent's last heartbeat + device inventory via the access-control
+// status endpoint.
+
+interface BiostarStatus {
+  agentOnline: boolean;
+  lastSyncAt: string | null;
+  deviceCount: number;
+  onlineDeviceCount: number;
+  dryRun: boolean;
+  enabled?: boolean;
+}
+
+function BiostarConnectionCard() {
+  const { can } = usePermissions();
+  const canView = can("accesscontrol:view");
+  const [testing, setTesting] = useState(false);
+  const [status, setStatus] = useState<BiostarStatus | null>(null);
+  const [tested, setTested] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  if (!canView) return null;
+
+  async function runTest() {
+    setTesting(true);
+    setErrored(false);
+    try {
+      const res = (await api.accessControl.status()) as BiostarStatus;
+      setStatus(res);
+      setTested(true);
+      if (res.agentOnline) {
+        toast.success(
+          `Agent online — ${res.onlineDeviceCount}/${res.deviceCount} devices reporting`,
+        );
+      } else {
+        toast.warning("Agent has not reported recently — check the on-premise agent.");
+      }
+    } catch (err) {
+      setErrored(true);
+      setStatus(null);
+      setTested(true);
+      toast.error(err instanceof Error ? err.message : "Couldn't reach the access-control service");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const online = tested && !errored && status?.agentOnline;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <DoorOpen className="h-4 w-4 text-muted-foreground" />
+          BioStar Card Access
+        </CardTitle>
+        <CardDescription>
+          Configure the BioStar connection (fields below) and confirm the on-premise
+          agent is reporting. The backend never talks to BioStar directly — a local
+          agent pulls config + jobs and pushes inventory + events back.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={runTest} disabled={testing} variant="outline">
+            {testing ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : online ? (
+              <Wifi className="h-4 w-4" />
+            ) : (
+              <WifiOff className="h-4 w-4" />
+            )}
+            {testing ? "Testing…" : "Test connection"}
+          </Button>
+
+          {tested && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge
+                variant="outline"
+                className={
+                  online
+                    ? "gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    : "gap-1 border-destructive/30 bg-destructive/10 text-destructive"
+                }
+              >
+                {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                {online ? "Agent online" : errored ? "Unavailable" : "Agent offline"}
+              </Badge>
+              {status && (
+                <>
+                  <span className="text-muted-foreground">
+                    {status.onlineDeviceCount}/{status.deviceCount} devices online
+                  </span>
+                  {status.lastSyncAt && (
+                    <span className="text-muted-foreground">
+                      · last sync{" "}
+                      {new Date(status.lastSyncAt).toLocaleString("en-GB", {
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  )}
+                  {status.dryRun && (
+                    <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-400">
+                      Dry-run mode
+                    </Badge>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          Dry-run mode logs intended BioStar writes without applying them — keep it on
+          until the agent is verified on site.
+        </p>
+      </CardContent>
+    </Card>
   );
 }

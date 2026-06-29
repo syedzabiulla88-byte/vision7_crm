@@ -385,6 +385,68 @@ export const api = {
     delete: (id: string) => apiFetch<any>(`/bookings/${id}`, { method: "DELETE" }),
   },
 
+  // ─── Access Control (BioStar card access) ──────────────────────────────────
+  // Backend never talks to BioStar directly — it brokers a job queue + caches that
+  // a local on-premise agent drains. These are the CRM-facing endpoints, gated by
+  // accesscontrol:view / accesscontrol:manage on the backend.
+  accessControl: {
+    // Agent + device health for the status chip / Test connection button.
+    status: () =>
+      apiFetch<{
+        agentOnline: boolean;
+        lastSyncAt: string | null;
+        deviceCount: number;
+        onlineDeviceCount: number;
+        dryRun: boolean;
+        enabled?: boolean;
+      }>(`/access-control/status`),
+    // Cached BioStar doors (plan checkboxes + page chips).
+    doors: () =>
+      apiFetch<Array<{ id: string; name: string; deviceId?: string | null; lastSyncedAt?: string | null }>>(
+        `/access-control/doors`,
+      ),
+    // Searchable member picker (athletes + crm contacts + family who hold memberships).
+    members: (params?: Params) => apiFetch<any>(`/access-control/members${qs(params)}`),
+    // Full access detail for one subject: subject, membership gate, biostar link, cards.
+    member: (subjectKind: string, subjectId: string) =>
+      apiFetch<any>(`/access-control/members/${subjectKind}/${subjectId}`),
+    // Queue a SCAN_CARD job (tap a reader); poll the returned jobId via job().
+    scan: (data?: { readerId?: string }) =>
+      apiFetch<{ jobId: string }>(`/access-control/cards/scan`, {
+        method: "POST",
+        body: JSON.stringify(data || {}),
+      }),
+    // Poll any queued job's status + result (used for scan + issue progress).
+    job: (id: string) =>
+      apiFetch<{ id: string; type: string; status: string; result?: any; error?: string | null }>(
+        `/access-control/jobs/${id}`,
+      ),
+    // Issue / replace a card. Supply EITHER a manual cardId OR a fromJobId (a
+    // completed scan job). Backend ensures the BioStar user, enrolls + assigns
+    // the card, and grants the member's plan doors.
+    issueCard: (data: {
+      subjectKind: string;
+      subjectId: string;
+      cardId?: string;
+      fromJobId?: string;
+      replaceCardId?: string;
+    }) => apiFetch<any>(`/access-control/cards/issue`, { method: "POST", body: JSON.stringify(data) }),
+    // Revoke a card (disables in BioStar + marks DISABLED locally + history).
+    revokeCard: (id: string, data?: { note?: string }) =>
+      apiFetch<any>(`/access-control/cards/${id}/revoke`, {
+        method: "POST",
+        body: JSON.stringify(data || {}),
+      }),
+    // Reassign a card to a different subject (moves the card + writes history).
+    reassignCard: (id: string, data: { subjectKind: string; subjectId: string; note?: string }) =>
+      apiFetch<any>(`/access-control/cards/${id}/reassign`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    // Searchable usage log (door events): subjectId, doorId, from, to, result, page.
+    events: (params?: Params) => apiFetch<any>(`/access-control/events${qs(params)}`),
+  },
+
   // App settings (admin-configurable key-value store)
   settings: {
     public: () => apiFetch<Record<string, string>>(`/settings/public`),

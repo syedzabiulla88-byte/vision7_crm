@@ -24,6 +24,7 @@ export const BUSINESS_PERMISSIONS = [
   "settings:manage",
   "audit:view",
   "apps:view",
+  "accesscontrol:view",
 ] as const;
 
 /** Write actions on `mod` that imply `mod:view` (mirrors the backend shim). */
