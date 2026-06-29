@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { PermissionGate } from "@/components/shared/permission-gate";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -21,7 +22,8 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Settings, Save, Eye, Warning } from "@/lib/icons";
+import { Settings, Save, Eye, Warning, DoorOpen, Wifi, WifiOff, RefreshCw, Download } from "@/lib/icons";
+import { relayHealth, type RelayHealth } from "@/lib/biostar-relay";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -263,6 +265,11 @@ export default function SystemSettingsPage() {
                 </CardContent>
               </Card>
             ))}
+
+            {/* Context + live "Test connection" for the BioStar relay. The relay URL
+                itself is a catalog key (group "BioStar"), already edited by the form
+                above; this card adds context and a browser-side reachability probe. */}
+            <BiostarRelayCard relayUrl={values["integrations.biostar.relay_url"] ?? ""} />
           </div>
         )}
       </div>
@@ -398,5 +405,114 @@ function SettingField({ meta, value, onChange, disabled }: SettingFieldProps) {
         className="max-w-md"
       />
     </div>
+  );
+}
+
+// ─── BioStar relay context card (read-only context + Test connection) ─────────────
+
+function BiostarRelayCard({ relayUrl }: { relayUrl: string }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<RelayHealth | null>(null);
+
+  const url = (relayUrl || "").trim();
+
+  async function test() {
+    if (!url) {
+      toast.error("Set the BioStar Relay URL above first, then save and test.");
+      return;
+    }
+    setTesting(true);
+    setResult(null);
+    try {
+      const health = await relayHealth(url);
+      setResult(health);
+      if (health.ok) toast.success("Relay is online");
+      else toast.error(health.error || "Relay did not respond");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Relay unreachable";
+      setResult({ ok: false, reachable: false, error: msg });
+      toast.error(msg);
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <DoorOpen className="h-4 w-4 text-muted-foreground" />
+          BioStar Relay
+        </CardTitle>
+        <CardDescription>
+          The CRM pushes cards & door access to BioStar through an on-premises relay
+          (CORS + self-signed cert solved there). Set its URL above in{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-[11px]">integrations.biostar.relay_url</code>{" "}
+          (e.g. <code className="rounded bg-muted px-1 py-0.5 text-[11px]">https://192.168.1.50:8443</code>),
+          save, then test the connection here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={test} disabled={testing || !url} variant="outline">
+            <RefreshCw className={cn("h-4 w-4", testing && "animate-spin")} />
+            {testing ? "Testing…" : "Test connection"}
+          </Button>
+
+          {result && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="outline"
+                className={cn(
+                  "gap-1",
+                  result.ok
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    : "border-destructive/30 bg-destructive/10 text-destructive",
+                )}
+              >
+                {result.ok ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                {result.ok ? "Relay online" : "Relay offline"}
+              </Badge>
+              <Badge
+                variant="outline"
+                className={cn(
+                  "gap-1",
+                  result.reachable
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                )}
+              >
+                {result.reachable ? "BioStar reachable" : "BioStar not reachable"}
+              </Badge>
+            </div>
+          )}
+        </div>
+
+        {result?.error && <p className="text-xs text-destructive">{result.error}</p>}
+        {result?.biostar && !result.error && (
+          <p className="text-xs text-muted-foreground">BioStar: {result.biostar}</p>
+        )}
+
+        <p className="text-xs text-muted-foreground">
+          Tip: trust the relay&apos;s certificate once per browser — open{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-[11px]">{url || "https://<relay-ip>:8443"}/relay/health</code>{" "}
+          and accept the warning. After that, the CRM&apos;s calls to the relay work.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3 border-t pt-4">
+          <Button variant="outline" render={<a href="/downloads/vision7-biostar-relay.zip" download />}>
+            <Download className="h-4 w-4" />
+            Download relay
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Run it on a premises PC (needs Node 18+): unzip, copy{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">config.env.example</code> →{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">config.env</code> (BioStar host + a login +
+            this CRM&apos;s origin), then run <code className="rounded bg-muted px-1 py-0.5 text-[11px]">start.cmd</code>.
+            Full steps in the README inside.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

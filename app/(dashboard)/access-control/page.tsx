@@ -17,6 +17,19 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  getRelayUrl,
+  relayHealth,
+  listAccessGroups,
+  listDevices,
+  scanCard,
+  assignCardAndAccess,
+  type RelayHealth,
+  type BiostarAccessGroup,
+  type BiostarDevice,
+  type StepResult,
+} from "@/lib/biostar-relay";
 import {
   Card,
   CardContent,
@@ -52,6 +65,11 @@ import {
   Warning,
   Check,
   IdCard,
+  DoorOpen,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  ScanLine,
 } from "@/lib/icons";
 
 // ─── Domain types (loose — backend payloads are `any` in the api client) ────────
@@ -276,6 +294,7 @@ function AccessControlInner() {
                 canManage={canManage}
                 onChanged={refreshDetail}
               />
+              {canManage && <BiostarPanel selected={selected} detail={detail} />}
             </>
           )}
         </div>
@@ -953,6 +972,414 @@ function ReassignCardDialog({
           <Button onClick={submit} disabled={!target || saving}>
             <Unlink className="h-4 w-4" />
             {saving ? "Reassigning…" : "Reassign"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── BioStar door access (Push to BioStar) ───────────────────────────────────────
+//
+// SEPARATE from the local card registry above. This panel talks to BioStar DIRECTLY
+// from the browser, through the on-premises relay (configured in Settings → BioStar).
+// It enrolls a card + grants door access groups in BioStar itself. Gated on
+// accesscontrol:manage (the caller already checks; the panel guards again on render).
+
+/** Keep only digits from a string. */
+function digitsOf(value?: string | null): string {
+  return (value || "").replace(/\D+/g, "");
+}
+
+/** Small stable numeric hash (djb2) → string. Non-empty even for empty input. */
+function numericHash(input: string): string {
+  let h = 5381;
+  for (let i = 0; i < input.length; i++) h = ((h << 5) + h + input.charCodeAt(i)) >>> 0;
+  return String(h || 1);
+}
+
+/**
+ * A stable, non-empty numeric BioStar user_id for a member. Prefers the digits of
+ * their phone, then their ID number; otherwise a numeric hash of subjectKind:subjectId
+ * (always stable for the same person). BioStar user_ids are strings of digits.
+ */
+function stableUserId(m: MemberPick): string {
+  const phone = digitsOf(m.phone);
+  if (phone) return phone;
+  const idn = digitsOf(m.idNumber);
+  if (idn) return idn;
+  return numericHash(`${m.subjectKind}:${m.subjectId}`);
+}
+
+function BiostarPanel({
+  selected,
+  detail,
+}: {
+  selected: MemberPick;
+  detail: MemberDetail | null;
+}) {
+  const [relayUrl, setRelayUrl] = useState<string | null>(null); // null = loading
+  const [health, setHealth] = useState<RelayHealth | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+
+  const checkHealth = useCallback(async (url: string) => {
+    setChecking(true);
+    try {
+      setHealth(await relayHealth(url));
+    } catch {
+      setHealth({ ok: false, reachable: false, error: "Relay unreachable" });
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const url = await getRelayUrl();
+      if (!active) return;
+      setRelayUrl(url);
+      if (url) checkHealth(url);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [checkHealth]);
+
+  const configured = !!relayUrl;
+
+  return (
+    <Card className="border-l-4 border-l-primary/50">
+      <CardHeader>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <DoorOpen className="h-4 w-4 text-muted-foreground" />
+              BioStar door access
+            </CardTitle>
+            <CardDescription>
+              Push this member&apos;s card &amp; door access straight to BioStar via the
+              on-premises relay. Separate from the local card registry above.
+            </CardDescription>
+          </div>
+          {/* Connection chip */}
+          {relayUrl === null ? (
+            <Skeleton className="h-6 w-24" />
+          ) : !configured ? (
+            <Badge variant="outline" className="gap-1 border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+              <WifiOff className="h-3 w-3" />
+              Not configured
+            </Badge>
+          ) : (
+            <button
+              type="button"
+              onClick={() => relayUrl && checkHealth(relayUrl)}
+              title="Re-check relay"
+              className="shrink-0"
+            >
+              <Badge
+                variant="outline"
+                className={cn(
+                  "gap-1",
+                  checking
+                    ? "text-muted-foreground"
+                    : health?.ok
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "border-destructive/30 bg-destructive/10 text-destructive",
+                )}
+              >
+                {checking ? (
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : health?.ok ? (
+                  <Wifi className="h-3 w-3" />
+                ) : (
+                  <WifiOff className="h-3 w-3" />
+                )}
+                {checking ? "Checking…" : health?.ok ? "Relay online" : "Relay offline"}
+              </Badge>
+            </button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {!configured && relayUrl !== null ? (
+          <div className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
+            No BioStar relay configured. Set{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">integrations.biostar.relay_url</code>{" "}
+            in System Settings → BioStar first.
+          </div>
+        ) : (
+          <>
+            <Button
+              onClick={() => setAssignOpen(true)}
+              disabled={!configured || !health?.ok}
+            >
+              <DoorOpen className="h-4 w-4" />
+              Push to BioStar
+            </Button>
+            {health && !health.ok && health.error && (
+              <p className="text-xs text-destructive">{health.error}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Enrolls a card in BioStar, assigns it to{" "}
+              <span className="font-medium">{selected.name}</span>, and grants the chosen
+              door-access groups — all in BioStar itself.
+            </p>
+          </>
+        )}
+      </CardContent>
+
+      {assignOpen && relayUrl && (
+        <BiostarAssignDialog
+          relayUrl={relayUrl}
+          selected={selected}
+          detail={detail}
+          onClose={() => setAssignOpen(false)}
+        />
+      )}
+    </Card>
+  );
+}
+
+// ─── BioStar assign dialog ───────────────────────────────────────────────────────
+
+function BiostarAssignDialog({
+  relayUrl,
+  selected,
+  detail,
+  onClose,
+}: {
+  relayUrl: string;
+  selected: MemberPick;
+  detail: MemberDetail | null;
+  onClose: () => void;
+}) {
+  const userId = stableUserId(selected);
+  const validUntil = detail?.membership?.validUntil ?? undefined;
+
+  const [cardNumber, setCardNumber] = useState("");
+  const [groups, setGroups] = useState<BiostarAccessGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+
+  const [devices, setDevices] = useState<BiostarDevice[]>([]);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [steps, setSteps] = useState<StepResult[] | null>(null);
+
+  // Load access groups for the multi-select.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setGroupsLoading(true);
+      try {
+        const rows = await listAccessGroups(relayUrl);
+        if (active) setGroups(rows);
+      } catch (err) {
+        if (active) toast.error(err instanceof Error ? err.message : "Failed to load access groups");
+      } finally {
+        if (active) setGroupsLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [relayUrl]);
+
+  function toggleGroup(id: string) {
+    setSelectedGroupIds((prev) =>
+      prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id],
+    );
+  }
+
+  async function openScan() {
+    setScanOpen(true);
+    try {
+      setDevices(await listDevices(relayUrl));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load readers");
+    }
+  }
+
+  async function doScan(deviceId: string) {
+    setScanning(true);
+    try {
+      const res = await scanCard(relayUrl, deviceId);
+      if (res.cardId) {
+        setCardNumber(res.cardId);
+        toast.success(`Read card ${res.cardId}`);
+        setScanOpen(false);
+      } else {
+        toast.error("No card read — tap a card on the reader and try again.");
+      }
+    } catch (err) {
+      // scan_card can time out if no card is presented — handle gracefully.
+      toast.error(err instanceof Error ? err.message : "Scan failed or timed out");
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function submit() {
+    if (!cardNumber.trim()) {
+      toast.error("Enter or scan a card number");
+      return;
+    }
+    setSubmitting(true);
+    setSteps(null);
+    try {
+      const result = await assignCardAndAccess({
+        relayUrl,
+        name: selected.name,
+        userId,
+        cardNumber: cardNumber.trim(),
+        accessGroupIds: selectedGroupIds,
+        expiry: validUntil,
+      });
+      setSteps(result);
+      if (result.every((s) => s.ok)) toast.success("Pushed to BioStar");
+      else toast.error("Some steps failed — see details below.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Push failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const allOk = steps !== null && steps.every((s) => s.ok);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Push to BioStar</DialogTitle>
+          <DialogDescription>
+            Enroll a card and grant door access for{" "}
+            <span className="font-medium text-foreground">{selected.name}</span> in BioStar.
+            BioStar user&nbsp;ID{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{userId}</code>
+            {validUntil ? " · expiry from membership" : " · default expiry"}.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Card number + optional scan */}
+          <div className="space-y-2">
+            <Label htmlFor="biostar-card">Card number (CSN)</Label>
+            <div className="flex gap-2">
+              <Input
+                id="biostar-card"
+                value={cardNumber}
+                onChange={(e) => setCardNumber(e.target.value)}
+                placeholder="Printed card number"
+                className="font-mono"
+                autoFocus
+              />
+              <Button type="button" variant="outline" onClick={openScan}>
+                <ScanLine className="h-4 w-4" />
+                Scan
+              </Button>
+            </div>
+
+            {scanOpen && (
+              <div className="rounded-md border bg-muted/30 p-2">
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Pick a reader, then tap the card on it.
+                </p>
+                {devices.length === 0 ? (
+                  <p className="py-2 text-center text-xs text-muted-foreground">
+                    No readers found (or still loading).
+                  </p>
+                ) : (
+                  <div className="max-h-40 space-y-1 overflow-y-auto">
+                    {devices.map((d) => {
+                      const online = String(d.status) === "1";
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          disabled={scanning}
+                          onClick={() => doScan(d.id)}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
+                            scanning && "opacity-60",
+                          )}
+                        >
+                          <span className="truncate">{d.name || d.id}</span>
+                          <Badge variant="outline" className={cn("text-[10px]", online ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
+                            {scanning ? "Scanning…" : online ? "Online" : "Offline"}
+                          </Badge>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Access groups multi-select */}
+          <div className="space-y-2">
+            <Label>Door access groups</Label>
+            {groupsLoading ? (
+              <div className="space-y-1.5">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+              </div>
+            ) : groups.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No access groups found in BioStar.</p>
+            ) : (
+              <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
+                {groups.map((g) => {
+                  const checked = selectedGroupIds.includes(g.id);
+                  return (
+                    <label
+                      key={g.id}
+                      className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted"
+                    >
+                      <Checkbox checked={checked} onCheckedChange={() => toggleGroup(g.id)} />
+                      <span className="truncate">{g.name || g.id}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {selectedGroupIds.length} selected — leave empty to enroll the card without door groups.
+            </p>
+          </div>
+
+          {/* Per-step result */}
+          {steps && (
+            <div className="space-y-1.5 rounded-md border p-3">
+              <p className="text-xs font-medium text-muted-foreground">Result</p>
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  {s.ok ? (
+                    <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <CircleX className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  )}
+                  <span>
+                    <span className="font-medium">{s.label}:</span>{" "}
+                    <span className={cn(!s.ok && "text-destructive")}>{s.message}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>
+            {allOk ? "Close" : "Cancel"}
+          </Button>
+          <Button onClick={submit} disabled={submitting || !cardNumber.trim()}>
+            <DoorOpen className="h-4 w-4" />
+            {submitting ? "Pushing…" : steps ? "Push again" : "Push to BioStar"}
           </Button>
         </DialogFooter>
       </DialogContent>
