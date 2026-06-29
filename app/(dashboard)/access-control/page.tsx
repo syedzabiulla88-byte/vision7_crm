@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   DoorOpen,
+  Edit,
   Search,
   Wifi,
   WifiOff,
@@ -294,7 +295,227 @@ function AccessControlInner() {
           />
         </div>
       </div>
+
+      <ReaderTestPanel canManage={canManage} />
     </div>
+  );
+}
+
+// ─── Readers: test scan + rename ─────────────────────────────────────────────────
+
+interface DeviceRow {
+  id: string;
+  name: string;
+  deviceType?: string | null;
+  status?: string | null;
+  ip?: string | null;
+}
+
+function ReaderTestPanel({ canManage }: { canManage: boolean }) {
+  const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [scanningId, setScanningId] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.accessControl.devices();
+      setDevices(Array.isArray(res) ? res : []);
+    } catch {
+      /* leave empty */
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+  useEffect(
+    () => () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    },
+    [],
+  );
+
+  const testScan = (id: string) => {
+    setResults((r) => ({ ...r, [id]: { ok: false, msg: "Waiting — tap a card on this reader…" } }));
+    setScanningId(id);
+    api.accessControl
+      .scan({ readerId: id })
+      .then(({ jobId }) => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(async () => {
+          try {
+            const job = await api.accessControl.job(jobId);
+            const status = String(job.status).toUpperCase();
+            if (status === "DONE") {
+              if (pollRef.current) clearInterval(pollRef.current);
+              setScanningId(null);
+              const cardId = job.result?.cardId || job.result?.card_id || null;
+              setResults((r) => ({
+                ...r,
+                [id]: cardId ? { ok: true, msg: `Card ${cardId}` } : { ok: false, msg: "No card returned" },
+              }));
+            } else if (status === "FAILED") {
+              if (pollRef.current) clearInterval(pollRef.current);
+              setScanningId(null);
+              setResults((r) => ({ ...r, [id]: { ok: false, msg: job.error || "Scan failed / timed out" } }));
+            }
+          } catch {
+            /* transient poll error */
+          }
+        }, 1500);
+      })
+      .catch((err) => {
+        setScanningId(null);
+        setResults((r) => ({
+          ...r,
+          [id]: { ok: false, msg: err instanceof Error ? err.message : "Failed to start scan" },
+        }));
+      });
+  };
+
+  const saveRename = async (id: string) => {
+    const name = editName.trim();
+    if (!name) return;
+    try {
+      await api.accessControl.renameDevice(id, name);
+      setDevices((ds) => ds.map((d) => (d.id === id ? { ...d, name } : d)));
+      setEditingId(null);
+      toast.success("Device renamed");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Rename failed");
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <DoorOpen className="h-4 w-4 text-muted-foreground" />
+          Readers — test &amp; rename
+        </CardTitle>
+        <CardDescription>
+          Check which readers can scan a card (click <strong>Test scan</strong>, then tap a card on that
+          reader within a few seconds), and rename devices. Renaming is cosmetic — it applies even in dry-run.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        {loading ? (
+          <div className="space-y-2 p-5">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : devices.length === 0 ? (
+          <div className="p-5">
+            <EmptyState
+              icon={<DoorOpen className="h-6 w-6 text-muted-foreground" />}
+              title="No readers yet"
+              description="Start the on-premise agent — it syncs your readers here within ~15 seconds."
+            />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reader</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>IP</TableHead>
+                  <TableHead className="text-right">Test scan</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {devices.map((d) => {
+                  const res = results[d.id];
+                  const isScanning = scanningId === d.id;
+                  const online = String(d.status) === "1";
+                  return (
+                    <TableRow key={d.id}>
+                      <TableCell>
+                        {editingId === d.id ? (
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              className="h-8 w-52"
+                              autoFocus
+                            />
+                            <Button size="sm" onClick={() => saveRename(d.id)}>
+                              Save
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{d.name}</span>
+                            <span className="font-mono text-xs text-muted-foreground">{d.id}</span>
+                            {canManage && (
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingId(d.id);
+                                  setEditName(d.name);
+                                }}
+                                aria-label={`Rename ${d.name}`}
+                              >
+                                <Edit className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{d.deviceType || "—"}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            online
+                              ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {online ? "Online" : "Offline"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{d.ip || "—"}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex flex-col items-end gap-1">
+                          {canManage && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isScanning}
+                              onClick={() => testScan(d.id)}
+                            >
+                              {isScanning ? "Scanning…" : "Test scan"}
+                            </Button>
+                          )}
+                          {res && (
+                            <span className={cn("text-xs", res.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+                              {res.ok ? "✓ " : "✕ "}
+                              {res.msg}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

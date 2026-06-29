@@ -405,6 +405,17 @@ export const api = {
       apiFetch<Array<{ id: string; name: string; deviceId?: string | null; lastSyncedAt?: string | null }>>(
         `/access-control/doors`,
       ),
+    // Cached BioStar devices/readers (reader test + rename panel).
+    devices: () =>
+      apiFetch<Array<{ id: string; name: string; deviceType?: string | null; status?: string | null; ip?: string | null; lastSyncedAt?: string | null }>>(
+        `/access-control/devices`,
+      ),
+    // Rename a device (cosmetic). Queues the hardware rename + updates the cache.
+    renameDevice: (id: string, name: string) =>
+      apiFetch<any>(`/access-control/devices/${id}/rename`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      }),
     // Searchable member picker (athletes + crm contacts + family who hold memberships).
     members: (params?: Params) => apiFetch<any>(`/access-control/members${qs(params)}`),
     // Full access detail for one subject: subject, membership gate, biostar link, cards.
