@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
-import { StatCard } from "@/components/shared/stat-card";
 import { PermissionGate } from "@/components/shared/permission-gate";
 import { Pagination } from "@/components/shared/pagination";
 import { Button } from "@/components/ui/button";
@@ -137,18 +136,6 @@ export default function PaymentsLedgerPage() {
     load();
   }, [load]);
 
-  // Stat cards are computed from the loaded page (kept simple per spec).
-  const totals = useMemo(() => {
-    let collected = 0;
-    let refunded = 0;
-    for (const p of rows) {
-      const amt = Number(p.amount || 0);
-      if (p.isRefund) refunded += amt;
-      else collected += amt;
-    }
-    return { collected, refunded, net: collected - refunded };
-  }, [rows]);
-
   const hasFilters =
     methodFilter !== "ALL" || typeFilter !== "ALL" || Boolean(fromDate) || Boolean(toDate);
 
@@ -182,12 +169,6 @@ export default function PaymentsLedgerPage() {
             </Button>
           }
         />
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <StatCard label="Total collected" value={formatSAR(totals.collected)} hue="emerald" />
-          <StatCard label="Total refunded" value={formatSAR(totals.refunded)} hue="rose" />
-          <StatCard label="Net" value={formatSAR(totals.net)} hue="navy" />
-        </div>
 
         <Card>
           <CardContent className="space-y-4">

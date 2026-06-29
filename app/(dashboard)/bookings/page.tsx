@@ -320,7 +320,6 @@ export default function BookingsPage() {
     return cursor.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
   }, [view, cursor, range.from, range.to]);
 
-  const totalRevenue = bookings.reduce((s, b) => s + Number(b.totalPrice || 0), 0);
   const pending = bookings.filter((b) => String(b.status).toUpperCase() === "PENDING").length;
 
   return (
@@ -421,7 +420,6 @@ export default function BookingsPage() {
           hue="navy"
           icon={<Calendar className="h-6 w-6" />}
         />
-        <StatCard label="Potential revenue" value={formatSAR(totalRevenue)} hue="emerald" />
         <StatCard
           label="Pending approval"
           value={pending}

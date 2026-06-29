@@ -3693,7 +3693,7 @@ function AssignMembershipDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <form onSubmit={submit} className="flex max-h-[90vh] flex-col">
           <DialogHeader className="border-b p-6">
             <DialogTitle>Assign Membership</DialogTitle>
@@ -3705,9 +3705,11 @@ function AssignMembershipDialog({
           {loading ? (
             <div className="p-10 text-center text-muted-foreground">Loading…</div>
           ) : (
-            <div className="flex-1 space-y-5 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
               {/* Searchable contact picker — one search over all contacts. The
                   chosen plan decides whether an athlete is created/used. */}
+              <div className="sm:col-span-2">
               <Field label="Member / contact *" htmlFor="am-subject-search">
                 {subject ? (
                   <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2">
@@ -3792,11 +3794,12 @@ function AssignMembershipDialog({
                   </div>
                 )}
               </Field>
+              </div>
 
               {/* Duplicate-assign warning — a person CAN hold multiple
                   memberships, so this is a deliberate confirm, not a hard block. */}
               {subject && needsDuplicateConfirm && (
-                <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+                <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm sm:col-span-2">
                   <p className="flex items-start gap-2 text-amber-700 dark:text-amber-400">
                     <Warning className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>
@@ -3817,9 +3820,10 @@ function AssignMembershipDialog({
                 </div>
               )}
               {subject && checkingExisting && (
-                <p className="text-xs text-muted-foreground">Checking existing memberships…</p>
+                <p className="text-xs text-muted-foreground sm:col-span-2">Checking existing memberships…</p>
               )}
 
+              <div className="sm:col-span-2">
               <Field label="Plan *">
                 <SelectField
                   value={planId}
@@ -3828,8 +3832,11 @@ function AssignMembershipDialog({
                   placeholder="Select plan…"
                 />
               </Field>
+              </div>
 
-              <div className="space-y-3">
+              {/* ID note spans full width; the four ID Fields below sit
+                  directly in the outer grid as their own cells. */}
+              <div className="space-y-3 sm:col-span-2">
                 {needsId ? (
                   <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     This member has no ID on file — an ID number <strong>and</strong> ID
@@ -3840,77 +3847,58 @@ function AssignMembershipDialog({
                     ✓ ID already on file — update below only if needed (optional).
                   </p>
                 ) : null}
-                <div className="grid grid-cols-2 gap-4">
-                  <Field label="ID type">
-                    <SelectField
-                      value={idType}
-                      onChange={setIdType}
-                      options={ID_TYPE_OPTIONS}
-                    />
-                  </Field>
-                  <Field label={needsId ? "ID number *" : "ID number"} htmlFor="am-idnum">
-                    <Input
-                      id="am-idnum"
-                      className="font-mono"
-                      value={idNumber}
-                      onChange={(e) => setIdNumber(e.target.value)}
-                      placeholder="e.g. 1234567890"
-                    />
-                  </Field>
-                </div>
-                <Field label="ID expiry date (optional)" htmlFor="am-idexpiry">
-                  <Input
-                    id="am-idexpiry"
-                    type="date"
-                    value={idExpiry}
-                    onChange={(e) => setIdExpiry(e.target.value)}
-                  />
-                </Field>
-                <Field
-                  label={needsId ? "ID document (image or PDF) *" : "ID document (image or PDF)"}
-                >
-                  <KycUploadInput
-                    busy={idUploading}
-                    url={idDocumentUrl}
-                    onSelect={(file) => uploadIdDoc(file)}
-                    onClear={() => setIdDocumentUrl("")}
-                  />
-                </Field>
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Start date" htmlFor="am-start">
-                  <Input
-                    id="am-start"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
-                </Field>
-                <Field label="End date" htmlFor="am-end">
-                  <Input
-                    id="am-end"
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </Field>
-              </div>
-
-              <Field label="Notes" htmlFor="am-notes">
-                <Textarea
-                  id="am-notes"
-                  rows={3}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Internal notes (optional)"
+              <Field label="ID type">
+                <SelectField
+                  value={idType}
+                  onChange={setIdType}
+                  options={ID_TYPE_OPTIONS}
+                />
+              </Field>
+              <Field label={needsId ? "ID number *" : "ID number"} htmlFor="am-idnum">
+                <Input
+                  id="am-idnum"
+                  className="font-mono"
+                  value={idNumber}
+                  onChange={(e) => setIdNumber(e.target.value)}
+                  placeholder="e.g. 1234567890"
+                />
+              </Field>
+              <Field label="ID expiry date (optional)" htmlFor="am-idexpiry">
+                <Input
+                  id="am-idexpiry"
+                  type="date"
+                  value={idExpiry}
+                  onChange={(e) => setIdExpiry(e.target.value)}
+                />
+              </Field>
+              <Field
+                label={needsId ? "ID document (image or PDF) *" : "ID document (image or PDF)"}
+              >
+                <KycUploadInput
+                  busy={idUploading}
+                  url={idDocumentUrl}
+                  onSelect={(file) => uploadIdDoc(file)}
+                  onClear={() => setIdDocumentUrl("")}
                 />
               </Field>
 
-              <div className="flex items-center gap-3">
-                <Switch id="am-autorenew" checked={autoRenew} onCheckedChange={(v) => setAutoRenew(!!v)} />
-                <Label htmlFor="am-autorenew">Auto-renew at end date</Label>
-              </div>
+              <Field label="Start date" htmlFor="am-start">
+                <Input
+                  id="am-start"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+              </Field>
+              <Field label="End date" htmlFor="am-end">
+                <Input
+                  id="am-end"
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </Field>
 
               <Field label="Assigned trainer (PT)">
                 <ComboField
@@ -3921,7 +3909,25 @@ function AssignMembershipDialog({
                 />
               </Field>
 
+              <div className="flex items-center gap-3">
+                <Switch id="am-autorenew" checked={autoRenew} onCheckedChange={(v) => setAutoRenew(!!v)} />
+                <Label htmlFor="am-autorenew">Auto-renew at end date</Label>
+              </div>
+
+              <div className="sm:col-span-2">
+              <Field label="Notes" htmlFor="am-notes">
+                <Textarea
+                  id="am-notes"
+                  rows={3}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Internal notes (optional)"
+                />
+              </Field>
+              </div>
+
               {/* Billing — every membership is billed; no free passes. */}
+              <div className="sm:col-span-2">
               {planId
                 ? (() => {
                     const sp = plans.find((p) => p.id === planId);
@@ -4092,12 +4098,13 @@ function AssignMembershipDialog({
                     );
                   })()
                 : null}
+              </div>
 
               {/* Athlete details — academy plans require an athlete. When the
                   chosen contact has no linked athlete yet, capture details to
                   provision one (with an app login) and tie the membership to it. */}
               {needsAthleteDetails && (
-                <div className="space-y-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
+                <div className="space-y-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm sm:col-span-2">
                   <div>
                     <p className="font-medium text-foreground">Athlete details</p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -4146,11 +4153,12 @@ function AssignMembershipDialog({
               )}
 
               {requiresAthlete && linkedAthleteId && (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground sm:col-span-2">
                   Academy plan — this membership will be tied to the contact&apos;s existing athlete
                   profile.
                 </p>
               )}
+              </div>
             </div>
           )}
 

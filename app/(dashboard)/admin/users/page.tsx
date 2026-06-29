@@ -356,7 +356,11 @@ export default function UsersDirectoryPage() {
               </SelectContent>
             </Select>
             {roles.length > 0 && (
-              <Select value={roleId} onValueChange={(v) => { setPage(1); setRoleId(v ?? NO_CUSTOM_ROLE); }}>
+              <Select
+                items={[{ value: NO_CUSTOM_ROLE, label: "All custom roles" }, ...roles.map((r) => ({ value: r.id, label: r.name }))]}
+                value={roleId}
+                onValueChange={(v) => { setPage(1); setRoleId(v ?? NO_CUSTOM_ROLE); }}
+              >
                 <SelectTrigger className="w-full lg:w-48" aria-label="Filter by custom role">
                   <SelectValue />
                 </SelectTrigger>
@@ -744,6 +748,7 @@ function UserFormDialog({
               Custom role
             </Label>
             <Select
+              items={[{ value: NO_CUSTOM_ROLE, label: "No custom role" }, ...roles.map((r) => ({ value: r.id, label: r.name }))]}
               value={form.roleId}
               onValueChange={(v) => set("roleId", v ?? NO_CUSTOM_ROLE)}
               disabled={roles.length === 0}

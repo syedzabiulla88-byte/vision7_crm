@@ -391,18 +391,25 @@ export default function AccountingPage() {
               </p>
             ) : (
               <div className="max-h-96 divide-y divide-border overflow-y-auto pr-1">
-                {expirations.map((m: any) => (
+                {expirations.map((m: any) => {
+                  // A membership belongs to an athlete (academy), a crmContact
+                  // (leisure/walk-in) or a user — resolve a name from whichever exists.
+                  const owner = m.athlete ?? m.crmContact ?? null;
+                  const name = owner
+                    ? `${owner.firstName ?? ""} ${owner.lastName ?? ""}`.trim()
+                    : (m.user?.name ?? "").trim();
+                  const display = name || "—";
+                  const initial = (display !== "—" ? display.charAt(0) : "?").toUpperCase();
+                  return (
                   <div key={m.id} className="flex items-center gap-3 py-3">
                     <Avatar className="h-8 w-8">
                       <AvatarFallback className="text-[10px] font-semibold">
-                        {(m.athlete?.firstName?.charAt(0) || "?").toUpperCase()}
+                        {initial}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">
-                        {m.athlete
-                          ? `${m.athlete.firstName} ${m.athlete.lastName ?? ""}`.trim()
-                          : "—"}
+                        {display}
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
                         {m.plan?.name || "—"}
@@ -415,7 +422,8 @@ export default function AccountingPage() {
                       <p className="text-xs font-medium">{formatDate(m.endDate)}</p>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

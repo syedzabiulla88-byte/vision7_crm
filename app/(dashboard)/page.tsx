@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { api } from "@/lib/api";
 import { useAuth } from "@/components/providers/auth-provider";
+import { usePermissions } from "@/components/hooks/use-permissions";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
@@ -85,6 +86,8 @@ function formatTime(iso?: string): string {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { can } = usePermissions();
+  const canRevenue = can("dashboard:revenue");
   const firstName = user?.name?.split(" ")[0] || "there";
 
   const [data, setData] = useState<Overview | null>(null);
@@ -147,20 +150,24 @@ export default function DashboardPage() {
         <>
           {/* Top row — money + the two things that need attention now */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              label="Total billed"
-              value={SAR(revenue?.total)}
-              hint={`${num(revenue?.invoices)} invoices · ${SAR(revenue?.paid)} paid`}
-              hue="emerald"
-              icon={<TrendUp className="h-6 w-6" />}
-            />
-            <StatCard
-              label="Outstanding"
-              value={SAR(outstanding)}
-              hint={outstanding > 0 ? "Awaiting payment" : "All settled"}
-              hue={outstanding > 0 ? "amber" : "navy"}
-              icon={<FileText className="h-6 w-6" />}
-            />
+            {canRevenue && (
+              <StatCard
+                label="Total billed"
+                value={SAR(revenue?.total)}
+                hint={`${num(revenue?.invoices)} invoices · ${SAR(revenue?.paid)} paid`}
+                hue="emerald"
+                icon={<TrendUp className="h-6 w-6" />}
+              />
+            )}
+            {canRevenue && (
+              <StatCard
+                label="Outstanding"
+                value={SAR(outstanding)}
+                hint={outstanding > 0 ? "Awaiting payment" : "All settled"}
+                hue={outstanding > 0 ? "amber" : "navy"}
+                icon={<FileText className="h-6 w-6" />}
+              />
+            )}
             <StatCard
               label="Active memberships"
               value={num(memberships?.active)}
@@ -235,6 +242,7 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
 
+            {canRevenue && (
             <Card>
               <CardContent className="space-y-4 py-2">
                 <div className="flex items-center justify-between">
@@ -271,6 +279,7 @@ export default function DashboardPage() {
                 )}
               </CardContent>
             </Card>
+            )}
           </div>
 
           {/* Quick links into the rest of the control plane */}

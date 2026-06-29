@@ -1,12 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
-import { StatCard } from "@/components/shared/stat-card";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PermissionGate } from "@/components/shared/permission-gate";
 import { usePermissions } from "@/components/hooks/use-permissions";
@@ -68,7 +67,6 @@ import {
   formatSAR,
   formatDate,
   getBalance,
-  getPaid,
   getTotal,
   invoiceNo,
   statusBadgeClass,
@@ -152,21 +150,6 @@ export default function InvoicesPage() {
   // Filters are applied server-side; render the returned page directly.
   const filtered = invoices;
 
-  // Totals reflect the current page so the cards stay meaningful.
-  const totals = useMemo(() => {
-    let total = 0;
-    let paid = 0;
-    for (const inv of filtered) {
-      total += getTotal(inv);
-      paid += getPaid(inv);
-    }
-    return {
-      total,
-      paid,
-      outstanding: Math.max(total - paid, 0),
-      count: meta?.total ?? filtered.length,
-    };
-  }, [filtered, meta]);
 
   // Row actions that fire immediately (no confirmation step). Each reloads the
   // list on success and surfaces the error message on failure.
@@ -254,13 +237,6 @@ export default function InvoicesPage() {
           </PermissionGate>
         }
       />
-
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <StatCard label="Invoices" value={totals.count} hue="navy" />
-        <StatCard label="Total" value={formatSAR(totals.total)} hue="navy" />
-        <StatCard label="Paid" value={formatSAR(totals.paid)} hue="emerald" />
-        <StatCard label="Outstanding" value={formatSAR(totals.outstanding)} hue="yellow" />
-      </div>
 
       <Card>
         <CardContent className="space-y-4">

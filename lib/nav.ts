@@ -22,7 +22,7 @@ export interface NavGroup {
 export const NAV: NavGroup[] = [
   {
     label: "Overview",
-    items: [{ label: "Dashboard", href: "/", icon: "LayoutGrid" }],
+    items: [{ label: "Dashboard", href: "/", icon: "LayoutGrid", permission: "dashboard:view" }],
   },
   {
     label: "Sales & CRM",
