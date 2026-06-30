@@ -202,6 +202,25 @@ export async function createUser(
 }
 
 /**
+ * PUT /api/users/{id} — refresh an existing BioStar user's name + validity window so
+ * BioStar stays in sync with the CRM (a renamed member, or a renewed membership whose
+ * expiry moved). A partial PUT — only the fields we manage; cards/groups are untouched.
+ */
+export async function updateUser(
+  relayUrl: string,
+  args: { name: string; userId: string; expiry?: string },
+): Promise<void> {
+  const body = {
+    User: {
+      name: args.name,
+      start_datetime: START_DATETIME,
+      expiry_datetime: toBiostarExpiry(args.expiry),
+    },
+  };
+  await relayFetch(relayUrl, `/api/users/${encodeURIComponent(args.userId)}`, { method: "PUT", body });
+}
+
+/**
  * POST /api/cards — enroll a CSN card by its printed number.
  * Returns the BioStar card id (CardCollection.rows[0].id) needed to assign it.
  */
@@ -321,7 +340,9 @@ export async function assignCardAndAccess(args: AssignArgs): Promise<StepResult[
   try {
     const exists = await findUser(relayUrl, userId);
     if (exists) {
-      steps.push({ label: "User", ok: true, message: `User ${userId} already exists` });
+      // Keep BioStar in sync: refresh the name + validity window on every push.
+      await updateUser(relayUrl, { name, userId, expiry: expiry || undefined });
+      steps.push({ label: "User", ok: true, message: `Updated user ${userId}` });
     } else {
       await createUser(relayUrl, { name, userId, expiry: expiry || undefined });
       steps.push({ label: "User", ok: true, message: `Created user ${userId}` });
