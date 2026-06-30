@@ -186,8 +186,8 @@ export async function findUser(relayUrl: string, userId: string): Promise<boolea
 export interface BiostarUserState {
   exists: boolean;
   name?: string;
-  /** Printed card numbers currently on the user. */
-  cards: string[];
+  /** Cards currently on the user — BioStar card id (for revoke) + printed number (to show). */
+  cards: { id: string; number: string }[];
   /** Access-group ids + names the user currently belongs to. */
   accessGroupIds: string[];
   accessGroupNames: string[];
@@ -203,7 +203,7 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
     const res = await relayFetch<{
       User?: {
         name?: string;
-        cards?: Array<{ card_id?: string; display_card_id?: string }>;
+        cards?: Array<{ id?: string; card_id?: string; display_card_id?: string }>;
         access_groups?: Array<{ id?: string; name?: string }>;
         expiry_datetime?: string;
       };
@@ -212,7 +212,9 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
     return {
       exists: true,
       name: u.name,
-      cards: (u.cards || []).map((c) => String(c.display_card_id ?? c.card_id ?? "")).filter(Boolean),
+      cards: (u.cards || [])
+        .map((c) => ({ id: String(c.id ?? ""), number: String(c.display_card_id ?? c.card_id ?? "") }))
+        .filter((c) => c.number),
       accessGroupIds: (u.access_groups || []).map((g) => String(g.id ?? "")).filter(Boolean),
       accessGroupNames: (u.access_groups || []).map((g) => String(g.name ?? g.id ?? "")).filter(Boolean),
       expiry: u.expiry_datetime,
@@ -330,6 +332,22 @@ export async function grantAccessGroups(
 /** PUT /api/users/{id} with cards:[] — remove the card(s) from the user. */
 export async function revokeUserCards(relayUrl: string, userId: string): Promise<void> {
   const body = { User: { cards: [] } };
+  await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
+}
+
+/**
+ * PUT /api/users/{id} — remove ONE card from the user, leaving the rest.
+ * PUT cards is REPLACE-semantics (verified), so we read the current cards and write back
+ * all of them EXCEPT the one being revoked (empty array when it was the last card).
+ */
+export async function revokeUserCard(
+  relayUrl: string,
+  userId: string,
+  biostarCardId: string,
+): Promise<void> {
+  const u = await getBiostarUser(relayUrl, userId);
+  const remaining = u.cards.filter((c) => c.id !== biostarCardId).map((c) => ({ id: c.id }));
+  const body = { User: { cards: remaining } };
   await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
 }
 

@@ -26,6 +26,7 @@ import {
   scanCard,
   assignCardAndAccess,
   getBiostarUser,
+  revokeUserCard,
   type RelayHealth,
   type BiostarAccessGroup,
   type BiostarDevice,
@@ -58,12 +59,9 @@ import {
 import {
   Search,
   CreditCard,
-  Repeat,
-  Unlink,
   Ban,
   CircleCheck,
   CircleX,
-  CircleDot,
   Warning,
   Check,
   IdCard,
@@ -195,6 +193,58 @@ function statusPillClass(status: unknown): string {
   }
 }
 
+// ─── Shared BioStar relay state ──────────────────────────────────────────────────
+//
+// The relay URL + health are needed by BOTH the "Access cards" panel (now BioStar-backed)
+// and the "BioStar door access" panel. This hook reads the configured relay URL once and
+// probes its health, exposing `online` (health.ok) + a `recheck()` so a single fetch feeds
+// both panels instead of each fetching its own.
+
+interface BiostarRelay {
+  /** null = still loading; "" = not configured. */
+  relayUrl: string | null;
+  health: RelayHealth | null;
+  checking: boolean;
+  online: boolean;
+  recheck: () => void;
+}
+
+function useBiostarRelay(): BiostarRelay {
+  const [relayUrl, setRelayUrl] = useState<string | null>(null); // null = loading
+  const [health, setHealth] = useState<RelayHealth | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const checkHealth = useCallback(async (url: string) => {
+    setChecking(true);
+    try {
+      setHealth(await relayHealth(url));
+    } catch {
+      setHealth({ ok: false, reachable: false, error: "Relay unreachable" });
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const url = await getRelayUrl();
+      if (!active) return;
+      setRelayUrl(url);
+      if (url) checkHealth(url);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [checkHealth]);
+
+  const recheck = useCallback(() => {
+    if (relayUrl) checkHealth(relayUrl);
+  }, [relayUrl, checkHealth]);
+
+  return { relayUrl, health, checking, online: Boolean(health?.ok), recheck };
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AccessControlPage() {
@@ -227,6 +277,7 @@ export default function AccessControlPage() {
 function AccessControlInner() {
   const { can } = usePermissions();
   const canManage = can("accesscontrol:manage");
+  const relay = useBiostarRelay();
 
   const [selected, setSelected] = useState<MemberPick | null>(null);
   const [detail, setDetail] = useState<MemberDetail | null>(null);
@@ -292,11 +343,10 @@ function AccessControlInner() {
               <CardsPanel
                 detail={detail}
                 selected={selected}
-                loading={detailLoading}
                 canManage={canManage}
-                onChanged={refreshDetail}
+                relay={relay}
               />
-              {canManage && <BiostarPanel selected={selected} detail={detail} />}
+              {canManage && <BiostarPanel selected={selected} detail={detail} relay={relay} />}
             </>
           )}
         </div>
@@ -591,35 +641,65 @@ function MembershipGatePanel({
   );
 }
 
-// ─── Cards panel (Assign / Reassign / Revoke) ────────────────────────────────────
+// ─── Access cards panel (BioStar-backed — single source of truth) ─────────────────
+//
+// BioStar is the SOURCE OF TRUTH for a member's cards. This panel reads the member's
+// real BioStar cards through the relay and lets staff Assign / Revoke directly on
+// BioStar. It no longer touches the local-DB card registry.
 
 function CardsPanel({
   detail,
   selected,
-  loading,
   canManage,
-  onChanged,
+  relay,
 }: {
   detail: MemberDetail | null;
   selected: MemberPick;
-  loading: boolean;
   canManage: boolean;
-  onChanged: () => void;
+  relay: BiostarRelay;
 }) {
-  const cards = detail?.cards ?? [];
-  const [issueOpen, setIssueOpen] = useState(false);
-  const [reassignTarget, setReassignTarget] = useState<AccessCard | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<AccessCard | null>(null);
+  const { relayUrl, online } = relay;
+  const userId = stableUserId(selected);
+
+  const [cards, setCards] = useState<BiostarUserState["cards"]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<BiostarUserState["cards"][number] | null>(null);
   const [revoking, setRevoking] = useState(false);
 
+  const canTalkToBiostar = Boolean(relayUrl) && online;
+
+  const load = useCallback(async () => {
+    if (!relayUrl || !online) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const u = await getBiostarUser(relayUrl, userId);
+      setCards(u.cards);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't read BioStar cards");
+      setCards([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [relayUrl, online, userId]);
+
+  // (Re)load whenever the member changes or the relay comes online.
+  useEffect(() => {
+    if (canTalkToBiostar) load();
+    else setCards([]);
+  }, [canTalkToBiostar, load]);
+
   const confirmRevoke = async () => {
-    if (!revokeTarget) return;
+    if (!revokeTarget || !relayUrl) return;
     setRevoking(true);
     try {
-      await api.accessControl.revokeCard(revokeTarget.id);
-      toast.success("Card revoked");
+      await revokeUserCard(relayUrl, userId, revokeTarget.id);
+      toast.success(`Card ${revokeTarget.number} revoked`);
       setRevokeTarget(null);
-      onChanged();
+      await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to revoke card");
     } finally {
@@ -634,11 +714,11 @@ function CardsPanel({
           <div>
             <CardTitle className="text-base">Access cards</CardTitle>
             <CardDescription>
-              Cards held by {selected.name}. Assign, reassign or revoke.
+              {selected.name}&apos;s cards in BioStar. Assign or revoke — BioStar is the source of truth.
             </CardDescription>
           </div>
-          {canManage && (
-            <Button size="sm" onClick={() => setIssueOpen(true)}>
+          {canManage && canTalkToBiostar && (
+            <Button size="sm" onClick={() => setAssignOpen(true)}>
               <CreditCard className="h-4 w-4" />
               Assign card
             </Button>
@@ -646,15 +726,33 @@ function CardsPanel({
         </div>
       </CardHeader>
       <CardContent>
-        {loading && !detail ? (
+        {relayUrl === null ? (
           <div className="space-y-2">
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
+        ) : !canTalkToBiostar ? (
+          <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
+            BioStar relay isn&apos;t {relayUrl ? "online" : "configured"} — set it in{" "}
+            <span className="font-medium">Settings → BioStar</span>.
+          </div>
+        ) : loading && cards.length === 0 ? (
+          <div className="space-y-2">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        ) : error ? (
+          <div className="space-y-2 rounded-md border border-dashed py-6 text-center text-sm">
+            <p className="text-destructive">{error}</p>
+            <Button variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="h-4 w-4" />
+              Retry
+            </Button>
+          </div>
         ) : cards.length === 0 ? (
           <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
-            No cards assigned to this member yet.
-            {canManage && " Use “Assign card” to record one."}
+            No cards in BioStar yet.
+            {canManage && " Use “Assign card” to add one."}
           </div>
         ) : (
           <div className="rounded-md border">
@@ -662,93 +760,45 @@ function CardsPanel({
               <TableHeader>
                 <TableRow>
                   <TableHead>Card</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Issued</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {cards.map((c) => {
-                  const active = String(c.status).toUpperCase() === "ACTIVE";
-                  return (
-                    <TableRow key={c.id}>
-                      <TableCell className="font-mono text-xs">
-                        {c.displayCardId || c.cardId}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {c.cardType || "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={active ? "default" : "outline"}
-                          className={cn("gap-1", !active && "text-muted-foreground")}
-                        >
-                          {active ? (
-                            <CircleDot className="h-3 w-3" />
-                          ) : (
-                            <Ban className="h-3 w-3" />
-                          )}
-                          {c.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {formatDate(c.issuedAt)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-1">
-                          {canManage && (
-                            <>
-                              <Button
-                                variant="outline"
-                                size="icon-sm"
-                                onClick={() => setReassignTarget(c)}
-                                title="Reassign card"
-                                aria-label="Reassign card"
-                              >
-                                <Unlink />
-                              </Button>
-                              <Button
-                                variant="destructive"
-                                size="icon-sm"
-                                onClick={() => setRevokeTarget(c)}
-                                disabled={!active}
-                                title="Revoke card"
-                                aria-label="Revoke card"
-                              >
-                                <Ban />
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {cards.map((c) => (
+                  <TableRow key={c.id || c.number}>
+                    <TableCell className="font-mono text-xs">{c.number}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        {canManage && (
+                          <Button
+                            variant="destructive"
+                            size="icon-sm"
+                            onClick={() => setRevokeTarget(c)}
+                            title="Revoke card"
+                            aria-label="Revoke card"
+                          >
+                            <Ban />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
         )}
       </CardContent>
 
-      {issueOpen && (
-        <AssignCardDialog
-          subject={selected}
-          onClose={() => setIssueOpen(false)}
+      {assignOpen && relayUrl && (
+        <CardsAssignDialog
+          relayUrl={relayUrl}
+          selected={selected}
+          detail={detail}
+          onClose={() => setAssignOpen(false)}
           onDone={() => {
-            setIssueOpen(false);
-            onChanged();
-          }}
-        />
-      )}
-
-      {reassignTarget && (
-        <ReassignCardDialog
-          card={reassignTarget}
-          onClose={() => setReassignTarget(null)}
-          onDone={() => {
-            setReassignTarget(null);
-            onChanged();
+            setAssignOpen(false);
+            load();
           }}
         />
       )}
@@ -757,9 +807,7 @@ function CardsPanel({
         open={!!revokeTarget}
         onOpenChange={(o) => !o && setRevokeTarget(null)}
         title="Revoke card"
-        description={`Revoke card ${
-          revokeTarget?.displayCardId || revokeTarget?.cardId || ""
-        }? It will be marked disabled in the registry.`}
+        description={`Revoke card ${revokeTarget?.number || ""} from ${selected.name} in BioStar?`}
         confirmLabel="Revoke"
         variant="destructive"
         loading={revoking}
@@ -769,42 +817,99 @@ function CardsPanel({
   );
 }
 
-// ─── Assign card dialog (manual entry) ───────────────────────────────────────────
+// ─── Assign card dialog (BioStar-backed) ──────────────────────────────────────────
+//
+// Enrolls + assigns a card to the member IN BIOSTAR via the relay. Card-number entry
+// plus a Scan option (read off a reader). Door groups are untouched (applyGroups: false).
 
-function AssignCardDialog({
-  subject,
+function CardsAssignDialog({
+  relayUrl,
+  selected,
+  detail,
   onClose,
   onDone,
 }: {
-  subject: MemberPick;
+  relayUrl: string;
+  selected: MemberPick;
+  detail: MemberDetail | null;
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [cardId, setCardId] = useState("");
-  const [cardType, setCardType] = useState("");
-  const [saving, setSaving] = useState(false);
+  const userId = stableUserId(selected);
+  const validUntil = detail?.membership?.validUntil ?? undefined;
 
-  const submit = async () => {
-    if (!cardId.trim()) {
-      toast.error("Enter a card number");
+  const [cardNumber, setCardNumber] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [steps, setSteps] = useState<StepResult[] | null>(null);
+
+  const [devices, setDevices] = useState<BiostarDevice[]>([]);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  async function openScan() {
+    setScanOpen(true);
+    try {
+      setDevices(await listDevices(relayUrl));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load readers");
+    }
+  }
+
+  async function doScan(deviceId: string) {
+    setScanning(true);
+    try {
+      const res = await scanCard(relayUrl, deviceId);
+      if (res.cardId) {
+        setCardNumber(res.cardId);
+        toast.success(`Read card ${res.cardId}`);
+        setScanOpen(false);
+      } else {
+        console.warn("scan_card returned no card id; raw response:", res.raw);
+        toast.error("Reader returned no card. Tap again, or type the number below.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Scan failed";
+      toast.error(
+        /not respond|timeout/i.test(msg)
+          ? "Reader timed out — click Scan and tap the card within a few seconds."
+          : msg,
+      );
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function submit() {
+    const card = cardNumber.trim();
+    if (!card) {
+      toast.error("Enter or scan a card number");
       return;
     }
     setSaving(true);
+    setSteps(null);
     try {
-      await api.accessControl.issueCard({
-        subjectKind: subject.subjectKind,
-        subjectId: subject.subjectId,
-        cardId: cardId.trim(),
-        ...(cardType.trim() ? { cardType: cardType.trim() } : {}),
+      const result = await assignCardAndAccess({
+        relayUrl,
+        name: selected.name,
+        userId,
+        cardNumber: card,
+        accessGroupIds: [],
+        applyGroups: false, // door groups are managed in the BioStar door-access panel
+        expiry: validUntil,
       });
-      toast.success("Card assigned");
-      onDone();
+      setSteps(result);
+      if (result.every((s) => s.ok)) {
+        toast.success("Card assigned in BioStar");
+        onDone();
+      } else {
+        toast.error("Some steps failed — see details below.");
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to assign card");
     } finally {
       setSaving(false);
     }
-  };
+  }
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -812,158 +917,85 @@ function AssignCardDialog({
         <DialogHeader>
           <DialogTitle>Assign card</DialogTitle>
           <DialogDescription>
-            Record a card number for {subject.name}. Door permissions are configured
-            separately in BioStar&apos;s own software.
+            Enroll &amp; assign a card to{" "}
+            <span className="font-medium text-foreground">{selected.name}</span> in BioStar. Door
+            groups are managed separately under door access.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="manual-card">Card number (CSN)</Label>
-            <Input
-              id="manual-card"
-              value={cardId}
-              onChange={(e) => setCardId(e.target.value)}
-              placeholder="e.g. 0012345678"
-              className="font-mono"
-              autoFocus
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="manual-card-type">Type (optional)</Label>
-            <Input
-              id="manual-card-type"
-              value={cardType}
-              onChange={(e) => setCardType(e.target.value)}
-              placeholder="e.g. MIFARE, EM"
-            />
-          </div>
-        </div>
+            <Label htmlFor="cards-card">Card number (CSN)</Label>
+            <div className="flex gap-2">
+              <Input
+                id="cards-card"
+                value={cardNumber}
+                onChange={(e) => setCardNumber(e.target.value)}
+                placeholder="e.g. 0012345678"
+                className="font-mono"
+                autoFocus
+              />
+              <Button type="button" variant="outline" onClick={openScan}>
+                <ScanLine className="h-4 w-4" />
+                Scan
+              </Button>
+            </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={!cardId.trim() || saving}>
-            <Check className="h-4 w-4" />
-            {saving ? "Saving…" : "Assign card"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Reassign card dialog ────────────────────────────────────────────────────────
-
-function ReassignCardDialog({
-  card,
-  onClose,
-  onDone,
-}: {
-  card: AccessCard;
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [rows, setRows] = useState<MemberPick[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [target, setTarget] = useState<MemberPick | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async (q: string) => {
-    setLoading(true);
-    try {
-      const res = await api.accessControl.members(q.trim() ? { q: q.trim() } : undefined);
-      setRows(Array.isArray(res) ? res : res?.data || []);
-    } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => load(query), 300);
-    return () => clearTimeout(t);
-  }, [query, load]);
-
-  const submit = async () => {
-    if (!target) {
-      toast.error("Pick a member to reassign to");
-      return;
-    }
-    setSaving(true);
-    try {
-      await api.accessControl.reassignCard(card.id, {
-        subjectKind: target.subjectKind,
-        subjectId: target.subjectId,
-      });
-      toast.success(`Card reassigned to ${target.name}`);
-      onDone();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to reassign card");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Reassign card</DialogTitle>
-          <DialogDescription>
-            Move card{" "}
-            <span className="font-mono">{card.displayCardId || card.cardId}</span> to a
-            different member. The card keeps its number; only its holder changes.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search member to reassign to…"
-            className="pl-9"
-          />
-        </div>
-
-        <div className="max-h-60 space-y-1 overflow-y-auto">
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-11 w-full" />)
-          ) : rows.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">No members found.</p>
-          ) : (
-            rows.map((m) => {
-              const id = `${m.subjectKind}:${m.subjectId}`;
-              const active = target && `${target.subjectKind}:${target.subjectId}` === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setTarget(m)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors",
-                    active ? "bg-primary/10 ring-1 ring-primary/30" : "hover:bg-muted",
-                  )}
-                >
-                  <Avatar className="h-7 w-7">
-                    <AvatarFallback>{(m.name?.charAt(0) || "?").toUpperCase()}</AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{m.name || "—"}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {m.phone || m.email || "—"}
-                    </p>
+            {scanOpen && (
+              <div className="rounded-md border bg-muted/30 p-2">
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Pick a reader, then tap the card on it.
+                </p>
+                {devices.length === 0 ? (
+                  <p className="py-2 text-center text-xs text-muted-foreground">
+                    No readers found (or still loading).
+                  </p>
+                ) : (
+                  <div className="max-h-40 space-y-1 overflow-y-auto">
+                    {devices.map((d) => {
+                      const online = String(d.status) === "1";
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          disabled={scanning}
+                          onClick={() => doScan(d.id)}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
+                            scanning && "opacity-60",
+                          )}
+                        >
+                          <span className="truncate">{d.name || d.id}</span>
+                          <Badge variant="outline" className={cn("text-[10px]", online ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
+                            {scanning ? "Scanning…" : online ? "Online" : "Offline"}
+                          </Badge>
+                        </button>
+                      );
+                    })}
                   </div>
-                  <Badge variant="outline" className="shrink-0 text-[10px]">
-                    {SUBJECT_KIND_LABEL[m.subjectKind] || m.subjectKind}
-                  </Badge>
-                </button>
-              );
-            })
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Per-step result */}
+          {steps && (
+            <div className="space-y-1.5 rounded-md border p-3">
+              <p className="text-xs font-medium text-muted-foreground">Result</p>
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  {s.ok ? (
+                    <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <CircleX className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  )}
+                  <span>
+                    <span className="font-medium">{s.label}:</span>{" "}
+                    <span className={cn(!s.ok && "text-destructive")}>{s.message}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -971,9 +1003,9 @@ function ReassignCardDialog({
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!target || saving}>
-            <Unlink className="h-4 w-4" />
-            {saving ? "Reassigning…" : "Reassign"}
+          <Button onClick={submit} disabled={!cardNumber.trim() || saving}>
+            <Check className="h-4 w-4" />
+            {saving ? "Assigning…" : "Assign card"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1005,38 +1037,14 @@ function stableUserId(m: MemberPick): string {
 function BiostarPanel({
   selected,
   detail,
+  relay,
 }: {
   selected: MemberPick;
   detail: MemberDetail | null;
+  relay: BiostarRelay;
 }) {
-  const [relayUrl, setRelayUrl] = useState<string | null>(null); // null = loading
-  const [health, setHealth] = useState<RelayHealth | null>(null);
-  const [checking, setChecking] = useState(false);
+  const { relayUrl, health, checking, recheck } = relay;
   const [assignOpen, setAssignOpen] = useState(false);
-
-  const checkHealth = useCallback(async (url: string) => {
-    setChecking(true);
-    try {
-      setHealth(await relayHealth(url));
-    } catch {
-      setHealth({ ok: false, reachable: false, error: "Relay unreachable" });
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const url = await getRelayUrl();
-      if (!active) return;
-      setRelayUrl(url);
-      if (url) checkHealth(url);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [checkHealth]);
 
   const configured = !!relayUrl;
 
@@ -1050,8 +1058,8 @@ function BiostarPanel({
               BioStar door access
             </CardTitle>
             <CardDescription>
-              Create or update this member in BioStar via the on-premises relay — add a card
-              and set their door groups. Separate from the local card registry above.
+              Create or update this member in BioStar via the on-premises relay and set their door
+              access groups. Cards are managed in the Access cards panel above.
             </CardDescription>
           </div>
           {/* Connection chip */}
@@ -1065,7 +1073,7 @@ function BiostarPanel({
           ) : (
             <button
               type="button"
-              onClick={() => relayUrl && checkHealth(relayUrl)}
+              onClick={recheck}
               title="Re-check relay"
               className="shrink-0"
             >
@@ -1107,14 +1115,14 @@ function BiostarPanel({
               disabled={!configured || !health?.ok}
             >
               <DoorOpen className="h-4 w-4" />
-              Manage in BioStar
+              Set door access
             </Button>
             {health && !health.ok && health.error && (
               <p className="text-xs text-destructive">{health.error}</p>
             )}
             <p className="text-xs text-muted-foreground">
-              Shows <span className="font-medium">{selected.name}</span>&apos;s current BioStar cards &amp;
-              groups, then creates/updates the user, optionally adds a card, and sets their door groups.
+              Shows <span className="font-medium">{selected.name}</span>&apos;s current BioStar door
+              groups, then creates/updates the user and sets their door access groups.
             </p>
           </>
         )}
@@ -1148,14 +1156,9 @@ function BiostarAssignDialog({
   const userId = stableUserId(selected);
   const validUntil = detail?.membership?.validUntil ?? undefined;
 
-  const [cardNumber, setCardNumber] = useState("");
   const [groups, setGroups] = useState<BiostarAccessGroup[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(true);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
-
-  const [devices, setDevices] = useState<BiostarDevice[]>([]);
-  const [scanOpen, setScanOpen] = useState(false);
-  const [scanning, setScanning] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [steps, setSteps] = useState<StepResult[] | null>(null);
@@ -1209,41 +1212,6 @@ function BiostarAssignDialog({
     );
   }
 
-  async function openScan() {
-    setScanOpen(true);
-    try {
-      setDevices(await listDevices(relayUrl));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load readers");
-    }
-  }
-
-  async function doScan(deviceId: string) {
-    setScanning(true);
-    try {
-      const res = await scanCard(relayUrl, deviceId);
-      if (res.cardId) {
-        setCardNumber(res.cardId);
-        toast.success(`Read card ${res.cardId}`);
-        setScanOpen(false);
-      } else {
-        // 2xx but no recognizable card — log the raw shape so we can map it.
-        console.warn("scan_card returned no card id; raw response:", res.raw);
-        toast.error("Reader returned no card. Tap again, or type the number below.");
-      }
-    } catch (err) {
-      // scan_card times out (~15s) if no card is tapped — make that legible.
-      const msg = err instanceof Error ? err.message : "Scan failed";
-      toast.error(
-        /not respond|timeout/i.test(msg)
-          ? "Reader timed out — click Scan and tap the card within a few seconds."
-          : msg,
-      );
-    } finally {
-      setScanning(false);
-    }
-  }
-
   async function submit() {
     setSubmitting(true);
     setSteps(null);
@@ -1252,7 +1220,8 @@ function BiostarAssignDialog({
         relayUrl,
         name: selected.name,
         userId,
-        cardNumber: cardNumber.trim() || undefined,
+        // Cards are managed in the Access cards panel — this dialog touches only the
+        // user + door groups.
         accessGroupIds: selectedGroupIds,
         // Only touch door groups when we actually know the current state, so a failed
         // read can never silently wipe them.
@@ -1262,8 +1231,7 @@ function BiostarAssignDialog({
       setSteps(result);
       if (result.every((s) => s.ok)) {
         toast.success(current?.exists ? "Updated in BioStar" : "Created in BioStar");
-        setCardNumber("");
-        loadState(); // reflect the new reality (cards/groups)
+        loadState(); // reflect the new reality (groups)
       } else {
         toast.error("Some steps failed — see details below.");
       }
@@ -1284,7 +1252,7 @@ function BiostarAssignDialog({
           <DialogTitle>BioStar door access</DialogTitle>
           <DialogDescription>
             Sync <span className="font-medium text-foreground">{selected.name}</span> into BioStar —
-            create or update the user, optionally add a card, and set their door groups. User&nbsp;ID{" "}
+            create or update the user and set their door access groups. User&nbsp;ID{" "}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{userId}</code>
             {validUntil ? " · expiry from membership" : " · default expiry"}.
           </DialogDescription>
@@ -1321,71 +1289,14 @@ function BiostarAssignDialog({
                   </span>
                 </div>
                 {current.cards.length > 0 && (
-                  <p className="font-mono text-[11px] text-muted-foreground">Cards: {current.cards.join(", ")}</p>
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    Cards: {current.cards.map((c) => c.number).join(", ")}
+                  </p>
                 )}
               </div>
             ) : (
               <span className="text-muted-foreground">Not in BioStar yet — saving will create the user.</span>
             )}
-          </div>
-
-          {/* Add a card (optional) + scan */}
-          <div className="space-y-2">
-            <Label htmlFor="biostar-card">
-              Add a card <span className="font-normal text-muted-foreground">(optional)</span>
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                id="biostar-card"
-                value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
-                placeholder="Card number, or leave blank"
-                className="font-mono"
-              />
-              <Button type="button" variant="outline" onClick={openScan}>
-                <ScanLine className="h-4 w-4" />
-                Scan
-              </Button>
-            </div>
-
-            {scanOpen && (
-              <div className="rounded-md border bg-muted/30 p-2">
-                <p className="mb-2 text-xs text-muted-foreground">
-                  Pick a reader, then tap the card on it.
-                </p>
-                {devices.length === 0 ? (
-                  <p className="py-2 text-center text-xs text-muted-foreground">
-                    No readers found (or still loading).
-                  </p>
-                ) : (
-                  <div className="max-h-40 space-y-1 overflow-y-auto">
-                    {devices.map((d) => {
-                      const online = String(d.status) === "1";
-                      return (
-                        <button
-                          key={d.id}
-                          type="button"
-                          disabled={scanning}
-                          onClick={() => doScan(d.id)}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
-                            scanning && "opacity-60",
-                          )}
-                        >
-                          <span className="truncate">{d.name || d.id}</span>
-                          <Badge variant="outline" className={cn("text-[10px]", online ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-                            {scanning ? "Scanning…" : online ? "Online" : "Offline"}
-                          </Badge>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              Leave blank to update the user &amp; door groups only.
-            </p>
           </div>
 
           {/* Access groups multi-select */}
