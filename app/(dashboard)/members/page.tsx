@@ -1156,6 +1156,7 @@ interface NewMemberForm {
   endDate: string;
   billingMode: "now" | "deposit" | "later" | "tabby" | "tamara" | "manual";
   depositAmount: string;
+  discountPercent: string;
   paymentMethod: string;
   paymentReference: string;
   bnplProvider: "tabby" | "tamara";
@@ -1186,6 +1187,7 @@ const EMPTY_NEW_MEMBER: NewMemberForm = {
   endDate: "",
   billingMode: "now",
   depositAmount: "",
+  discountPercent: "",
   paymentMethod: "cash",
   paymentReference: "",
   bnplProvider: "tabby",
@@ -1357,28 +1359,34 @@ function NewMemberDialog({
     //  - later                → neither, just raises the invoice
     //  - tabby / tamara       → paymentMethod only; backend returns a payLink
     //  - manual               → manual-reference + bnplProvider + paymentReference
+    // Discount % off the membership plan price (0–100). The backend applies
+    // round(planPrice * pct / 100) as the invoice discount; sent on every mode.
+    const discountPercent = Math.min(100, Math.max(0, Number(form.discountPercent) || 0));
     const billingFields: Record<string, unknown> =
       planPrice <= 0
-        ? { payNow: true, paymentMethod: form.paymentMethod }
+        ? { payNow: true, paymentMethod: form.paymentMethod, discountPercent }
         : form.billingMode === "deposit"
           ? {
               payNow: false,
               depositAmount: depositNum,
               paymentMethod: form.paymentMethod,
               paymentReference: form.paymentReference.trim() || undefined,
+              discountPercent,
             }
           : form.billingMode === "tabby" || form.billingMode === "tamara"
-            ? { paymentMethod: form.billingMode }
+            ? { paymentMethod: form.billingMode, discountPercent }
             : form.billingMode === "manual"
               ? {
                   paymentMethod: "manual-reference",
                   bnplProvider: form.bnplProvider,
                   paymentReference: form.paymentReference.trim(),
+                  discountPercent,
                 }
               : {
                   payNow: form.billingMode === "now",
                   paymentMethod: form.paymentMethod,
                   paymentReference: form.paymentReference.trim() || undefined,
+                  discountPercent,
                 };
     const billingToast = (status: string | undefined, label: string) =>
       planPrice <= 0
@@ -1834,6 +1842,52 @@ function NewMemberDialog({
                           bnplDisabled[form.billingMode] && (
                             <p className="text-xs text-muted-foreground">Add keys in Settings.</p>
                           )}
+                        {/* Discount % — off the membership plan price (not the registration/kit fee). */}
+                        <Field label="Discount % (optional)" htmlFor="nm-discount">
+                          <Input
+                            id="nm-discount"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={form.discountPercent}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              if (raw === "") return set("discountPercent", "");
+                              const clamped = Math.min(100, Math.max(0, Number(raw) || 0));
+                              set("discountPercent", String(clamped));
+                            }}
+                            placeholder="0"
+                          />
+                          {(() => {
+                            const pct = Math.min(100, Math.max(0, Number(form.discountPercent) || 0));
+                            if (pct <= 0) return null;
+                            const discountAmount = Math.round(price * pct) / 100;
+                            const netPrice = price - discountAmount;
+                            const regFee = Number(sp?.registrationFee) || 0;
+                            return (
+                              <div className="mt-2 space-y-0.5 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                                <div className="flex justify-between">
+                                  <span>Membership price</span>
+                                  <span>{formatSAR(price)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Discount ({pct}%)</span>
+                                  <span>− {formatSAR(discountAmount)}</span>
+                                </div>
+                                <div className="flex justify-between font-medium text-foreground">
+                                  <span>Net membership price</span>
+                                  <span>{formatSAR(netPrice)}</span>
+                                </div>
+                                {regFee > 0 && (
+                                  <p className="pt-1">
+                                    Registration/kit fee {formatSAR(regFee)} is not discounted.
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </Field>
                         {form.billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="nm-deposit">
                             <Input
@@ -3271,6 +3325,8 @@ function AssignMembershipDialog({
     "now" | "deposit" | "later" | "tabby" | "tamara" | "manual"
   >("now");
   const [depositAmount, setDepositAmount] = useState("");
+  // Discount % off the membership plan price (0–100); default empty = no discount.
+  const [discountPercent, setDiscountPercent] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentReference, setPaymentReference] = useState("");
   const [bnplProvider, setBnplProvider] = useState<"tabby" | "tamara">("tabby");
@@ -3541,28 +3597,34 @@ function AssignMembershipDialog({
     //  - later                → neither, just raises the invoice
     //  - tabby / tamara       → paymentMethod only; backend returns a payLink
     //  - manual               → manual-reference + bnplProvider + paymentReference
+    // Discount % off the membership plan price (0–100). Backend applies
+    // round(price * pct / 100) as the invoice discount; sent on every mode.
+    const discountPct = Math.min(100, Math.max(0, Number(discountPercent) || 0));
     const billingFields: Record<string, unknown> =
       price <= 0
-        ? { payNow: true, paymentMethod }
+        ? { payNow: true, paymentMethod, discountPercent: discountPct }
         : billingMode === "deposit"
           ? {
               payNow: false,
               depositAmount: depositNum,
               paymentMethod,
               paymentReference: paymentReference.trim() || undefined,
+              discountPercent: discountPct,
             }
           : billingMode === "tabby" || billingMode === "tamara"
-            ? { paymentMethod: billingMode }
+            ? { paymentMethod: billingMode, discountPercent: discountPct }
             : billingMode === "manual"
               ? {
                   paymentMethod: "manual-reference",
                   bnplProvider,
                   paymentReference: paymentReference.trim(),
+                  discountPercent: discountPct,
                 }
               : {
                   payNow: billingMode === "now",
                   paymentMethod,
                   paymentReference: paymentReference.trim() || undefined,
+                  discountPercent: discountPct,
                 };
     const isPayLinkMode = billingMode === "tabby" || billingMode === "tamara";
     const payLinkLabel = billingMode === "tamara" ? "Tamara" : "Tabby";
@@ -3975,6 +4037,52 @@ function AssignMembershipDialog({
                           bnplDisabled[billingMode] && (
                             <p className="text-xs text-muted-foreground">Add keys in Settings.</p>
                           )}
+                        {/* Discount % — off the membership plan price (not the registration/kit fee). */}
+                        <Field label="Discount % (optional)" htmlFor="assign-discount">
+                          <Input
+                            id="assign-discount"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={discountPercent}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              if (raw === "") return setDiscountPercent("");
+                              const clamped = Math.min(100, Math.max(0, Number(raw) || 0));
+                              setDiscountPercent(String(clamped));
+                            }}
+                            placeholder="0"
+                          />
+                          {(() => {
+                            const pct = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+                            if (pct <= 0) return null;
+                            const discountAmount = Math.round(price * pct) / 100;
+                            const netPrice = price - discountAmount;
+                            const regFee = Number(sp?.registrationFee) || 0;
+                            return (
+                              <div className="mt-2 space-y-0.5 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                                <div className="flex justify-between">
+                                  <span>Membership price</span>
+                                  <span>{formatSAR(price)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>Discount ({pct}%)</span>
+                                  <span>− {formatSAR(discountAmount)}</span>
+                                </div>
+                                <div className="flex justify-between font-medium text-foreground">
+                                  <span>Net membership price</span>
+                                  <span>{formatSAR(netPrice)}</span>
+                                </div>
+                                {regFee > 0 && (
+                                  <p className="pt-1">
+                                    Registration/kit fee {formatSAR(regFee)} is not discounted.
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </Field>
                         {billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
                             <Input
