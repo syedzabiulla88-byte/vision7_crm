@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PermissionGate } from "@/components/shared/permission-gate";
+import { usePermissions } from "@/components/hooks/use-permissions";
 import {
   Table,
   TableBody,
@@ -831,6 +832,8 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
 
           <FamilyMembersBlock familyMembers={contact.familyMembers || []} />
 
+          <GuardianBlock contact={contact} onChanged={load} />
+
           <EmailHistory activities={contact.activities || []} />
 
           {/* Activity timeline */}
@@ -1493,6 +1496,188 @@ function FamilyMembersBlock({ familyMembers }: { familyMembers: any[] }) {
             </div>
           );
         })}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Guardian — a LIGHTWEIGHT pointer to another contact, separate from the
+ * family/household feature above. Set via api.crm.update({ guardianContactId }).
+ */
+function GuardianBlock({ contact, onChanged }: { contact: any; onChanged: () => void }) {
+  const { can } = usePermissions();
+  const canManage = can("crm:edit");
+
+  const [picking, setPicking] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const guardian = contact.guardian as
+    | { id: string; firstName: string; lastName: string | null; phone: string | null; type: string }
+    | null
+    | undefined;
+
+  // Debounced contact search → excludes the current contact's own id.
+  useEffect(() => {
+    if (!picking) return;
+    const term = query.trim();
+    if (!term) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await api.crm.list({ q: term, limit: 8 });
+        const rows: any[] = Array.isArray(res) ? res : res?.data || [];
+        setResults(rows.filter((r) => r.id !== contact.id));
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Search failed");
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query, picking, contact.id]);
+
+  const openPicker = () => {
+    setQuery("");
+    setResults([]);
+    setPicking(true);
+  };
+
+  const closePicker = () => {
+    setPicking(false);
+    setQuery("");
+    setResults([]);
+  };
+
+  const setGuardian = async (picked: any) => {
+    setBusy(true);
+    try {
+      await api.crm.update(contact.id, { guardianContactId: picked.id });
+      toast.success("Guardian linked");
+      closePicker();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to link guardian");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeGuardian = async () => {
+    setBusy(true);
+    try {
+      await api.crm.update(contact.id, { guardianContactId: "" });
+      toast.success("Guardian removed");
+      onChanged?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove guardian");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <User className="h-4 w-4" /> Guardian
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {guardian && !picking ? (
+          <div className="flex items-center gap-3 rounded-md border p-3">
+            <Avatar className="h-8 w-8 shrink-0">
+              <AvatarFallback className="text-[10px] font-semibold">
+                {initials(guardian.firstName, guardian.lastName || undefined)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <Link
+                href={`/crm/${guardian.id}`}
+                className="truncate text-sm font-medium hover:text-primary"
+              >
+                {guardian.firstName} {guardian.lastName || ""}
+              </Link>
+              <p className="truncate text-xs text-muted-foreground">{guardian.phone || "—"}</p>
+            </div>
+            {canManage && (
+              <div className="flex shrink-0 gap-1">
+                <Button variant="outline" size="sm" onClick={openPicker} disabled={busy}>
+                  Change
+                </Button>
+                <Button variant="ghost" size="sm" onClick={removeGuardian} disabled={busy}>
+                  Remove
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : !picking ? (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">No guardian linked</p>
+            {canManage && (
+              <Button variant="outline" size="sm" onClick={openPicker}>
+                <Plus className="h-4 w-4" /> Add guardian
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <Input
+              autoFocus
+              placeholder="Search contacts by name, email, phone…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <div className="max-h-64 space-y-1 overflow-y-auto">
+              {searching ? (
+                <p className="py-3 text-center text-xs text-muted-foreground">Searching…</p>
+              ) : query.trim() && results.length === 0 ? (
+                <p className="py-3 text-center text-xs text-muted-foreground">
+                  No matching contacts.
+                </p>
+              ) : (
+                results.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setGuardian(r)}
+                    className="flex w-full items-center gap-3 rounded-md border p-2 text-left transition-colors hover:border-primary/40 disabled:opacity-50"
+                  >
+                    <Avatar className="h-7 w-7 shrink-0">
+                      <AvatarFallback className="text-[10px] font-semibold">
+                        {initials(r.firstName, r.lastName || undefined)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {r.firstName} {r.lastName || ""}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {r.phone || r.email || "—"}
+                      </p>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+            <Button variant="ghost" size="sm" onClick={closePicker} disabled={busy}>
+              <Close className="h-4 w-4" /> Cancel
+            </Button>
+          </div>
+        )}
+
+        <p className="text-xs text-muted-foreground">
+          A simple contact link, separate from family plans.
+        </p>
       </CardContent>
     </Card>
   );
