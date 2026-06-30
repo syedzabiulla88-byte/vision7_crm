@@ -199,6 +199,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   );
   const tax = Number(invoice.taxAmount ?? invoice.tax ?? 0);
   const discount = Number(invoice.discount ?? 0);
+  const discountPercent = Number(invoice.discountPercent ?? 0);
 
   return (
     <div className="space-y-6">
@@ -444,7 +445,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               <span className="tabular-nums">{formatSAR(tax)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground print:text-black">Discount</span>
+              <span className="text-muted-foreground print:text-black">
+                Discount{discountPercent > 0 ? ` (${discountPercent}%)` : ""}
+              </span>
               <span className="tabular-nums">- {formatSAR(discount)}</span>
             </div>
             <div className="flex items-center justify-between border-t pt-3 print:border-black">

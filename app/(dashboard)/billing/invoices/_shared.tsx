@@ -89,6 +89,7 @@ export interface Invoice {
   tax?: number;
   taxRate?: number;
   discount?: number;
+  discountPercent?: number;
   amountPaid?: number;
   paidAmount?: number;
   notes?: string | null;
