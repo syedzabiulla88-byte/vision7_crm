@@ -270,12 +270,41 @@ export async function updateUser(
 export async function enrollCard(
   relayUrl: string,
   cardNumber: string,
-): Promise<{ biostarCardId: string; cardId?: string; displayCardId?: string }> {
+): Promise<{ biostarCardId: string; cardId?: string; displayCardId?: string; reused?: boolean }> {
   const body = { Card: { card_id: cardNumber, card_type: { id: "0" } } };
-  const res = await relayFetch<CardCollection>(relayUrl, `/api/cards`, { method: "POST", body });
-  const row = res?.CardCollection?.rows?.[0];
-  if (!row?.id) throw makeError("Card enrolled but BioStar returned no card id", undefined, res);
-  return { biostarCardId: row.id, cardId: row.card_id, displayCardId: row.display_card_id };
+  try {
+    const res = await relayFetch<CardCollection>(relayUrl, `/api/cards`, { method: "POST", body });
+    const row = res?.CardCollection?.rows?.[0];
+    if (!row?.id) throw makeError("Card enrolled but BioStar returned no card id", undefined, res);
+    return { biostarCardId: row.id, cardId: row.card_id, displayCardId: row.display_card_id };
+  } catch (err) {
+    // BioStar answers a duplicate card_id with 400 "not defined" (code 65744). The card
+    // already exists — reuse its record instead of failing, so re-pushing the same card
+    // (or moving one between members) just works.
+    if ((err as RelayError).status === 400) {
+      const existing = await findCardByNumber(relayUrl, cardNumber);
+      if (existing) return { ...existing, reused: true };
+    }
+    throw err;
+  }
+}
+
+/**
+ * GET /api/cards — find an already-enrolled card by its printed number. BioStar has no
+ * server-side card filter (a ?card_id query is ignored), so we scan the list. Returns the
+ * BioStar card id or null.
+ */
+export async function findCardByNumber(
+  relayUrl: string,
+  cardNumber: string,
+): Promise<{ biostarCardId: string; cardId?: string; displayCardId?: string } | null> {
+  const res = await relayFetch<CardCollection>(relayUrl, `/api/cards?limit=1000`);
+  const rows = res?.CardCollection?.rows ?? [];
+  const n = String(cardNumber);
+  const row = rows.find((r) => String(r.card_id) === n || String(r.display_card_id) === n);
+  return row?.id
+    ? { biostarCardId: row.id, cardId: row.card_id, displayCardId: row.display_card_id }
+    : null;
 }
 
 /** PUT /api/users/{id} — assign an enrolled card (by BioStar card id) to the user. */
@@ -408,10 +437,11 @@ export async function assignCardAndAccess(args: AssignArgs): Promise<StepResult[
     try {
       const enrolled = await enrollCard(relayUrl, card);
       biostarCardId = enrolled.biostarCardId;
+      const shown = enrolled.displayCardId || enrolled.cardId || card;
       steps.push({
         label: "Enroll card",
         ok: true,
-        message: `Card ${enrolled.displayCardId || enrolled.cardId || card} enrolled`,
+        message: enrolled.reused ? `Card ${shown} already in BioStar — reusing` : `Card ${shown} enrolled`,
       });
     } catch (err) {
       steps.push({ label: "Enroll card", ok: false, message: errMsg(err) });
