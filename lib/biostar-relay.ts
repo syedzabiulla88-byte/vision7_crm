@@ -183,6 +183,49 @@ export async function findUser(relayUrl: string, userId: string): Promise<boolea
   }
 }
 
+export interface BiostarUserState {
+  exists: boolean;
+  name?: string;
+  /** Printed card numbers currently on the user. */
+  cards: string[];
+  /** Access-group ids + names the user currently belongs to. */
+  accessGroupIds: string[];
+  accessGroupNames: string[];
+  expiry?: string;
+}
+
+/**
+ * GET /api/users/{id} → the member's CURRENT BioStar state (cards + access groups),
+ * so the dialog can show reality and pre-select existing groups. exists:false on 400/404.
+ */
+export async function getBiostarUser(relayUrl: string, userId: string): Promise<BiostarUserState> {
+  try {
+    const res = await relayFetch<{
+      User?: {
+        name?: string;
+        cards?: Array<{ card_id?: string; display_card_id?: string }>;
+        access_groups?: Array<{ id?: string; name?: string }>;
+        expiry_datetime?: string;
+      };
+    }>(relayUrl, `/api/users/${encodeURIComponent(userId)}`);
+    const u = res?.User || {};
+    return {
+      exists: true,
+      name: u.name,
+      cards: (u.cards || []).map((c) => String(c.display_card_id ?? c.card_id ?? "")).filter(Boolean),
+      accessGroupIds: (u.access_groups || []).map((g) => String(g.id ?? "")).filter(Boolean),
+      accessGroupNames: (u.access_groups || []).map((g) => String(g.name ?? g.id ?? "")).filter(Boolean),
+      expiry: u.expiry_datetime,
+    };
+  } catch (err) {
+    const e = err as RelayError;
+    if (e.status === 400 || e.status === 404) {
+      return { exists: false, cards: [], accessGroupIds: [], accessGroupNames: [] };
+    }
+    throw err;
+  }
+}
+
 /** POST /api/users — create a BioStar user. Returns the created user_id. */
 export async function createUser(
   relayUrl: string,
@@ -319,73 +362,81 @@ export interface AssignArgs {
   relayUrl: string;
   name: string;
   userId: string;
-  cardNumber: string;
+  /** A printed card number to enroll + assign. Blank/omitted → cards left unchanged. */
+  cardNumber?: string;
+  /** The DESIRED final set of access-group ids — BioStar is set to exactly this. */
   accessGroupIds: string[];
+  /** When true (default) set BioStar groups to exactly accessGroupIds; false = leave untouched. */
+  applyGroups?: boolean;
   /** Membership validUntil (any date string) or undefined → DEFAULT_EXPIRY. */
   expiry?: string | null;
 }
 
 /**
- * Full BioStar push, returning a per-step result array so the UI can show progress
- * and pinpoint which step failed. Stops at the first hard failure (a later step
- * depends on the earlier one), but always returns the steps attempted so far.
- *
- * Steps: ensure user (GET; create on 400) → enroll card → assign card → grant groups.
+ * Sync a member into BioStar, returning a per-step result array so the UI can show
+ * progress and pinpoint which step failed. Adaptive:
+ *   1) User      — create if missing, else update name + expiry (always).
+ *   2) Card      — enroll + assign, ONLY when a card number is given (else skipped).
+ *   3) Groups    — when applyGroups (default), set BioStar's groups to EXACTLY
+ *                  accessGroupIds (adds + removes; empty clears them).
+ * Stops at the first hard failure of a step a later one depends on.
  */
 export async function assignCardAndAccess(args: AssignArgs): Promise<StepResult[]> {
-  const { relayUrl, name, userId, cardNumber, accessGroupIds, expiry } = args;
+  const { relayUrl, name, userId, accessGroupIds, expiry } = args;
+  const card = (args.cardNumber || "").trim();
+  const applyGroups = args.applyGroups !== false;
   const steps: StepResult[] = [];
 
-  // 1) Ensure the BioStar user exists.
+  // 1) Ensure the BioStar user exists (create) or refresh it (update name + expiry).
   try {
     const exists = await findUser(relayUrl, userId);
     if (exists) {
-      // Keep BioStar in sync: refresh the name + validity window on every push.
       await updateUser(relayUrl, { name, userId, expiry: expiry || undefined });
-      steps.push({ label: "User", ok: true, message: `Updated user ${userId}` });
+      steps.push({ label: "User", ok: true, message: `Updated ${name} (#${userId})` });
     } else {
       await createUser(relayUrl, { name, userId, expiry: expiry || undefined });
-      steps.push({ label: "User", ok: true, message: `Created user ${userId}` });
+      steps.push({ label: "User", ok: true, message: `Created ${name} (#${userId})` });
     }
   } catch (err) {
     steps.push({ label: "User", ok: false, message: errMsg(err) });
     return steps;
   }
 
-  // 2) Enroll the card.
-  let biostarCardId: string;
-  try {
-    const enrolled = await enrollCard(relayUrl, cardNumber);
-    biostarCardId = enrolled.biostarCardId;
-    steps.push({
-      label: "Enroll card",
-      ok: true,
-      message: `Card ${enrolled.displayCardId || enrolled.cardId || cardNumber} enrolled`,
-    });
-  } catch (err) {
-    steps.push({ label: "Enroll card", ok: false, message: errMsg(err) });
-    return steps;
+  // 2) Card — only when a number was given. Enroll then assign.
+  if (card) {
+    let biostarCardId: string;
+    try {
+      const enrolled = await enrollCard(relayUrl, card);
+      biostarCardId = enrolled.biostarCardId;
+      steps.push({
+        label: "Enroll card",
+        ok: true,
+        message: `Card ${enrolled.displayCardId || enrolled.cardId || card} enrolled`,
+      });
+    } catch (err) {
+      steps.push({ label: "Enroll card", ok: false, message: errMsg(err) });
+      return steps;
+    }
+    try {
+      await assignCardToUser(relayUrl, userId, biostarCardId);
+      steps.push({ label: "Assign card", ok: true, message: "Card assigned to user" });
+    } catch (err) {
+      steps.push({ label: "Assign card", ok: false, message: errMsg(err) });
+      return steps;
+    }
   }
 
-  // 3) Assign the card to the user.
-  try {
-    await assignCardToUser(relayUrl, userId, biostarCardId);
-    steps.push({ label: "Assign card", ok: true, message: "Card assigned to user" });
-  } catch (err) {
-    steps.push({ label: "Assign card", ok: false, message: errMsg(err) });
-    return steps;
-  }
-
-  // 4) Grant access groups (skip cleanly if none chosen).
-  if (accessGroupIds.length === 0) {
-    steps.push({ label: "Access groups", ok: true, message: "No access groups selected — skipped" });
-  } else {
+  // 3) Access groups — set BioStar to exactly the chosen set (add + remove).
+  if (applyGroups) {
     try {
       await grantAccessGroups(relayUrl, userId, accessGroupIds);
       steps.push({
         label: "Access groups",
         ok: true,
-        message: `Granted ${accessGroupIds.length} group${accessGroupIds.length === 1 ? "" : "s"}`,
+        message:
+          accessGroupIds.length === 0
+            ? "Cleared all door groups"
+            : `Set ${accessGroupIds.length} door group${accessGroupIds.length === 1 ? "" : "s"}`,
       });
     } catch (err) {
       steps.push({ label: "Access groups", ok: false, message: errMsg(err) });

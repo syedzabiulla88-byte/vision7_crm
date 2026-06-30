@@ -25,9 +25,11 @@ import {
   listDevices,
   scanCard,
   assignCardAndAccess,
+  getBiostarUser,
   type RelayHealth,
   type BiostarAccessGroup,
   type BiostarDevice,
+  type BiostarUserState,
   type StepResult,
 } from "@/lib/biostar-relay";
 import {
@@ -1048,8 +1050,8 @@ function BiostarPanel({
               BioStar door access
             </CardTitle>
             <CardDescription>
-              Push this member&apos;s card &amp; door access straight to BioStar via the
-              on-premises relay. Separate from the local card registry above.
+              Create or update this member in BioStar via the on-premises relay — add a card
+              and set their door groups. Separate from the local card registry above.
             </CardDescription>
           </div>
           {/* Connection chip */}
@@ -1105,15 +1107,14 @@ function BiostarPanel({
               disabled={!configured || !health?.ok}
             >
               <DoorOpen className="h-4 w-4" />
-              Push to BioStar
+              Manage in BioStar
             </Button>
             {health && !health.ok && health.error && (
               <p className="text-xs text-destructive">{health.error}</p>
             )}
             <p className="text-xs text-muted-foreground">
-              Enrolls a card in BioStar, assigns it to{" "}
-              <span className="font-medium">{selected.name}</span>, and grants the chosen
-              door-access groups — all in BioStar itself.
+              Shows <span className="font-medium">{selected.name}</span>&apos;s current BioStar cards &amp;
+              groups, then creates/updates the user, optionally adds a card, and sets their door groups.
             </p>
           </>
         )}
@@ -1158,6 +1159,30 @@ function BiostarAssignDialog({
 
   const [submitting, setSubmitting] = useState(false);
   const [steps, setSteps] = useState<StepResult[] | null>(null);
+
+  // The member's CURRENT BioStar state — so the dialog shows reality and pre-selects
+  // their existing door groups (check to add, uncheck to remove).
+  const [current, setCurrent] = useState<BiostarUserState | null>(null);
+  const [currentLoading, setCurrentLoading] = useState(true);
+  const [currentError, setCurrentError] = useState<string | null>(null);
+
+  const loadState = useCallback(async () => {
+    setCurrentLoading(true);
+    setCurrentError(null);
+    try {
+      const u = await getBiostarUser(relayUrl, userId);
+      setCurrent(u);
+      setSelectedGroupIds(u.accessGroupIds); // pre-select current groups
+    } catch (err) {
+      setCurrent(null);
+      setCurrentError(err instanceof Error ? err.message : "Couldn't read current BioStar state");
+    } finally {
+      setCurrentLoading(false);
+    }
+  }, [relayUrl, userId]);
+  useEffect(() => {
+    loadState();
+  }, [loadState]);
 
   // Load access groups for the multi-select.
   useEffect(() => {
@@ -1220,10 +1245,6 @@ function BiostarAssignDialog({
   }
 
   async function submit() {
-    if (!cardNumber.trim()) {
-      toast.error("Enter or scan a card number");
-      return;
-    }
     setSubmitting(true);
     setSteps(null);
     try {
@@ -1231,13 +1252,21 @@ function BiostarAssignDialog({
         relayUrl,
         name: selected.name,
         userId,
-        cardNumber: cardNumber.trim(),
+        cardNumber: cardNumber.trim() || undefined,
         accessGroupIds: selectedGroupIds,
+        // Only touch door groups when we actually know the current state, so a failed
+        // read can never silently wipe them.
+        applyGroups: !currentError,
         expiry: validUntil,
       });
       setSteps(result);
-      if (result.every((s) => s.ok)) toast.success("Pushed to BioStar");
-      else toast.error("Some steps failed — see details below.");
+      if (result.every((s) => s.ok)) {
+        toast.success(current?.exists ? "Updated in BioStar" : "Created in BioStar");
+        setCardNumber("");
+        loadState(); // reflect the new reality (cards/groups)
+      } else {
+        toast.error("Some steps failed — see details below.");
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Push failed");
     } finally {
@@ -1246,33 +1275,72 @@ function BiostarAssignDialog({
   }
 
   const allOk = steps !== null && steps.every((s) => s.ok);
+  const actionLabel = current?.exists ? "Update in BioStar" : "Create in BioStar";
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Push to BioStar</DialogTitle>
+          <DialogTitle>BioStar door access</DialogTitle>
           <DialogDescription>
-            Enroll a card and grant door access for{" "}
-            <span className="font-medium text-foreground">{selected.name}</span> in BioStar.
-            BioStar user&nbsp;ID{" "}
+            Sync <span className="font-medium text-foreground">{selected.name}</span> into BioStar —
+            create or update the user, optionally add a card, and set their door groups. User&nbsp;ID{" "}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{userId}</code>
             {validUntil ? " · expiry from membership" : " · default expiry"}.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Card number + optional scan */}
+          {/* Current BioStar state for this member */}
+          <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            {currentLoading ? (
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Reading current BioStar state…
+              </span>
+            ) : currentError ? (
+              <span className="flex items-center justify-between gap-2">
+                <span className="text-amber-600 dark:text-amber-400">Couldn&apos;t read BioStar — {currentError}</span>
+                <Button variant="ghost" size="sm" className="h-7" onClick={loadState}>
+                  Retry
+                </Button>
+              </span>
+            ) : current?.exists ? (
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  >
+                    <Wifi className="h-3 w-3" /> In BioStar
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {current.cards.length} card{current.cards.length === 1 ? "" : "s"}
+                    {current.accessGroupNames.length > 0
+                      ? ` · ${current.accessGroupNames.join(", ")}`
+                      : " · no door groups"}
+                  </span>
+                </div>
+                {current.cards.length > 0 && (
+                  <p className="font-mono text-[11px] text-muted-foreground">Cards: {current.cards.join(", ")}</p>
+                )}
+              </div>
+            ) : (
+              <span className="text-muted-foreground">Not in BioStar yet — saving will create the user.</span>
+            )}
+          </div>
+
+          {/* Add a card (optional) + scan */}
           <div className="space-y-2">
-            <Label htmlFor="biostar-card">Card number (CSN)</Label>
+            <Label htmlFor="biostar-card">
+              Add a card <span className="font-normal text-muted-foreground">(optional)</span>
+            </Label>
             <div className="flex gap-2">
               <Input
                 id="biostar-card"
                 value={cardNumber}
                 onChange={(e) => setCardNumber(e.target.value)}
-                placeholder="Printed card number"
+                placeholder="Card number, or leave blank"
                 className="font-mono"
-                autoFocus
               />
               <Button type="button" variant="outline" onClick={openScan}>
                 <ScanLine className="h-4 w-4" />
@@ -1315,6 +1383,9 @@ function BiostarAssignDialog({
                 )}
               </div>
             )}
+            <p className="text-xs text-muted-foreground">
+              Leave blank to update the user &amp; door groups only.
+            </p>
           </div>
 
           {/* Access groups multi-select */}
@@ -1344,7 +1415,9 @@ function BiostarAssignDialog({
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              {selectedGroupIds.length} selected — leave empty to enroll the card without door groups.
+              {currentError
+                ? "Current groups unknown — door groups won't be changed on save."
+                : "The member's BioStar door groups — check to add, uncheck to remove."}
             </p>
           </div>
 
@@ -1373,9 +1446,9 @@ function BiostarAssignDialog({
           <Button variant="outline" onClick={onClose} disabled={submitting}>
             {allOk ? "Close" : "Cancel"}
           </Button>
-          <Button onClick={submit} disabled={submitting || !cardNumber.trim()}>
+          <Button onClick={submit} disabled={submitting || currentLoading}>
             <DoorOpen className="h-4 w-4" />
-            {submitting ? "Pushing…" : steps ? "Push again" : "Push to BioStar"}
+            {submitting ? "Saving…" : steps ? "Save again" : actionLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
