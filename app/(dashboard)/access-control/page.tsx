@@ -27,6 +27,7 @@ import {
   assignCardAndAccess,
   getBiostarUser,
   revokeUserCard,
+  findCardByNumber,
   type RelayHealth,
   type BiostarAccessGroup,
   type BiostarDevice,
@@ -841,6 +842,12 @@ function CardsAssignDialog({
   const [cardNumber, setCardNumber] = useState("");
   const [saving, setSaving] = useState(false);
   const [steps, setSteps] = useState<StepResult[] | null>(null);
+  // Set when the entered card is already held by ANOTHER BioStar user — we ask before moving it.
+  const [conflict, setConflict] = useState<{
+    holderName: string;
+    holderUserId: string;
+    biostarCardId: string;
+  } | null>(null);
 
   const [devices, setDevices] = useState<BiostarDevice[]>([]);
   const [scanOpen, setScanOpen] = useState(false);
@@ -879,12 +886,7 @@ function CardsAssignDialog({
     }
   }
 
-  async function submit() {
-    const card = cardNumber.trim();
-    if (!card) {
-      toast.error("Enter or scan a card number");
-      return;
-    }
+  async function runAssign(card: string) {
     setSaving(true);
     setSteps(null);
     try {
@@ -911,6 +913,49 @@ function CardsAssignDialog({
     }
   }
 
+  async function submit() {
+    const card = cardNumber.trim();
+    if (!card) {
+      toast.error("Enter or scan a card number");
+      return;
+    }
+    setConflict(null);
+    setSaving(true);
+    try {
+      // Pre-check: BioStar refuses to assign a card that's already on ANOTHER user, so
+      // detect that and ask before moving it (overwrite-on-confirm).
+      const found = await findCardByNumber(relayUrl, card);
+      if (found?.holderUserId && found.holderUserId !== userId) {
+        setConflict({
+          holderName: found.holderName || `user ${found.holderUserId}`,
+          holderUserId: found.holderUserId,
+          biostarCardId: found.biostarCardId,
+        });
+        setSaving(false);
+        return;
+      }
+    } catch (err) {
+      // A lookup hiccup shouldn't block — fall through; the assign will surface any error.
+      console.warn("card pre-check failed:", err);
+    }
+    await runAssign(card);
+  }
+
+  // Confirmed overwrite: free the card from its current holder, then assign it here.
+  async function confirmMove() {
+    if (!conflict) return;
+    setSaving(true);
+    try {
+      await revokeUserCard(relayUrl, conflict.holderUserId, conflict.biostarCardId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't free the card from its current holder");
+      setSaving(false);
+      return;
+    }
+    setConflict(null);
+    await runAssign(cardNumber.trim());
+  }
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
@@ -930,7 +975,11 @@ function CardsAssignDialog({
               <Input
                 id="cards-card"
                 value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
+                onChange={(e) => {
+                  setCardNumber(e.target.value);
+                  setConflict(null);
+                  setSteps(null);
+                }}
                 placeholder="e.g. 0012345678"
                 className="font-mono"
                 autoFocus
@@ -978,6 +1027,24 @@ function CardsAssignDialog({
             )}
           </div>
 
+          {/* Card already on another member — confirm a move */}
+          {conflict && (
+            <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <p className="text-amber-700 dark:text-amber-400">
+                Card <span className="font-mono">{cardNumber.trim()}</span> is already assigned to{" "}
+                <span className="font-medium">{conflict.holderName}</span>. Move it to {selected.name}?
+              </p>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setConflict(null)} disabled={saving}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={confirmMove} disabled={saving}>
+                  {saving ? "Moving…" : "Move card here"}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Per-step result */}
           {steps && (
             <div className="space-y-1.5 rounded-md border p-3">
@@ -1003,7 +1070,7 @@ function CardsAssignDialog({
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!cardNumber.trim() || saving}>
+          <Button onClick={submit} disabled={!cardNumber.trim() || saving || !!conflict}>
             <Check className="h-4 w-4" />
             {saving ? "Assigning…" : "Assign card"}
           </Button>

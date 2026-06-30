@@ -153,7 +153,16 @@ interface UserCollection {
   UserCollection?: { rows?: Array<{ user_id?: string }> };
 }
 interface CardCollection {
-  CardCollection?: { rows?: Array<{ id?: string; card_id?: string; display_card_id?: string }> };
+  CardCollection?: {
+    rows?: Array<{
+      id?: string;
+      card_id?: string;
+      display_card_id?: string;
+      is_assigned?: string;
+      /** Present when the card is assigned — who currently holds it. */
+      user_id?: { user_id?: string; name?: string };
+    }>;
+  };
 }
 
 /** Default card expiry when a membership end-date isn't available. */
@@ -299,14 +308,26 @@ export async function enrollCard(
 export async function findCardByNumber(
   relayUrl: string,
   cardNumber: string,
-): Promise<{ biostarCardId: string; cardId?: string; displayCardId?: string } | null> {
+): Promise<{
+  biostarCardId: string;
+  cardId?: string;
+  displayCardId?: string;
+  /** Set when the card is currently assigned to a user (BioStar refuses to re-assign it). */
+  holderUserId?: string;
+  holderName?: string;
+} | null> {
   const res = await relayFetch<CardCollection>(relayUrl, `/api/cards?limit=1000`);
   const rows = res?.CardCollection?.rows ?? [];
   const n = String(cardNumber);
   const row = rows.find((r) => String(r.card_id) === n || String(r.display_card_id) === n);
-  return row?.id
-    ? { biostarCardId: row.id, cardId: row.card_id, displayCardId: row.display_card_id }
-    : null;
+  if (!row?.id) return null;
+  return {
+    biostarCardId: row.id,
+    cardId: row.card_id,
+    displayCardId: row.display_card_id,
+    holderUserId: row.user_id?.user_id || undefined,
+    holderName: row.user_id?.name || undefined,
+  };
 }
 
 /** PUT /api/users/{id} — assign an enrolled card (by BioStar card id) to the user. */
