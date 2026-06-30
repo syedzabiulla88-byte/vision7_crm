@@ -160,10 +160,9 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [membershipId, memberships, editingId]);
 
-  // VAT-INCLUSIVE model (Saudi): the unit prices entered ARE the final amount
-  // charged. The grand total = line sum - discount. VAT is then extracted from
-  // that gross total, and the net is the total minus VAT. This must mirror the
-  // backend: vat = round(total*rate/(100+rate), 2); net = round(total - vat, 2).
+  // VAT-INCLUSIVE model (Saudi), ZATCA order — mirrors the backend computeInvoiceTotals():
+  // strip VAT from the line sum to the net, subtract the (PRE-VAT) discount, then add VAT
+  // back on the taxable base. The Discount field is therefore a NET (pre-VAT) amount.
   const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
   const lineSum = useMemo(
@@ -174,18 +173,18 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
       ),
     [lineItems],
   );
-  // Gross total (VAT-inclusive) actually charged.
-  const total = useMemo(
-    () => Math.max(lineSum - (Number(discount) || 0), 0),
-    [lineSum, discount],
+  const rateNum = Number(taxRate) || 0;
+  // Net (excl. VAT) before discount = the line sum stripped of VAT.
+  const netBeforeDiscount = useMemo(() => round2((lineSum * 100) / (100 + rateNum)), [lineSum, rateNum]);
+  // Taxable amount (excl. VAT) after the pre-VAT discount.
+  const netTotal = useMemo(
+    () => Math.max(round2(netBeforeDiscount - (Number(discount) || 0)), 0),
+    [netBeforeDiscount, discount],
   );
-  // VAT extracted from the inclusive total.
-  const taxAmount = useMemo(() => {
-    const rate = Number(taxRate) || 0;
-    return round2((total * rate) / (100 + rate));
-  }, [total, taxRate]);
-  // Net (excl. VAT).
-  const netTotal = useMemo(() => round2(total - taxAmount), [total, taxAmount]);
+  // VAT on the discounted taxable base.
+  const taxAmount = useMemo(() => round2((netTotal * rateNum) / 100), [netTotal, rateNum]);
+  // Grand total (incl. VAT).
+  const total = useMemo(() => round2(netTotal + taxAmount), [netTotal, taxAmount]);
 
   const updateLine = (i: number, patch: Partial<LineState>) =>
     setLineItems((items) => items.map((it, idx) => (idx === i ? { ...it, ...patch } : it)));
@@ -593,7 +592,7 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
                 </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="discount">Discount (SAR)</Label>
+                <Label htmlFor="discount">Discount (SAR, pre-VAT)</Label>
                 <Input
                   id="discount"
                   type="number"
@@ -602,6 +601,9 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
                   value={discount}
                   onChange={(e) => setDiscount(e.target.value)}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Taken off the net (excl. VAT) before VAT is applied.
+                </p>
               </div>
             </CardContent>
           </Card>
@@ -611,16 +613,22 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
               <CardTitle>Summary</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              {(Number(discount) || 0) > 0 && (
-                <div className="flex items-baseline justify-between">
-                  <span className="text-muted-foreground">Discount</span>
-                  <span className="tabular-nums">- {formatSAR(Number(discount) || 0)}</span>
-                </div>
-              )}
               <div className="flex items-baseline justify-between">
-                <span className="text-muted-foreground">Total (excl. VAT)</span>
-                <span className="tabular-nums">{formatSAR(netTotal)}</span>
+                <span className="text-muted-foreground">Subtotal (excl. VAT)</span>
+                <span className="tabular-nums">{formatSAR(netBeforeDiscount)}</span>
               </div>
+              {(Number(discount) || 0) > 0 && (
+                <>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-muted-foreground">Discount</span>
+                    <span className="tabular-nums">- {formatSAR(Number(discount) || 0)}</span>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-muted-foreground">Taxable amount</span>
+                    <span className="tabular-nums">{formatSAR(netTotal)}</span>
+                  </div>
+                </>
+              )}
               <div className="flex items-baseline justify-between">
                 <span className="text-muted-foreground">VAT ({Number(taxRate) || 0}%)</span>
                 <span className="tabular-nums">{formatSAR(taxAmount)}</span>

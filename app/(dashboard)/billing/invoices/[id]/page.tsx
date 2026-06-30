@@ -435,20 +435,28 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         <div className="flex justify-end pt-6">
           <div className="w-full space-y-2 text-sm md:w-80">
             <div className="flex justify-between">
-              <span className="text-muted-foreground print:text-black">Total (excl. VAT)</span>
-              <span className="tabular-nums">{formatSAR(subtotal)}</span>
+              <span className="text-muted-foreground print:text-black">Subtotal (excl. VAT)</span>
+              <span className="tabular-nums">{formatSAR(discount > 0 ? subtotal + discount : subtotal)}</span>
             </div>
+            {discount > 0 && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground print:text-black">
+                    Discount{discountPercent > 0 ? ` (${discountPercent}%)` : ""}
+                  </span>
+                  <span className="tabular-nums">- {formatSAR(discount)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground print:text-black">Taxable amount</span>
+                  <span className="tabular-nums">{formatSAR(subtotal)}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between">
               <span className="text-muted-foreground print:text-black">
                 VAT ({Number(invoice.taxRate ?? 0)}%)
               </span>
               <span className="tabular-nums">{formatSAR(tax)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground print:text-black">
-                Discount{discountPercent > 0 ? ` (${discountPercent}%)` : ""}
-              </span>
-              <span className="tabular-nums">- {formatSAR(discount)}</span>
             </div>
             <div className="flex items-center justify-between border-t pt-3 print:border-black">
               <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[#FFCF01]">
