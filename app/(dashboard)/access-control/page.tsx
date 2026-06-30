@@ -986,29 +986,18 @@ function ReassignCardDialog({
 // It enrolls a card + grants door access groups in BioStar itself. Gated on
 // accesscontrol:manage (the caller already checks; the panel guards again on render).
 
-/** Keep only digits from a string. */
-function digitsOf(value?: string | null): string {
-  return (value || "").replace(/\D+/g, "");
-}
-
-/** Small stable numeric hash (djb2) → string. Non-empty even for empty input. */
-function numericHash(input: string): string {
-  let h = 5381;
-  for (let i = 0; i < input.length; i++) h = ((h << 5) + h + input.charCodeAt(i)) >>> 0;
-  return String(h || 1);
-}
-
 /**
- * A stable, non-empty numeric BioStar user_id for a member. Prefers the digits of
- * their phone, then their ID number; otherwise a numeric hash of subjectKind:subjectId
- * (always stable for the same person). BioStar user_ids are strings of digits.
+ * A stable numeric BioStar user_id for a member, kept inside BioStar's valid range
+ * [1, 2_000_000_000]. BioStar requires a NUMERIC user_id and rejects values above
+ * ~2^31 — and any non-digit id — with "Invalid Parameters", so phone digits (12) and
+ * many ID numbers overflow and can't be used. We derive it from a stable djb2 hash of
+ * subjectKind:subjectId instead; staff recognise the user by the name we send on create.
  */
 function stableUserId(m: MemberPick): string {
-  const phone = digitsOf(m.phone);
-  if (phone) return phone;
-  const idn = digitsOf(m.idNumber);
-  if (idn) return idn;
-  return numericHash(`${m.subjectKind}:${m.subjectId}`);
+  let h = 5381;
+  const input = `${m.subjectKind}:${m.subjectId}`;
+  for (let i = 0; i < input.length; i++) h = ((h << 5) + h + input.charCodeAt(i)) >>> 0;
+  return String((h % 2_000_000_000) + 1);
 }
 
 function BiostarPanel({

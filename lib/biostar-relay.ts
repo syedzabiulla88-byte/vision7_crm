@@ -87,10 +87,12 @@ async function relayFetch<T = unknown>(
   }
 
   if (!res.ok) {
-    const msg =
-      (parsed && typeof parsed === "object" && "message" in parsed
-        ? String((parsed as { message?: unknown }).message)
-        : "") || `BioStar request failed (${res.status})`;
+    // BioStar nests its real error under Response.message (e.g. "Invalid Parameters");
+    // some relay errors use a top-level message. Surface whichever is present.
+    const p = parsed as { message?: unknown; Response?: { message?: unknown; code?: unknown } } | null;
+    const biostarMsg = p?.Response?.message ? String(p.Response.message) : "";
+    const topMsg = p && typeof p === "object" && "message" in p ? String(p.message) : "";
+    const msg = biostarMsg || topMsg || `BioStar request failed (${res.status})`;
     throw makeError(msg, res.status, parsed);
   }
   return parsed as T;
