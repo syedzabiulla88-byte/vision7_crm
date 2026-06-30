@@ -399,7 +399,7 @@ export default function InvoicesPage() {
                         <TableCell className="text-right tabular-nums">
                           {formatSAR(getTotal(inv))}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums font-medium text-[#FFCF01]">
+                        <TableCell className="text-right tabular-nums font-medium text-[#011b2b] dark:text-[#FFCF01]">
                           {formatSAR(getBalance(inv))}
                         </TableCell>
                         <TableCell>

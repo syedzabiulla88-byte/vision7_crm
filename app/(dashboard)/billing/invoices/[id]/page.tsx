@@ -306,7 +306,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         {/* Header */}
         <div className="flex flex-col gap-5 border-b pb-6 md:flex-row md:items-start md:justify-between print:border-black">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#FFCF01]">Invoice</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">Invoice</p>
             <h1 className="mt-1 text-3xl font-bold tracking-tight md:text-4xl">
               {invoiceNo(invoice)}
             </h1>
@@ -317,11 +317,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </Badge>
             <div className="mt-4 space-y-1 text-sm">
               <p className="text-muted-foreground print:text-black">
-                <span className="text-xs uppercase tracking-widest text-[#FFCF01]">Issued</span>{" "}
+                <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Issued</span>{" "}
                 {formatDate(invoice.issueDate)}
               </p>
               <p className="text-muted-foreground print:text-black">
-                <span className="text-xs uppercase tracking-widest text-[#FFCF01]">Due</span>{" "}
+                <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Due</span>{" "}
                 {formatDate(invoice.dueDate)}
               </p>
             </div>
@@ -331,14 +331,14 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         {/* From / Billed to */}
         <div className="grid grid-cols-1 gap-8 py-6 md:grid-cols-2">
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#FFCF01]">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
               From
             </p>
             <p className="text-lg font-bold">Vision7</p>
             <p className="text-sm text-muted-foreground print:text-black">Athletic Academy</p>
           </div>
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#FFCF01]">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
               Billed to
             </p>
             {invoice.athlete ? (
@@ -390,16 +390,16 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <table className="w-full text-sm">
             <thead className="border-y bg-muted/40 print:border-black print:bg-transparent">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-[#FFCF01]">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-[#011b2b] dark:text-[#FFCF01]">
                   Description
                 </th>
-                <th className="w-20 px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[#FFCF01]">
+                <th className="w-20 px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[#011b2b] dark:text-[#FFCF01]">
                   Qty
                 </th>
-                <th className="w-32 px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[#FFCF01]">
+                <th className="w-32 px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[#011b2b] dark:text-[#FFCF01]">
                   Unit Price
                 </th>
-                <th className="w-32 px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[#FFCF01]">
+                <th className="w-32 px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.2em] text-[#011b2b] dark:text-[#FFCF01]">
                   Total
                 </th>
               </tr>
@@ -459,7 +459,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               <span className="tabular-nums">{formatSAR(tax)}</span>
             </div>
             <div className="flex items-center justify-between border-t pt-3 print:border-black">
-              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[#FFCF01]">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[#011b2b] dark:text-[#FFCF01]">
                 Total (incl. VAT)
               </span>
               <span className="text-2xl font-bold tabular-nums">{formatSAR(total)}</span>
@@ -472,7 +472,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground print:text-black">Balance due</span>
-              <span className="font-bold tabular-nums text-[#FFCF01] print:text-black">
+              <span className="font-bold tabular-nums text-[#011b2b] dark:text-[#FFCF01] print:text-black">
                 {formatSAR(balance)}
               </span>
             </div>
@@ -481,7 +481,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
         {invoice.notes && (
           <div className="mt-6 border-t pt-6 print:border-black">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#FFCF01]">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
               Notes
             </p>
             <p className="whitespace-pre-wrap text-sm text-muted-foreground print:text-black">
@@ -493,7 +493,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
 
       {/* Payments */}
       <div className="rounded-xl border bg-card p-6 shadow-xs ring-1 ring-foreground/10 print:hidden">
-        <p className="mb-4 text-xs font-semibold uppercase tracking-[0.3em] text-[#FFCF01]">
+        <p className="mb-4 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
           Payments
         </p>
         {payments.length === 0 ? (
