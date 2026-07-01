@@ -38,6 +38,7 @@ import {
   Pencil,
   Download,
   RotateCcw,
+  Upload,
 } from "@/lib/icons";
 import {
   PAYMENT_METHODS,
@@ -68,6 +69,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [error, setError] = useState("");
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pushingZoho, setPushingZoho] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
 
@@ -106,6 +108,19 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       toast.error(err instanceof Error ? err.message : "Failed to generate PDF");
     } finally {
       setDownloadingPdf(false);
+    }
+  };
+
+  const handlePushZoho = async () => {
+    if (pushingZoho) return;
+    setPushingZoho(true);
+    try {
+      await api.invoices.pushZoho(id);
+      toast.success("Pushed to Zoho Books");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to push to Zoho Books");
+    } finally {
+      setPushingZoho(false);
     }
   };
 
@@ -283,11 +298,22 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             Cancel Invoice
           </Button>
         )}
+        {canEdit && (
+          <Button
+            variant="outline"
+            onClick={handlePushZoho}
+            disabled={pushingZoho}
+            className="ml-auto"
+          >
+            <Upload className="h-4 w-4" />
+            {pushingZoho ? "Pushing…" : "Push to Zoho"}
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={handleDownloadPdf}
           disabled={downloadingPdf}
-          className="ml-auto"
+          className={canEdit ? undefined : "ml-auto"}
         >
           <Printer className="h-4 w-4" />
           {downloadingPdf ? "Preparing…" : "PDF"}

@@ -60,6 +60,7 @@ import {
   CloseCircle,
   Check,
   CirclePlus,
+  Upload,
 } from "@/lib/icons";
 import {
   INVOICE_STATUSES,
@@ -502,6 +503,19 @@ export default function InvoicesPage() {
                                       <Download className="h-4 w-4" />
                                       Download PDF
                                     </DropdownMenuItem>
+                                    {canEdit && (
+                                      <DropdownMenuItem
+                                        onClick={() =>
+                                          runRowAction(
+                                            () => api.invoices.pushZoho(inv.id),
+                                            "Pushed to Zoho Books",
+                                          )
+                                        }
+                                      >
+                                        <Upload className="h-4 w-4" />
+                                        Push to Zoho
+                                      </DropdownMenuItem>
+                                    )}
                                     {!isPaid && !isCancelled && canDelete && <DropdownMenuSeparator />}
                                     {!isPaid && !isCancelled && canDelete && (
                                       <DropdownMenuItem

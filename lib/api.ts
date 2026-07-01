@@ -157,6 +157,9 @@ export const api = {
       apiFetch<any>(`/invoices/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     delete: (id: string) => apiFetch<any>(`/invoices/${id}`, { method: "DELETE" }),
     send: (id: string) => apiFetch<any>(`/invoices/${id}/send`, { method: "POST" }),
+    // Force a (re-)push of this invoice to Zoho Books. Returns { zohoInvoiceId }.
+    pushZoho: (id: string) =>
+      apiFetch<{ zohoInvoiceId: string }>(`/invoices/${id}/zoho`, { method: "POST" }),
     cancel: (id: string) => apiFetch<any>(`/invoices/${id}/cancel`, { method: "POST" }),
     // Guided status change: SENT (issue, no email) / DRAFT (reopen) / CANCELLED.
     setStatus: (id: string, status: string) =>
