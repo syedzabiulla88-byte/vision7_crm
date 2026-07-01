@@ -3397,6 +3397,8 @@ function AssignMembershipDialog({
     setExistingMemberships([]);
     setConfirmDuplicate(false);
     setSubjectHasId(null);
+    setIdNumber("");
+    setIdType("NATIONAL_ID");
     setIdExpiry("");
     if (!subject?.id) {
       setCheckingExisting(false);
@@ -3419,15 +3421,24 @@ function AssignMembershipDialog({
         // Does this member already have an ID on file? (contact, or linked athlete)
         const contact = (await api.crm.get(subject.id).catch(() => null)) as any;
         let hasId = !!(contact?.nationalId || contact?.idDocumentUrl);
-        // Seed the expiry input from the loaded record so it can be edited in place.
+        // Seed the ID inputs from the saved record so the member's existing ID shows
+        // (and can be edited in place), instead of an empty field.
         let expiry: string | null | undefined = contact?.idExpiry;
-        if (!hasId && subject.linkedAthleteId) {
+        let idNum: string = contact?.nationalId || "";
+        let idTyp: string = contact?.idType || "";
+        if (subject.linkedAthleteId && (!hasId || !idNum)) {
           const ath = (await api.athletes.get(subject.linkedAthleteId).catch(() => null)) as any;
-          hasId = !!(ath?.idNumber || ath?.idDocumentUrl);
-          if (ath?.idExpiry) expiry = ath.idExpiry;
+          if (ath) {
+            hasId = hasId || !!(ath.idNumber || ath.idDocumentUrl);
+            if (!idNum && ath.idNumber) idNum = ath.idNumber;
+            if (!idTyp && ath.idType) idTyp = ath.idType;
+            if (!expiry && ath.idExpiry) expiry = ath.idExpiry;
+          }
         }
         if (!cancelled) {
           setSubjectHasId(hasId);
+          if (idNum) setIdNumber(idNum);
+          if (idTyp) setIdType(idTyp);
           if (expiry) setIdExpiry(toDateInputValue(expiry));
         }
       } catch {

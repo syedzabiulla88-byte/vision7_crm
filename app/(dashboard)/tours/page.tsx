@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { Pagination } from "@/components/shared/pagination";
 import { PermissionGate } from "@/components/shared/permission-gate";
+import { usePermissions } from "@/components/hooks/use-permissions";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +54,7 @@ import {
   Phone,
   Plus,
   Eye,
+  Edit,
   Trash,
   Check,
   Close,
@@ -181,6 +183,17 @@ function todayInput(): string {
   return new Date(d.getTime() - off * 60_000).toISOString().slice(0, 10);
 }
 
+/** A stored tour date (ISO or yyyy-mm-dd) → yyyy-mm-dd for <input type="date">. */
+function toDateInput(value?: string | null): string {
+  if (!value) return "";
+  // Already a plain date string.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60_000).toISOString().slice(0, 10);
+}
+
 function errMsg(e: unknown, fallback: string): string {
   return e instanceof Error ? e.message : fallback;
 }
@@ -250,6 +263,9 @@ function BookingsTab({
   onAddOpenChange: (open: boolean) => void;
   refreshNonce?: number;
 }) {
+  const { can } = usePermissions();
+  const canEdit = can("tours:edit");
+
   const [items, setItems] = useState<TourBooking[]>([]);
   const [meta, setMeta] = useState<ListMeta | null>(null);
   const [loading, setLoading] = useState(true);
@@ -355,6 +371,29 @@ function BookingsTab({
       reload();
     } catch (e) {
       toast.error(errMsg(e, "Could not update this tour"));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Persist edited fields from the detail dialog. Mirrors setStatusFor:
+  // PATCH the tour, then reconcile the row in `items` + the open `viewing`
+  // record with what the API returns (falling back to the sent patch).
+  const saveEdit = async (patch: TourEditPatch) => {
+    if (!viewing) return;
+    setBusyId(viewing.id);
+    try {
+      const updated = (await api.tours.update(viewing.id, patch)) as
+        | Partial<TourBooking>
+        | undefined;
+      const merge = (t: TourBooking): TourBooking => ({ ...t, ...patch, ...updated });
+      setItems((prev) => prev.map((x) => (x.id === viewing.id ? merge(x) : x)));
+      setViewing((v) => (v && v.id === viewing.id ? merge(v) : v));
+      toast.success("Tour updated");
+      loadOverview();
+    } catch (e) {
+      toast.error(errMsg(e, "Could not update this tour"));
+      throw e; // keep the dialog in edit mode so the user can retry
     } finally {
       setBusyId(null);
     }
@@ -700,9 +739,11 @@ function BookingsTab({
       {/* Detail drawer */}
       <TourDetailDialog
         tour={viewing}
+        canEdit={canEdit}
         onOpenChange={(o) => !o && setViewing(null)}
         busy={viewing ? busyId === viewing.id : false}
         converting={viewing ? converting === viewing.id : false}
+        onSave={saveEdit}
         onSetStatus={(next, label) => viewing && setStatusFor(viewing, next, label)}
         onConvert={() => viewing && convert(viewing)}
         onDelete={() => viewing && setDeleteTarget(viewing)}
@@ -740,26 +781,113 @@ function BookingsTab({
 
 // ─── Tour detail dialog ──────────────────────────────────────────────────────────
 
+/** Fields the detail dialog can PATCH (subset of the tour). */
+interface TourEditPatch {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  partySize: number;
+  date: string;
+  slot: string;
+  kind: TourKind;
+  notes: string;
+}
+
+/** String-backed form mirror of TourEditPatch (partySize kept as text). */
+interface TourEditForm {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  partySize: string;
+  date: string;
+  slot: string;
+  kind: TourKind;
+  notes: string;
+}
+
+function tourToEditForm(t: TourBooking): TourEditForm {
+  return {
+    firstName: t.firstName ?? "",
+    lastName: t.lastName ?? "",
+    email: t.email ?? "",
+    phone: t.phone ?? "",
+    partySize: String(t.partySize ?? 1),
+    date: toDateInput(t.date),
+    slot: t.slot ?? "",
+    kind: t.kind,
+    notes: t.notes ?? "",
+  };
+}
+
 function TourDetailDialog({
   tour,
+  canEdit,
   onOpenChange,
   busy,
   converting,
+  onSave,
   onSetStatus,
   onConvert,
   onDelete,
 }: {
   tour: TourBooking | null;
+  canEdit: boolean;
   onOpenChange: (open: boolean) => void;
   busy: boolean;
   converting: boolean;
+  onSave: (patch: TourEditPatch) => Promise<void>;
   onSetStatus: (next: TourStatus, label: string) => void;
   onConvert: () => void;
   onDelete: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<TourEditForm | null>(null);
+
+  // Reset edit state whenever the dialog opens on a (different) tour.
+  useEffect(() => {
+    setEditing(false);
+    setForm(tour ? tourToEditForm(tour) : null);
+  }, [tour?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setField = <K extends keyof TourEditForm>(k: K, v: TourEditForm[K]) =>
+    setForm((f) => (f ? { ...f, [k]: v } : f));
+
+  const startEdit = () => {
+    if (tour) setForm(tourToEditForm(tour));
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    if (tour) setForm(tourToEditForm(tour));
+    setEditing(false);
+  };
+
+  const submitEdit = async () => {
+    if (!form) return;
+    const patch: TourEditPatch = {
+      firstName: form.firstName.trim(),
+      lastName: form.lastName.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      partySize: Math.max(1, Number(form.partySize) || 1),
+      date: form.date,
+      slot: form.slot.trim(),
+      kind: form.kind,
+      notes: form.notes.trim(),
+    };
+    try {
+      await onSave(patch);
+      setEditing(false);
+    } catch {
+      // onSave already toasts; stay in edit mode so the user can retry.
+    }
+  };
+
   return (
     <Dialog open={!!tour} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         {tour && (
           <>
             <DialogHeader>
@@ -778,115 +906,241 @@ function TourDetailDialog({
               </DialogDescription>
             </DialogHeader>
 
-            <div className="max-h-[60vh] space-y-5 overflow-y-auto pr-1">
-              <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-                <div className="flex flex-col">
-                  <span className="text-xs text-muted-foreground">Date</span>
-                  <span className="text-sm">{formatDate(tour.date)}</span>
+            {editing && form ? (
+              // ── Edit mode ──────────────────────────────────────────────────
+              <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="edit-first">First name</Label>
+                    <Input
+                      id="edit-first"
+                      value={form.firstName}
+                      onChange={(e) => setField("firstName", e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="edit-last">Last name</Label>
+                    <Input
+                      id="edit-last"
+                      value={form.lastName}
+                      onChange={(e) => setField("lastName", e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-xs text-muted-foreground">Slot</span>
-                  <span className="inline-flex items-center gap-1 text-sm">
-                    <Clock className="size-3" />
-                    {tour.slot || "—"}
-                  </span>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="edit-phone">Phone</Label>
+                    <Input
+                      id="edit-phone"
+                      type="tel"
+                      value={form.phone}
+                      onChange={(e) => setField("phone", e.target.value)}
+                      placeholder="+966 5X XXX XXXX"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="edit-email">Email</Label>
+                    <Input
+                      id="edit-email"
+                      type="email"
+                      value={form.email}
+                      onChange={(e) => setField("email", e.target.value)}
+                      placeholder="name@example.com"
+                    />
+                  </div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-xs text-muted-foreground">Party size</span>
-                  <span className="text-sm tabular-nums">{tour.partySize ?? 1}</span>
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-xs text-muted-foreground">Phone</span>
-                  {tour.phone ? (
-                    <a
-                      href={`tel:${tour.phone}`}
-                      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Type</Label>
+                    <Select
+                      value={form.kind}
+                      onValueChange={(v) => setField("kind", (v as TourKind) ?? "ACADEMY")}
                     >
-                      <Phone className="size-3" />
-                      {tour.phone}
-                    </a>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">—</span>
-                  )}
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ACADEMY">Academy</SelectItem>
+                        <SelectItem value="LEISURE">Leisure</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="edit-party">Party size</Label>
+                    <Input
+                      id="edit-party"
+                      type="number"
+                      min={1}
+                      value={form.partySize}
+                      onChange={(e) => setField("partySize", e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-xs text-muted-foreground">Email</span>
-                  {tour.email ? (
-                    <a
-                      href={`mailto:${tour.email}`}
-                      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                    >
-                      <Mail className="size-3" />
-                      {tour.email}
-                    </a>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">—</span>
-                  )}
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="edit-date">Date</Label>
+                    <Input
+                      id="edit-date"
+                      type="date"
+                      value={form.date}
+                      onChange={(e) => setField("date", e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="edit-slot">Slot</Label>
+                    <Input
+                      id="edit-slot"
+                      type="time"
+                      value={form.slot}
+                      onChange={(e) => setField("slot", e.target.value)}
+                      placeholder="10:00"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="edit-notes">Notes</Label>
+                  <Textarea
+                    id="edit-notes"
+                    value={form.notes}
+                    onChange={(e) => setField("notes", e.target.value)}
+                    placeholder="Anything worth capturing about this visit…"
+                  />
                 </div>
               </div>
+            ) : (
+              // ── Read-only view ─────────────────────────────────────────────
+              <div className="max-h-[60vh] space-y-5 overflow-y-auto pr-1">
+                <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Date</span>
+                    <span className="text-sm">{formatDate(tour.date)}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Slot</span>
+                    <span className="inline-flex items-center gap-1 text-sm">
+                      <Clock className="size-3" />
+                      {tour.slot || "—"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Party size</span>
+                    <span className="text-sm tabular-nums">{tour.partySize ?? 1}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Phone</span>
+                    {tour.phone ? (
+                      <a
+                        href={`tel:${tour.phone}`}
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                      >
+                        <Phone className="size-3" />
+                        {tour.phone}
+                      </a>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-muted-foreground">Email</span>
+                    {tour.email ? (
+                      <a
+                        href={`mailto:${tour.email}`}
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                      >
+                        <Mail className="size-3" />
+                        {tour.email}
+                      </a>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    )}
+                  </div>
+                </div>
 
-              {tour.contactId && (
-                <Link
-                  href={`/crm/${tour.contactId}`}
-                  className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                >
-                  <ArrowRight className="size-3" />
-                  View linked contact
-                </Link>
-              )}
-
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Notes</span>
-                {tour.notes ? (
-                  <p className="text-sm whitespace-pre-wrap break-words">{tour.notes}</p>
-                ) : (
-                  <span className="text-sm text-muted-foreground">—</span>
+                {tour.contactId && (
+                  <Link
+                    href={`/crm/${tour.contactId}`}
+                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    <ArrowRight className="size-3" />
+                    View linked contact
+                  </Link>
                 )}
-              </div>
-            </div>
 
-            <DialogFooter showCloseButton>
-              <Button
-                variant="destructive"
-                onClick={onDelete}
-                title="Delete tour"
-              >
-                <Trash />
-                Delete
-              </Button>
-              {!tour.contactId && (
-                <Button onClick={onConvert} disabled={converting}>
-                  <UserAdd />
-                  {converting ? "Converting…" : "Convert to contact"}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Notes</span>
+                  {tour.notes ? (
+                    <p className="text-sm whitespace-pre-wrap break-words">{tour.notes}</p>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {editing ? (
+              <DialogFooter>
+                <Button variant="outline" onClick={cancelEdit} disabled={busy}>
+                  Cancel
                 </Button>
-              )}
-              {tour.status === "CONFIRMED" && (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() => onSetStatus("NO_SHOW", "Marked as no-show")}
-                    disabled={busy}
-                  >
-                    No-show
+                <Button onClick={submitEdit} disabled={busy}>
+                  <Check />
+                  {busy ? "Saving…" : "Save"}
+                </Button>
+              </DialogFooter>
+            ) : (
+              <DialogFooter showCloseButton>
+                {canEdit && (
+                  <Button variant="outline" onClick={startEdit} title="Edit tour">
+                    <Edit />
+                    Edit
                   </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => onSetStatus("CANCELLED", "Tour cancelled")}
-                    disabled={busy}
-                  >
-                    <Close />
-                    Cancel
+                )}
+                <Button
+                  variant="destructive"
+                  onClick={onDelete}
+                  title="Delete tour"
+                >
+                  <Trash />
+                  Delete
+                </Button>
+                {!tour.contactId && (
+                  <Button onClick={onConvert} disabled={converting}>
+                    <UserAdd />
+                    {converting ? "Converting…" : "Convert to contact"}
                   </Button>
-                  <Button
-                    onClick={() => onSetStatus("COMPLETED", "Marked completed")}
-                    disabled={busy}
-                  >
-                    <Check />
-                    Mark completed
-                  </Button>
-                </>
-              )}
-            </DialogFooter>
+                )}
+                {tour.status === "CONFIRMED" && (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => onSetStatus("NO_SHOW", "Marked as no-show")}
+                      disabled={busy}
+                    >
+                      No-show
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => onSetStatus("CANCELLED", "Tour cancelled")}
+                      disabled={busy}
+                    >
+                      <Close />
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => onSetStatus("COMPLETED", "Marked completed")}
+                      disabled={busy}
+                    >
+                      <Check />
+                      Mark completed
+                    </Button>
+                  </>
+                )}
+              </DialogFooter>
+            )}
           </>
         )}
       </DialogContent>
