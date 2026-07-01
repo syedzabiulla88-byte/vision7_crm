@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Settings, Save, Eye, Warning, DoorOpen, Wifi, WifiOff, RefreshCw, Download } from "@/lib/icons";
+import { Settings, Save, Eye, Warning, DoorOpen, Wifi, WifiOff, RefreshCw, Download, CreditCard } from "@/lib/icons";
 import { relayHealth, type RelayHealth } from "@/lib/biostar-relay";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -270,6 +270,12 @@ export default function SystemSettingsPage() {
                 itself is a catalog key (group "BioStar"), already edited by the form
                 above; this card adds context and a browser-side reachability probe. */}
             <BiostarRelayCard relayUrl={values["integrations.biostar.relay_url"] ?? ""} />
+
+            {/* One-click Tabby webhook registration — POSTs this CRM's webhook URL +
+                a fresh signing secret to Tabby, then stores the secret server-side. */}
+            <PermissionGate permission="settings:edit">
+              <TabbyWebhookCard />
+            </PermissionGate>
           </div>
         )}
       </div>
@@ -512,6 +518,45 @@ function BiostarRelayCard({ relayUrl }: { relayUrl: string }) {
             Full steps in the README inside.
           </p>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Tabby webhook registration (one-click) ───────────────────────────────────────
+
+function TabbyWebhookCard() {
+  const [registering, setRegistering] = useState(false);
+
+  async function register() {
+    setRegistering(true);
+    try {
+      const res = await api.payments.registerTabbyWebhook();
+      toast.success("Tabby webhook registered: " + res.url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Tabby webhook registration failed");
+    } finally {
+      setRegistering(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <CreditCard className="h-4 w-4 text-muted-foreground" />
+          Tabby webhook
+        </CardTitle>
+        <CardDescription>
+          Registers this CRM&apos;s Tabby webhook URL + signing secret with Tabby automatically
+          (needs the Tabby secret key + merchant code set above).
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button onClick={register} disabled={registering} variant="outline">
+          <RefreshCw className={cn("h-4 w-4", registering && "animate-spin")} />
+          {registering ? "Registering…" : "Register Tabby webhook"}
+        </Button>
       </CardContent>
     </Card>
   );

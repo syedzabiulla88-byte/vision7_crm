@@ -197,6 +197,10 @@ export const api = {
       apiFetch<Array<{ provider: "tabby" | "tamara" | "stripe"; enabled: boolean }>>(
         `/payments/providers`,
       ),
+    // Register this CRM's Tabby webhook URL + signing secret with Tabby.
+    // Needs the Tabby secret key + merchant code configured. Returns { id, url }.
+    registerTabbyWebhook: () =>
+      apiFetch<{ id: string; url: string }>(`/payments/tabby/register-webhook`, { method: "POST" }),
   },
 
   accounting: {
