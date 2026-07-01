@@ -98,6 +98,37 @@ export interface PresignResult {
   maxSize: number;
 }
 
+/**
+ * Permission-aware dashboard bundle from GET /dashboard/overview. Every section
+ * is optional — present only when the caller holds the matching dashboard:<card>
+ * permission. `dashboard:revenue` → revenue, `:memberships` → memberships,
+ * `:pipeline` → pipeline, `:bookings` → bookings, `:followups` → followups,
+ * `:club` → club.
+ */
+export interface DashboardOverview {
+  generatedAt: string;
+  revenue?: {
+    invoices: number;
+    total: number;
+    paid: number;
+    outstanding: number;
+    byStatus: { status: string; count: number; total: number; paid: number; outstanding: number }[];
+  };
+  memberships?: {
+    byStatus: { status: string; count: number }[];
+    active: number;
+    expiringNext30Days: number;
+  };
+  pipeline?: {
+    totalContacts: number;
+    byStage: { stage: string; count: number }[];
+    open: number;
+  };
+  bookings?: { total: number; last30Days: number };
+  followups?: { overdue: number; today: number };
+  club?: { teams: number; athletes: number; upcomingEvents: number };
+}
+
 type Params = Record<string, unknown>;
 
 // ─── Typed API namespaces (surface mirrors admin-api.js) ──────────────────────────
@@ -244,6 +275,13 @@ export const api = {
     statements: (params?: Params) => apiFetch<any>(`/reports/statements${qs(params)}`),
     // §control-plane — cross-app KPI bundle for the dashboard / single pane of glass
     overview: () => apiFetch<any>(`/reports/overview`),
+  },
+
+  // Permission-aware dashboard bundle: returns only the sections (cards) the
+  // caller's dashboard:<card> permissions allow, so each role sees realistic
+  // data instead of the all-or-nothing /reports/overview blob.
+  dashboard: {
+    overview: () => apiFetch<DashboardOverview>(`/dashboard/overview`),
   },
 
   // §control-plane — audit trail (role/user/settings changes)

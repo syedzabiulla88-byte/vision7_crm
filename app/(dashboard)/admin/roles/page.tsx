@@ -68,6 +68,32 @@ const ACTION_LABEL: Record<PermAction, string> = {
   revenue: "Revenue",
 };
 
+// The 'dashboard' module is rendered as its own "Dashboard cards" panel rather
+// than a row in the action matrix — each key is a standalone toggle. Keep it out
+// of the matrix (both its rows and its extra columns) so the card actions don't
+// spawn sparse columns. `dashboard:view` leads; the six card keys follow.
+const DASHBOARD_MODULE = "dashboard";
+const DASHBOARD_KEY_ORDER = [
+  "dashboard:view",
+  "dashboard:revenue",
+  "dashboard:memberships",
+  "dashboard:pipeline",
+  "dashboard:bookings",
+  "dashboard:followups",
+  "dashboard:club",
+];
+// Helper text under each card so admins know what else to grant for the
+// jump-to button to appear for the role's users.
+const DASHBOARD_HINTS: Record<string, string> = {
+  "dashboard:view": "Lets the role open the dashboard page",
+  "dashboard:revenue": "Opens billing (needs Invoices access)",
+  "dashboard:memberships": "needs Members access",
+  "dashboard:pipeline": "needs CRM access",
+  "dashboard:bookings": "needs Bookings access",
+  "dashboard:followups": "needs Follow-ups access",
+  "dashboard:club": "needs Teams access",
+};
+
 interface Role {
   id: string;
   name: string;
@@ -307,18 +333,30 @@ function RoleFormDialog({
   // We collapse entries into one ROW per module (carrying its label + the set of
   // actions it exposes), grouped by `group`, preserving first-seen order. The
   // union of action columns to render is derived from what modules actually use.
-  const { matrixGroups, columns, allKeys } = useMemo(() => {
+  const { matrixGroups, columns, allKeys, dashboardCards } = useMemo(() => {
     const groupMap = new Map<
       string,
       Map<string, { module: string; label: string; actions: Map<PermAction, string> }>
     >();
     const usedExtras = new Set<PermAction>();
     const keys: string[] = [];
+    // The dashboard module's catalog entries, keyed by permission key so we can
+    // present them in the fixed contract order regardless of catalog ordering.
+    const dashByKey = new Map<string, Permission>();
 
     for (const p of permissions) {
       const action = (p.action ?? (p.key.split(":")[1] as PermAction)) as PermAction | undefined;
       const moduleKey = p.module ?? p.key.split(":")[0];
       if (!action || !moduleKey) continue;
+
+      // Pull the dashboard module out of the matrix entirely — it renders as its
+      // own panel, and its card actions must not contribute to matrix columns
+      // (usedExtras) or rows.
+      if (moduleKey === DASHBOARD_MODULE) {
+        dashByKey.set(p.key, p);
+        continue;
+      }
+
       keys.push(p.key);
       if (EXTRA_ACTIONS.includes(action)) usedExtras.add(action);
 
@@ -346,7 +384,20 @@ function RoleFormDialog({
       group,
       modules: Array.from(mods.values()),
     }));
-    return { matrixGroups: groups, columns: cols, allKeys: keys };
+
+    // Order the dashboard cards by the fixed contract; append any unexpected
+    // future dashboard keys after, so nothing silently disappears.
+    const ordered: Permission[] = [];
+    for (const key of DASHBOARD_KEY_ORDER) {
+      const entry = dashByKey.get(key);
+      if (entry) {
+        ordered.push(entry);
+        dashByKey.delete(key);
+      }
+    }
+    for (const entry of dashByKey.values()) ordered.push(entry);
+
+    return { matrixGroups: groups, columns: cols, allKeys: keys, dashboardCards: ordered };
   }, [permissions]);
 
   // A role holding the '*' wildcard has everything — surface that, but the
@@ -379,6 +430,12 @@ function RoleFormDialog({
   const allCount = allKeys.filter((k) => selected.has(k)).length;
   const allChecked = allKeys.length > 0 && allCount === allKeys.length;
   const someChecked = allCount > 0 && !allChecked;
+
+  // Dashboard-cards panel select-all state (tri-state), independent of the matrix.
+  const dashKeys = dashboardCards.map((c) => c.key);
+  const dashCount = dashKeys.filter((k) => selected.has(k)).length;
+  const dashAllChecked = dashKeys.length > 0 && dashCount === dashKeys.length;
+  const dashSomeChecked = dashCount > 0 && !dashAllChecked;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -571,6 +628,68 @@ function RoleFormDialog({
                 </div>
               )}
             </div>
+
+            {dashboardCards.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Dashboard cards</Label>
+                  <span className="text-xs text-muted-foreground">
+                    {dashCount} of {dashKeys.length} selected
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Pick which cards this role sees on the dashboard. Each card needs the
+                  related module access below for its &ldquo;open&rdquo; shortcut to appear.
+                </p>
+
+                <div className="overflow-hidden rounded-md border border-border">
+                  <label className="flex cursor-pointer items-center gap-2.5 border-b border-border bg-muted/40 px-3 py-2.5">
+                    <Checkbox
+                      aria-label="Select all dashboard cards"
+                      checked={dashAllChecked}
+                      indeterminate={dashSomeChecked}
+                      onCheckedChange={() => setKeys(dashKeys, !dashAllChecked)}
+                    />
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Select all cards
+                    </span>
+                  </label>
+
+                  <div className="divide-y divide-border">
+                    {dashboardCards.map((card) => {
+                      const on = selected.has(card.key);
+                      const hint = DASHBOARD_HINTS[card.key];
+                      return (
+                        <label
+                          key={card.key}
+                          className="flex cursor-pointer items-start gap-2.5 px-3 py-2.5 hover:bg-muted/30"
+                        >
+                          <Checkbox
+                            className="mt-0.5"
+                            aria-label={card.label ?? card.key}
+                            checked={on}
+                            onCheckedChange={() => toggle(card.key)}
+                          />
+                          <div className="min-w-0 space-y-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-medium">
+                                {card.label ?? card.key}
+                              </span>
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {card.key}
+                              </span>
+                            </div>
+                            {hint && (
+                              <p className="text-xs text-muted-foreground">{hint}</p>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <DialogFooter className="border-t border-border p-4">
