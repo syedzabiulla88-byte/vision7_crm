@@ -54,6 +54,8 @@ import {
   Folder as Archive,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
+  Search,
   Plus,
   Eye,
   Upload,
@@ -351,7 +353,12 @@ export default function EnquiriesPage() {
   const { can } = usePermissions();
   const canEdit = can("enquiries:edit");
 
+  const LIMIT = 20;
   const [status, setStatus] = useState<EnquiryStatus>("NEW");
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [items, setItems] = useState<Enquiry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -396,9 +403,10 @@ export default function EnquiriesPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.crm.enquiries({ status });
+      const res = await api.crm.enquiries({ status, q: debouncedQ || undefined, page, limit: LIMIT });
       const list: Enquiry[] = Array.isArray(res) ? res : res?.data ?? [];
       setItems(list);
+      setTotal(typeof res?.total === "number" ? res.total : list.length);
       setExpanded(new Set());
     } catch (e) {
       const msg = errMsg(e, "Failed to load enquiries");
@@ -407,11 +415,21 @@ export default function EnquiriesPage() {
     } finally {
       setLoading(false);
     }
-  }, [status]);
+  }, [status, debouncedQ, page]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Debounce the search box, and reset to page 1 whenever the filter/search changes.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [status, debouncedQ]);
 
   // NEW-count badge on the tab — best-effort, never blocks the list.
   const loadNewCount = useCallback(() => {
@@ -685,6 +703,17 @@ export default function EnquiriesPage() {
           </TabsList>
         </Tabs>
 
+        {/* Search */}
+        <div className="relative max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name, email, phone or message…"
+            className="pl-9"
+          />
+        </div>
+
         {/* List */}
         {loading ? (
           <div className="space-y-3">
@@ -900,6 +929,38 @@ export default function EnquiriesPage() {
                 })}
               </TableBody>
             </Table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!error && total > LIMIT && (
+          <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <span>
+              Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, total)} of {total}
+            </span>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || loading}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Prev
+              </Button>
+              <span>
+                Page {page} of {Math.max(1, Math.ceil(total / LIMIT))}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= Math.ceil(total / LIMIT) || loading}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         )}
       </div>
