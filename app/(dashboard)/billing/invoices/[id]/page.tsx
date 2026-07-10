@@ -240,7 +240,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             </Button>
           </>
         )}
-        {isDraft && canDelete && (
+        {canDelete && (
           <Button
             variant="outline"
             onClick={() => setConfirm("delete")}
@@ -653,7 +653,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         open={confirm === "delete"}
         onOpenChange={(o) => !o && setConfirm(null)}
         title="Delete invoice"
-        description="Delete this invoice? This cannot be undone."
+        description={
+          paid > 0 || payments.length > 0 || ["PAID", "PARTIAL"].includes(status)
+            ? `This invoice has payment(s) recorded${paid > 0 ? ` (${formatSAR(paid)})` : ""}. Deleting it permanently removes the invoice AND its payment records — this cannot be undone.`
+            : "Delete this invoice? This cannot be undone."
+        }
         confirmLabel="Delete"
         variant="destructive"
         onConfirm={runConfirm}

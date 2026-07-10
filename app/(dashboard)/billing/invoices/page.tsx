@@ -528,7 +528,7 @@ export default function InvoicesPage() {
                                         Cancel
                                       </DropdownMenuItem>
                                     )}
-                                    {isDraft && canDelete && (
+                                    {canDelete && (
                                       <DropdownMenuItem
                                         variant="destructive"
                                         onClick={() =>
@@ -575,9 +575,9 @@ export default function InvoicesPage() {
         }
         description={
           confirm?.type === "delete"
-            ? `Delete invoice ${
-                confirm ? invoiceNo(confirm.invoice) : ""
-              }? This cannot be undone.`
+            ? (["PAID", "PARTIAL"].includes(String(confirm.invoice?.status || "").toUpperCase())
+                ? `Invoice ${invoiceNo(confirm.invoice)} has recorded payment(s). Deleting it permanently removes the invoice AND its payment records — this cannot be undone.`
+                : `Delete invoice ${invoiceNo(confirm.invoice)}? This cannot be undone.`)
             : confirm?.type === "cancel"
               ? `Cancel invoice ${
                   confirm ? invoiceNo(confirm.invoice) : ""
