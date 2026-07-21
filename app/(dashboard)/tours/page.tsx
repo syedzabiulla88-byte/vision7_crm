@@ -1430,6 +1430,10 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
   const [bookingEndDate, setBookingEndDate] = useState("");
   const [configLoading, setConfigLoading] = useState(true);
   const [configSaving, setConfigSaving] = useState(false);
+  // Closed days (no bookings): weekday numbers 0=Sun … 6=Sat, plus one-off holiday dates.
+  const [closedWeekdays, setClosedWeekdays] = useState<number[]>([]);
+  const [holidayDates, setHolidayDates] = useState<string[]>([]);
+  const [newHoliday, setNewHoliday] = useState("");
 
   const loadSlots = useCallback(async () => {
     setLoading(true);
@@ -1461,6 +1465,8 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
       );
       setBookingStartDate(res?.bookingStartDate ?? "");
       setBookingEndDate(res?.bookingEndDate ?? "");
+      setClosedWeekdays(Array.isArray(res?.closedWeekdays) ? res.closedWeekdays : []);
+      setHolidayDates(Array.isArray(res?.holidayDates) ? res.holidayDates : []);
     } catch (e) {
       toast.error(errMsg(e, "Failed to load tour settings"));
     } finally {
@@ -1539,6 +1545,24 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
     }
   };
 
+  const toggleWeekday = (d: number) =>
+    setClosedWeekdays((prev) =>
+      prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b),
+    );
+
+  const addHoliday = () => {
+    const d = newHoliday.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      toast.error("Pick a valid date");
+      return;
+    }
+    setHolidayDates((prev) => (prev.includes(d) ? prev : [...prev, d].sort()));
+    setNewHoliday("");
+  };
+
+  const removeHoliday = (d: string) =>
+    setHolidayDates((prev) => prev.filter((x) => x !== d));
+
   const saveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setConfigSaving(true);
@@ -1548,6 +1572,8 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
         bookingWindowDays: Math.max(0, Number(bookingWindowDays) || 0),
         bookingStartDate: bookingStartDate || null,
         bookingEndDate: bookingEndDate || null,
+        closedWeekdays,
+        holidayDates,
       });
       toast.success("Tour settings saved");
     } catch (err) {
@@ -1749,6 +1775,84 @@ function ScheduleTab({ refreshNonce = 0 }: { refreshNonce?: number }) {
                 Set a fixed range to only accept bookings between these dates (e.g. 2 Jul – 31
                 Jul). Leave both blank to use the rolling window above. Clear a field to remove it.
               </p>
+
+              {/* Closed days — no bookings taken */}
+              <div className="space-y-4 rounded-md border bg-muted/30 p-4">
+                <div>
+                  <Label className="text-sm font-medium">Closed days — no bookings</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Tap the weekdays you&apos;re closed; visitors can&apos;t book a tour then
+                    (Friday is the usual weekend closure).
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((name, idx) => {
+                    const on = closedWeekdays.includes(idx);
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => toggleWeekday(idx)}
+                        disabled={configLoading}
+                        aria-pressed={on}
+                        className={`rounded-full border px-3.5 py-1.5 text-sm transition-colors disabled:opacity-50 ${
+                          on
+                            ? "border-destructive bg-destructive/10 font-medium text-destructive"
+                            : "border-input text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="tour-holiday" className="text-sm font-medium">
+                    Holiday dates — one-off closures
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="tour-holiday"
+                      type="date"
+                      value={newHoliday}
+                      onChange={(e) => setNewHoliday(e.target.value)}
+                      className="w-44"
+                      disabled={configLoading}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addHoliday}
+                      disabled={configLoading || !newHoliday}
+                    >
+                      <Plus /> Add
+                    </Button>
+                  </div>
+                  {holidayDates.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {holidayDates.map((d) => (
+                        <Badge key={d} variant="secondary" className="gap-1 pr-1 font-normal">
+                          {d}
+                          <button
+                            type="button"
+                            onClick={() => removeHoliday(d)}
+                            aria-label={`Remove ${d}`}
+                            className="rounded-full p-0.5 text-muted-foreground hover:text-destructive"
+                          >
+                            <Close className="size-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    For Eid, National Day, and other one-off closures. Applied when you save.
+                  </p>
+                </div>
+              </div>
+
               <div className="flex justify-end">
                 <Button type="submit" disabled={configSaving || configLoading}>
                   {configSaving ? "Saving…" : "Save settings"}
