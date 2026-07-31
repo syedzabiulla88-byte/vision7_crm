@@ -235,6 +235,15 @@ function PlanCard({ plan, onDelete }: { plan: Plan; onDelete: () => void }) {
               Inactive
             </Badge>
           )}
+          {plan.isFamilyPlan && (
+            <Badge
+              variant="outline"
+              className="text-sky-600 dark:text-sky-400"
+              title="Family package: holders can link covered members, who are invoiced at zero."
+            >
+              Family
+            </Badge>
+          )}
         </div>
 
         <div>

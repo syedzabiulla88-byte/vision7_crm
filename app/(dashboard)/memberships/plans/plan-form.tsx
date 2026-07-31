@@ -42,6 +42,7 @@ interface PlanFormState {
   color: string;
   maxFreezeDays: string;
   requiresAthlete: boolean;
+  isFamilyPlan: boolean;
 }
 
 function emptyPlan(): PlanFormState {
@@ -61,6 +62,7 @@ function emptyPlan(): PlanFormState {
     color: "",
     maxFreezeDays: "",
     requiresAthlete: true,
+    isFamilyPlan: false,
   };
 }
 
@@ -90,6 +92,7 @@ function fromPlan(initial: Plan): PlanFormState {
       initial.requiresAthlete != null
         ? initial.requiresAthlete
         : selectorType === "ACADEMY",
+    isFamilyPlan: !!initial.isFamilyPlan,
   };
 }
 
@@ -153,6 +156,7 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
         maxFreezeDays:
           form.maxFreezeDays === "" ? null : Number(form.maxFreezeDays),
         requiresAthlete: form.requiresAthlete,
+        isFamilyPlan: form.isFamilyPlan,
       };
 
       if (editingId) {
@@ -435,6 +439,22 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
                   id="plan-requires-athlete"
                   checked={form.requiresAthlete}
                   onCheckedChange={(v) => set("requiresAthlete", v)}
+                />
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-0.5">
+                  <Label htmlFor="plan-family">Family package</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Covers more than one person. Only holders of a family plan
+                    get the &ldquo;add family member&rdquo; option on the members
+                    page, and the members they cover are invoiced at zero
+                    because this package already paid for them.
+                  </p>
+                </div>
+                <Switch
+                  id="plan-family"
+                  checked={form.isFamilyPlan}
+                  onCheckedChange={(v) => set("isFamilyPlan", v)}
                 />
               </div>
             </CardContent>

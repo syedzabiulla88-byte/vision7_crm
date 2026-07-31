@@ -81,6 +81,12 @@ export interface Plan {
   color?: string | null;
   maxFreezeDays?: number | null;
   requiresAthlete?: boolean | null;
+  /**
+   * Family package: covers more than one person. Gates the "add family member"
+   * UI on the members page, and makes covered dependents invoice at zero since
+   * this package already paid for them.
+   */
+  isFamilyPlan?: boolean | null;
 }
 
 export function formatSAR(n: number | string | null | undefined): string {
