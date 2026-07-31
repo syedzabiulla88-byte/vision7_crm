@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -2041,7 +2042,7 @@ function AssignPlanDialog({
   const [bnplProvider, setBnplProvider] = useState<"tabby" | "tamara">("tabby");
   // Gateway availability — disables Tabby/Tamara when keys aren't configured.
   const [providers, setProviders] = useState<
-    Array<{ provider: "tabby" | "tamara" | "stripe"; enabled: boolean }>
+    Array<{ provider: "tabby" | "tamara" | "telr"; enabled: boolean }>
   >([]);
   // Pay-link result returned by assign for tabby/tamara — shown with a Copy button.
   const [payLink, setPayLink] = useState<{ url: string; provider: string } | null>(null);
@@ -2194,10 +2195,11 @@ function AssignPlanDialog({
         return;
       }
     }
-    // BNPL pay-link modes need their gateway configured (keys in Settings).
-    if (planPrice > 0 && (billingMode === "tabby" || billingMode === "tamara")) {
-      if (!providers.find((p) => p.provider === billingMode)?.enabled) {
-        toast.error(`${billingMode === "tabby" ? "Tabby" : "Tamara"} is not configured — add keys in Settings.`);
+    // Pay-link modes need their gateway configured (keys in Settings).
+    const payLinkGateway = payLinkGatewayFor(billingMode);
+    if (planPrice > 0 && payLinkGateway) {
+      if (!providers.find((p) => p.provider === payLinkGateway)?.enabled) {
+        toast.error(`${GATEWAY_LABEL[payLinkGateway]} is not configured. Add the keys in Settings.`);
         return;
       }
     }
@@ -2223,8 +2225,8 @@ function AssignPlanDialog({
           ? { payNow: true, paymentMethod, paymentReference: paymentReference.trim() || undefined, discountPercent: discountPct }
           : billingMode === "deposit"
             ? { depositAmount: depositValue, paymentMethod, paymentReference: paymentReference.trim() || undefined, discountPercent: discountPct }
-            : billingMode === "tabby" || billingMode === "tamara"
-              ? { paymentMethod: billingMode, discountPercent: discountPct }
+            : payLinkGateway
+              ? { paymentMethod: payLinkGateway, discountPercent: discountPct }
               : billingMode === "manual"
                 ? {
                     paymentMethod: "manual-reference",
@@ -2243,7 +2245,7 @@ function AssignPlanDialog({
             : billingMode === "deposit"
               ? "Deposit recorded — invoice raised, balance owed (membership pending)"
               : "Invoice raised — membership pending until paid";
-    const isPayLinkMode = billingMode === "tabby" || billingMode === "tamara";
+    const isPayLinkMode = !!payLinkGateway;
     try {
       let res: any;
       if (needsAthleteDetails) {
@@ -2320,8 +2322,8 @@ function AssignPlanDialog({
       // Pay-link modes: surface the returned link (Copy + emailed note) and keep
       // the dialog open so staff can copy it. Other modes close as before.
       if (isPayLinkMode && res?.payLink?.url) {
-        setPayLink({ url: res.payLink.url, provider: res.payLink.provider || billingMode });
-        toast.success(`${billingMode === "tabby" ? "Tabby" : "Tamara"} pay-link created`);
+        setPayLink({ url: res.payLink.url, provider: res.payLink.provider || payLinkGateway || "" });
+        toast.success(`${payLinkGateway ? GATEWAY_LABEL[payLinkGateway] : "Pay"}-link created and emailed`);
       } else {
         onOpenChange(false);
       }
@@ -2495,7 +2497,7 @@ function AssignPlanDialog({
                         onClick={() => setBillingMode("later")}
                         className={`rounded-md border px-3 py-2 text-sm ${billingMode === "later" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
                       >
-                        Invoice — pay later
+                        Invoice + card pay-link
                       </button>
                       <button
                         type="button"
@@ -2623,11 +2625,11 @@ function AssignPlanDialog({
                           placeholder="Transaction ID, cheque no., bank ref…"
                         />
                       </>
-                    ) : billingMode === "tabby" || billingMode === "tamara" ? (
+                    ) : payLinkGatewayFor(billingMode) ? (
                       payLink ? (
                         <div className="space-y-2 rounded-md border bg-muted/30 p-3">
                           <p className="text-xs font-medium text-foreground">
-                            {payLink.provider === "tamara" ? "Tamara" : "Tabby"} pay-link
+                            {payLink.provider === "tamara" ? "Tamara" : payLink.provider === "telr" ? "Card" : "Tabby"} pay-link
                           </p>
                           <div className="flex items-center gap-2">
                             <Input readOnly value={payLink.url} className="text-xs" />
@@ -2651,7 +2653,7 @@ function AssignPlanDialog({
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          A {billingMode === "tamara" ? "Tamara" : "Tabby"} pay-link will be created and
+                          A {GATEWAY_LABEL[payLinkGatewayFor(billingMode) ?? "telr"]} pay-link will be created and
                           emailed to {contact.email || "the customer"}. The membership stays{" "}
                           <strong>pending</strong> until they complete payment.
                         </p>

@@ -223,9 +223,9 @@ export const api = {
   payments: {
     list: (params?: Params) => apiFetch<any>(`/payments${qs(params)}`),
     // BNPL/gateway availability — which providers have keys configured.
-    // [{ provider:"tabby"|"tamara"|"stripe", enabled:boolean }]. @Public route.
+    // [{ provider:"tabby"|"tamara"|"telr", enabled:boolean }]. @Public route.
     providers: () =>
-      apiFetch<Array<{ provider: "tabby" | "tamara" | "stripe"; enabled: boolean }>>(
+      apiFetch<Array<{ provider: "tabby" | "tamara" | "telr"; enabled: boolean }>>(
         `/payments/providers`,
       ),
     // Register this CRM's Tabby webhook URL + signing secret with Tabby.
