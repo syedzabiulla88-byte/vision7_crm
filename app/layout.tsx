@@ -10,6 +10,9 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 export const metadata: Metadata = {
   title: "Vision7 CRM — Control Plane",
   description: "Vision7 business control plane: CRM, memberships, billing, and cross-app management.",
+  icons: {
+    icon: [{ url: "/v7-favicon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({
