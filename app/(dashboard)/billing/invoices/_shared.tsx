@@ -106,6 +106,12 @@ export interface Invoice {
   customerEmail?: string | null;
   customerPhone?: string | null;
   customerAddress?: string | null;
+  /**
+   * Staff member who raised the invoice. Resolved server-side from createdById
+   * (a plain string, not a relation) and only returned by the detail endpoint,
+   * so it is absent on list rows.
+   */
+  createdBy?: { id?: string; name?: string | null; email?: string | null } | null;
   lineItems?: InvoiceLine[];
   items?: InvoiceLine[];
   payments?: Payment[];

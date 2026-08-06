@@ -350,6 +350,14 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                 <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Due</span>{" "}
                 {formatDate(invoice.dueDate)}
               </p>
+              {/* Who raised it. Hidden rather than shown blank when the creating
+                  user can no longer be resolved. */}
+              {(invoice.createdBy?.name || invoice.createdBy?.email) && (
+                <p className="text-muted-foreground print:text-black">
+                  <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Issued by</span>{" "}
+                  {invoice.createdBy?.name || invoice.createdBy?.email}
+                </p>
+              )}
             </div>
           </div>
         </div>
