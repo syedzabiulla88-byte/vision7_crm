@@ -401,7 +401,9 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
       setForm({
         firstName: c.firstName,
         lastName: c.lastName || "",
-        email: c.email,
+        // Nullable in the schema: phone-only enquiries have no email, and the
+        // edit form calls .trim() on it.
+        email: c.email || "",
         phone: c.phone || "",
         address: c.address || "",
         type: c.type,
@@ -446,6 +448,8 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
       await api.crm.update(id, {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim() || null,
+        // Unique across contacts; the backend rejects a clash with a named error.
+        email: form.email.trim() || null,
         phone: form.phone.trim() || null,
         address: form.address.trim() || null,
         // type (member status) intentionally NOT sent — managed via Members page.
@@ -659,6 +663,10 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                   <div className="space-y-3">
                     <TextField label="First name" value={form.firstName} onChange={(v) => upd("firstName", v)} />
                     <TextField label="Last name" value={form.lastName} onChange={(v) => upd("lastName", v)} />
+                    <TextField label="Email" type="email" value={form.email} onChange={(v) => upd("email", v)} />
+                    <p className="-mt-1 text-xs text-muted-foreground">
+                      Must be unique across contacts. Leave blank for phone-only records.
+                    </p>
                     <TextField label="Phone" type="tel" value={form.phone} onChange={(v) => upd("phone", v)} />
                     <TextField label="Address" value={form.address} onChange={(v) => upd("address", v)} />
                   </div>
