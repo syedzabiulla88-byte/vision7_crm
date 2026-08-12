@@ -15,7 +15,11 @@ export const GATEWAY_LABEL: Record<PayLinkGateway, string> = {
   telr: "Card",
 };
 
-/** The gateway backing a billing mode, or null when the mode is not a pay-link. */
+/**
+ * The gateway backing a billing mode, or null when the mode is not a pay-link.
+ * "invoice" is the deliberate null case: issue the invoice, send no link at
+ * all — the escape hatch when no gateway is configured or wanted.
+ */
 export function payLinkGatewayFor(billingMode: string): PayLinkGateway | null {
   if (billingMode === "later") return "telr";
   if (billingMode === "tabby") return "tabby";

@@ -1155,7 +1155,7 @@ interface NewMemberForm {
   planId: string;
   startDate: string;
   endDate: string;
-  billingMode: "now" | "deposit" | "later" | "tabby" | "tamara" | "manual";
+  billingMode: "now" | "deposit" | "later" | "invoice" | "tabby" | "tamara" | "manual";
   depositAmount: string;
   discountPercent: string;
   paymentMethod: string;
@@ -1820,6 +1820,7 @@ function NewMemberDialog({
                               { v: "now", label: "Pay in full now" },
                               { v: "deposit", label: "Take a deposit" },
                               { v: "later", label: "Invoice + card pay-link" },
+                              { v: "invoice", label: "Invoice only (pay later)" },
                               { v: "tabby", label: "Tabby (pay-link)" },
                               { v: "tamara", label: "Tamara (pay-link)" },
                               { v: "manual", label: "Manual BNPL reference" },
@@ -3324,7 +3325,7 @@ function AssignMembershipDialog({
   // (partial payment, balance owed), issue an open invoice to pay later, send a
   // Tabby/Tamara BNPL pay-link, or record an external BNPL payment by reference.
   const [billingMode, setBillingMode] = useState<
-    "now" | "deposit" | "later" | "tabby" | "tamara" | "manual"
+    "now" | "deposit" | "later" | "invoice" | "tabby" | "tamara" | "manual"
   >("now");
   const [depositAmount, setDepositAmount] = useState("");
   // Discount % off the membership plan price (0–100); default empty = no discount.
@@ -4027,6 +4028,7 @@ function AssignMembershipDialog({
                               { v: "now", label: "Pay in full now" },
                               { v: "deposit", label: "Take a deposit" },
                               { v: "later", label: "Invoice + card pay-link" },
+                              { v: "invoice", label: "Invoice only (pay later)" },
                               { v: "tabby", label: "Tabby (pay-link)" },
                               { v: "tamara", label: "Tamara (pay-link)" },
                               { v: "manual", label: "Manual BNPL reference" },

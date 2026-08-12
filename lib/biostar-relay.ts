@@ -18,15 +18,17 @@ import { api } from "@/lib/api";
 // ─── Relay URL (from app settings) ────────────────────────────────────────────────
 
 /**
- * Read the configured relay URL from `integrations.biostar.relay_url`.
- * `api.settings.list()` returns a flat key→value record. Returns "" when unset.
- * The trailing slash is trimmed so callers can safely append `/api/...`.
+ * Read the configured relay URL via the scoped `/settings/relay-url` endpoint.
+ * The old approach fetched the FULL settings list, which needs settings:manage:
+ * no operator role has that, so staff silently got "" here and card access did
+ * nothing for them (plus a 403 in the backend log on every visit). The scoped
+ * endpoint is open to any signed-in staff member. Returns "" when unset; the
+ * trailing slash is trimmed so callers can safely append `/api/...`.
  */
 export async function getRelayUrl(): Promise<string> {
   try {
-    const all = await api.settings.list();
-    const raw = (all?.["integrations.biostar.relay_url"] || "").trim();
-    return raw.replace(/\/+$/, "");
+    const { url } = await api.settings.relayUrl();
+    return (url || "").trim().replace(/\/+$/, "");
   } catch {
     return "";
   }

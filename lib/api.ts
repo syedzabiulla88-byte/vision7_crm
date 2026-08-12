@@ -467,6 +467,9 @@ export const api = {
   settings: {
     public: () => apiFetch<Record<string, string>>(`/settings/public`),
     list: () => apiFetch<Record<string, string>>(`/settings`),
+    // BioStar relay URL only — readable by any signed-in staff. The full list
+    // needs settings:manage, which operator roles don't (and shouldn't) have.
+    relayUrl: () => apiFetch<{ url: string }>(`/settings/relay-url`),
     // §control-plane — typed settings catalog (namespaced keys + metadata)
     catalog: () =>
       apiFetch<Array<{ key: string; label: string; group: string; type: string; public: boolean; secret: boolean }>>(

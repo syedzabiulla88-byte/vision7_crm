@@ -2039,7 +2039,7 @@ function AssignPlanDialog({
   //  "tabby" / "tamara" → BNPL pay-link: backend creates the link + emails it
   //  "manual"  → record an externally-taken BNPL payment by reference
   const [billingMode, setBillingMode] = useState<
-    "now" | "deposit" | "later" | "tabby" | "tamara" | "manual"
+    "now" | "deposit" | "later" | "invoice" | "tabby" | "tamara" | "manual"
   >("now");
   const [depositAmount, setDepositAmount] = useState("");
   // Discount % off the membership plan price (0–100); default empty = no discount.
@@ -2506,6 +2506,13 @@ function AssignPlanDialog({
                         className={`rounded-md border px-3 py-2 text-sm ${billingMode === "later" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
                       >
                         Invoice + card pay-link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBillingMode("invoice")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "invoice" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                      >
+                        Invoice only (pay later)
                       </button>
                       <button
                         type="button"
