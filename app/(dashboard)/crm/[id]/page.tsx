@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { formatCrn } from "@/lib/utils";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -568,6 +569,11 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 {contact.firstName} {contact.lastName || ""}
               </h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
+                {contact.crn != null && (
+                  <Badge variant="outline" className="font-mono text-[11px]">
+                    {formatCrn(contact.crn)}
+                  </Badge>
+                )}
                 <StageQuickPicker contact={contact} onChanged={load} />
                 <Badge variant="outline" className={typeBadgeClass(contact.type)}>
                   {contact.type}

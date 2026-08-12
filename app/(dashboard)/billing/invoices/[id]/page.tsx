@@ -61,6 +61,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const { can } = usePermissions();
   const canEdit = can("invoices:edit");
+  const [numberDialogOpen, setNumberDialogOpen] = useState(false);
   const canDelete = can("invoices:delete");
   const canRecordPayment = can("payments:create");
   const canManageRefund = can("refunds:manage");
@@ -333,8 +334,20 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         <div className="flex flex-col gap-5 border-b pb-6 md:flex-row md:items-start md:justify-between print:border-black">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">Invoice</p>
-            <h1 className="mt-1 text-3xl font-bold tracking-tight md:text-4xl">
+            <h1 className="mt-1 flex items-center gap-2 text-3xl font-bold tracking-tight md:text-4xl">
               {invoiceNo(invoice)}
+              {canEdit && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="print:hidden"
+                  title="Edit invoice number"
+                  onClick={() => setNumberDialogOpen(true)}
+                >
+                  Edit no.
+                </Button>
+              )}
             </h1>
           </div>
           <div className="text-left md:text-right">
@@ -602,6 +615,14 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       />
 
       {/* Send / Resend / Cancel / Delete confirmations */}
+
+      <EditNumberDialog
+        open={numberDialogOpen}
+        onOpenChange={setNumberDialogOpen}
+        invoiceId={invoice.id}
+        current={invoiceNo(invoice)}
+        onSaved={load}
+      />
       <ConfirmDialog
         open={confirm === "send"}
         onOpenChange={(o) => !o && setConfirm(null)}
@@ -949,6 +970,78 @@ function RefundDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Edit the invoice number. The backend validates the INV-YYYY-NNNN format and
+ * uniqueness, renames the Zoho Books mirror FIRST (refusing to change anything
+ * if Zoho declines), and raises the numbering sequence when the new number is
+ * beyond it so future invoices can never collide.
+ */
+function EditNumberDialog({
+  open,
+  onOpenChange,
+  invoiceId,
+  current,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  invoiceId: string;
+  current: string;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(current);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (open) setValue(current);
+  }, [open, current]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.invoices.setNumber(invoiceId, value.trim());
+      toast.success("Invoice number updated");
+      onOpenChange(false);
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update number");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit invoice number</DialogTitle>
+          <DialogDescription>
+            Format INV-YYYY-NNNN. The Zoho Books mirror is renamed along with it;
+            if Zoho refuses, nothing is changed on either side.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="inv-number-edit">Number</Label>
+          <Input
+            id="inv-number-edit"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="INV-2026-0031"
+            className="font-mono"
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={save} disabled={saving || !value.trim()}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

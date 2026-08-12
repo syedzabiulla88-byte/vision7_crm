@@ -195,6 +195,9 @@ export const api = {
     // Guided status change: SENT (issue, no email) / DRAFT (reopen) / CANCELLED.
     setStatus: (id: string, status: string) =>
       apiFetch<any>(`/invoices/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
+    // Edit the invoice number (backend keeps the Zoho mirror in sync).
+    setNumber: (id: string, number: string) =>
+      apiFetch<any>(`/invoices/${id}/number`, { method: "PATCH", body: JSON.stringify({ number }) }),
     // Mark fully paid — records the remaining balance as a payment.
     markPaid: (id: string, data?: { method?: string; reference?: string }) =>
       apiFetch<any>(`/invoices/${id}/mark-paid`, { method: "POST", body: JSON.stringify(data || {}) }),
