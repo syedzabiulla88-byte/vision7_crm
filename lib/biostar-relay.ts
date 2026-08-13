@@ -202,6 +202,8 @@ export interface BiostarUserState {
   /** Access-group ids + names the user currently belongs to. */
   accessGroupIds: string[];
   accessGroupNames: string[];
+  /** Face credentials on the user: template faces and/or visual faces. */
+  faces: { id: string; kind: "face" | "visual_face" }[];
   expiry?: string;
 }
 
@@ -216,6 +218,9 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
         name?: string;
         cards?: Array<{ id?: string; card_id?: string; display_card_id?: string }>;
         access_groups?: Array<{ id?: string; name?: string }>;
+        faces?: Array<{ id?: string | number }>;
+        visual_faces?: Array<{ id?: string | number }>;
+        visualFaces?: Array<{ id?: string | number }>;
         expiry_datetime?: string;
       };
     }>(relayUrl, `/api/users/${encodeURIComponent(userId)}`);
@@ -228,12 +233,16 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
         .filter((c) => c.number),
       accessGroupIds: (u.access_groups || []).map((g) => String(g.id ?? "")).filter(Boolean),
       accessGroupNames: (u.access_groups || []).map((g) => String(g.name ?? g.id ?? "")).filter(Boolean),
+      faces: [
+        ...(u.faces || []).map((f) => ({ id: String(f.id ?? ""), kind: "face" as const })),
+        ...(u.visual_faces || u.visualFaces || []).map((f) => ({ id: String(f.id ?? ""), kind: "visual_face" as const })),
+      ],
       expiry: u.expiry_datetime,
     };
   } catch (err) {
     const e = err as RelayError;
     if (e.status === 400 || e.status === 404) {
-      return { exists: false, cards: [], accessGroupIds: [], accessGroupNames: [] };
+      return { exists: false, cards: [], accessGroupIds: [], accessGroupNames: [], faces: [] };
     }
     throw err;
   }
@@ -418,6 +427,148 @@ export async function scanCard(
     res;
   const raw = card?.card_id ?? card?.display_card_id;
   return { cardId: raw != null && raw !== "" ? String(raw) : undefined, cardType: card?.card_type, raw: res };
+}
+
+// ─── Face credentials (FaceStation / BioStation face-recognition devices) ─────────
+
+/** A face captured at a device, ready to be written onto a user. */
+export interface ScannedFace {
+  /** Which BioStar credential family the device produced. */
+  kind: "visual_face" | "face";
+  /** The scan response's credential object, passed back to BioStar verbatim. */
+  payload: Record<string, unknown>;
+  raw?: unknown;
+}
+
+/**
+ * Capture a face at a face-recognition device.
+ *
+ * BioStar splits faces into two credential families with separate endpoints:
+ *   POST /api/devices/{id}/scan_visual_face  — "visual face" devices
+ *                                              (FaceStation F2, BioStation 3)
+ *   POST /api/devices/{id}/scan_face         — template-face devices
+ *                                              (FaceStation 2, FaceLite)
+ * We try visual-face first (the newer family) and fall back to template-face
+ * when the device rejects it. NOTE: written blind against BioStar's documented
+ * API — the LAN was unreachable when this shipped, so if the deployed BioStar
+ * build nests the response differently, adjust the unwrap list below.
+ */
+export async function scanFace(relayUrl: string, deviceId: string): Promise<ScannedFace> {
+  const attempt = async (endpoint: string, kind: ScannedFace["kind"]): Promise<ScannedFace> => {
+    const res = await relayFetch<Record<string, any>>(
+      relayUrl,
+      `/api/devices/${encodeURIComponent(deviceId)}/${endpoint}`,
+      { method: "POST" },
+    );
+    // Known nesting variants, mirroring scan_card's behaviour across versions.
+    const obj =
+      res?.VisualFace ??
+      res?.visual_face ??
+      res?.Face ??
+      res?.face ??
+      res?.VisualFaceCollection?.rows?.[0] ??
+      res?.FaceCollection?.rows?.[0] ??
+      res;
+    if (!obj || typeof obj !== "object" || Object.keys(obj).length === 0) {
+      throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
+    }
+    return { kind, payload: obj as Record<string, unknown>, raw: res };
+  };
+  try {
+    return await attempt("scan_visual_face", "visual_face");
+  } catch (err) {
+    const e = err as RelayError;
+    // 400/404/405 → this device speaks the template-face dialect instead.
+    if (e.status && [400, 404, 405].includes(e.status)) {
+      return attempt("scan_face", "face");
+    }
+    throw err;
+  }
+}
+
+/** PUT /api/users/{id} — write a captured face onto the user (replace semantics). */
+export async function enrollFaceToUser(
+  relayUrl: string,
+  userId: string,
+  scanned: ScannedFace,
+): Promise<void> {
+  const key = scanned.kind === "visual_face" ? "visual_faces" : "faces";
+  const body = { User: { [key]: [scanned.payload] } };
+  await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
+}
+
+/** PUT /api/users/{id} with empty face arrays — remove ALL face data from the user. */
+export async function revokeUserFaces(relayUrl: string, userId: string): Promise<void> {
+  const body = { User: { faces: [], visual_faces: [] } };
+  await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
+}
+
+export interface FaceAssignArgs {
+  relayUrl: string;
+  name: string;
+  userId: string;
+  /** The face captured by scanFace(). */
+  scanned: ScannedFace;
+  /** The DESIRED final set of access-group ids (used only when applyGroups). */
+  accessGroupIds: string[];
+  /** Default true; false = leave door groups untouched (managed elsewhere). */
+  applyGroups?: boolean;
+  /** Membership validUntil (any date string) or undefined → DEFAULT_EXPIRY. */
+  expiry?: string | null;
+}
+
+/**
+ * The face twin of assignCardAndAccess: same user + groups steps, with the
+ * card step swapped for writing the captured face onto the user.
+ */
+export async function assignFaceAndAccess(args: FaceAssignArgs): Promise<StepResult[]> {
+  const { relayUrl, name, userId, scanned, accessGroupIds, expiry } = args;
+  const applyGroups = args.applyGroups !== false;
+  const steps: StepResult[] = [];
+
+  try {
+    const exists = await findUser(relayUrl, userId);
+    if (exists) {
+      await updateUser(relayUrl, { name, userId, expiry: expiry || undefined });
+      steps.push({ label: "User", ok: true, message: `Updated ${name} (#${userId})` });
+    } else {
+      await createUser(relayUrl, { name, userId, expiry: expiry || undefined });
+      steps.push({ label: "User", ok: true, message: `Created ${name} (#${userId})` });
+    }
+  } catch (err) {
+    steps.push({ label: "User", ok: false, message: errMsg(err) });
+    return steps;
+  }
+
+  try {
+    await enrollFaceToUser(relayUrl, userId, scanned);
+    steps.push({
+      label: "Enroll face",
+      ok: true,
+      message: scanned.kind === "visual_face" ? "Visual face enrolled" : "Face template enrolled",
+    });
+  } catch (err) {
+    steps.push({ label: "Enroll face", ok: false, message: errMsg(err) });
+    return steps;
+  }
+
+  if (applyGroups) {
+    try {
+      await grantAccessGroups(relayUrl, userId, accessGroupIds);
+      steps.push({
+        label: "Access groups",
+        ok: true,
+        message:
+          accessGroupIds.length === 0
+            ? "Cleared all door groups"
+            : `Set ${accessGroupIds.length} door group${accessGroupIds.length === 1 ? "" : "s"}`,
+      });
+    } catch (err) {
+      steps.push({ label: "Access groups", ok: false, message: errMsg(err) });
+    }
+  }
+
+  return steps;
 }
 
 // ─── Orchestrated assign (user → card → assign → access groups) ───────────────────

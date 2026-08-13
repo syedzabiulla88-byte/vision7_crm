@@ -24,7 +24,10 @@ import {
   listAccessGroups,
   listDevices,
   scanCard,
+  scanFace,
   assignCardAndAccess,
+  assignFaceAndAccess,
+  revokeUserFaces,
   getBiostarUser,
   revokeUserCard,
   findCardByNumber,
@@ -670,6 +673,12 @@ function CardsPanel({
   const [revokeTarget, setRevokeTarget] = useState<BiostarUserState["cards"][number] | null>(null);
   const [revoking, setRevoking] = useState(false);
 
+  // Face credentials (face-recognition devices) — same source of truth, same panel.
+  const [faces, setFaces] = useState<BiostarUserState["faces"]>([]);
+  const [faceAssignOpen, setFaceAssignOpen] = useState(false);
+  const [faceRevokeOpen, setFaceRevokeOpen] = useState(false);
+  const [revokingFaces, setRevokingFaces] = useState(false);
+
   const canTalkToBiostar = Boolean(relayUrl) && online;
 
   const load = useCallback(async () => {
@@ -679,9 +688,11 @@ function CardsPanel({
     try {
       const u = await getBiostarUser(relayUrl, userId);
       setCards(u.cards);
+      setFaces(u.faces);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't read BioStar cards");
       setCards([]);
+      setFaces([]);
     } finally {
       setLoading(false);
     }
@@ -690,8 +701,26 @@ function CardsPanel({
   // (Re)load whenever the member changes or the relay comes online.
   useEffect(() => {
     if (canTalkToBiostar) load();
-    else setCards([]);
+    else {
+      setCards([]);
+      setFaces([]);
+    }
   }, [canTalkToBiostar, load]);
+
+  const confirmRevokeFaces = async () => {
+    if (!relayUrl) return;
+    setRevokingFaces(true);
+    try {
+      await revokeUserFaces(relayUrl, userId);
+      toast.success("Face data removed");
+      setFaceRevokeOpen(false);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove face data");
+    } finally {
+      setRevokingFaces(false);
+    }
+  };
 
   const confirmRevoke = async () => {
     if (!revokeTarget || !relayUrl) return;
@@ -719,10 +748,16 @@ function CardsPanel({
             </CardDescription>
           </div>
           {canManage && canTalkToBiostar && (
-            <Button size="sm" onClick={() => setAssignOpen(true)}>
-              <CreditCard className="h-4 w-4" />
-              Assign card
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setFaceAssignOpen(true)}>
+                <ScanLine className="h-4 w-4" />
+                Scan Face
+              </Button>
+              <Button size="sm" onClick={() => setAssignOpen(true)}>
+                <CreditCard className="h-4 w-4" />
+                Assign card
+              </Button>
+            </div>
           )}
         </div>
       </CardHeader>
@@ -789,7 +824,58 @@ function CardsPanel({
             </Table>
           </div>
         )}
+
+        {/* Face data — read from the same BioStar user record as the cards. */}
+        {canTalkToBiostar && !error && (
+          <div className="mt-3 flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+            <span className="text-muted-foreground">
+              Face:{" "}
+              {faces.length > 0 ? (
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                  enrolled ({faces.map((f) => (f.kind === "visual_face" ? "visual" : "template")).join(", ")})
+                </span>
+              ) : (
+                "not enrolled"
+              )}
+            </span>
+            {canManage && faces.length > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setFaceRevokeOpen(true)}
+                title="Remove face data"
+              >
+                <Ban className="h-4 w-4" />
+                Remove
+              </Button>
+            )}
+          </div>
+        )}
       </CardContent>
+
+      {faceAssignOpen && relayUrl && (
+        <FaceAssignDialog
+          relayUrl={relayUrl}
+          selected={selected}
+          detail={detail}
+          onClose={() => setFaceAssignOpen(false)}
+          onDone={() => {
+            setFaceAssignOpen(false);
+            load();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={faceRevokeOpen}
+        onOpenChange={setFaceRevokeOpen}
+        title="Remove face data"
+        description={`Remove ALL face data for ${selected.name} in BioStar? They will no longer be recognised by the face devices.`}
+        confirmLabel="Remove"
+        variant="destructive"
+        loading={revokingFaces}
+        onConfirm={confirmRevokeFaces}
+      />
 
       {assignOpen && relayUrl && (
         <CardsAssignDialog
@@ -1427,6 +1513,167 @@ function BiostarAssignDialog({
           <Button onClick={submit} disabled={submitting || currentLoading}>
             <DoorOpen className="h-4 w-4" />
             {submitting ? "Saving…" : steps ? "Save again" : actionLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Scan-face dialog (BioStar-backed) ────────────────────────────────────────────
+//
+// The face twin of CardsAssignDialog. There is no manual-entry path for a face, so
+// the flow is: pick a face device → member looks at it → capture → enroll onto the
+// BioStar user in one motion. Door groups are untouched (applyGroups: false), same
+// as the card flow — they're managed in the door-access panel.
+
+function FaceAssignDialog({
+  relayUrl,
+  selected,
+  detail,
+  onClose,
+  onDone,
+}: {
+  relayUrl: string;
+  selected: MemberPick;
+  detail: MemberDetail | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const userId = stableUserId(selected);
+  const validUntil = detail?.membership?.validUntil ?? undefined;
+
+  const [devices, setDevices] = useState<BiostarDevice[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(true);
+  const [scanningDevice, setScanningDevice] = useState<string | null>(null);
+  const [steps, setSteps] = useState<StepResult[] | null>(null);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setDevices(await listDevices(relayUrl));
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to load devices");
+      } finally {
+        setLoadingDevices(false);
+      }
+    })();
+  }, [relayUrl]);
+
+  async function scanAndEnroll(deviceId: string) {
+    setScanningDevice(deviceId);
+    setSteps(null);
+    try {
+      const scanned = await scanFace(relayUrl, deviceId);
+      toast.success(`Face captured (${scanned.kind === "visual_face" ? "visual" : "template"})`);
+      const result = await assignFaceAndAccess({
+        relayUrl,
+        name: selected.name,
+        userId,
+        scanned,
+        accessGroupIds: [],
+        applyGroups: false, // door groups are managed in the BioStar door-access panel
+        expiry: validUntil,
+      });
+      setSteps(result);
+      if (result.every((s) => s.ok)) {
+        setDone(true);
+        toast.success("Face enrolled in BioStar");
+        onDone();
+      } else {
+        toast.error("Some steps failed — see details below.");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Face scan failed";
+      toast.error(
+        /not respond|timeout/i.test(msg)
+          ? "Device timed out — click the device again and have the member face it within a few seconds."
+          : msg,
+      );
+    } finally {
+      setScanningDevice(null);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Scan face</DialogTitle>
+          <DialogDescription>
+            Pick a face-recognition device, then have{" "}
+            <span className="font-medium text-foreground">{selected.name}</span> look at it. The
+            captured face is enrolled onto their BioStar user. Door groups are managed separately
+            under door access.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="rounded-md border bg-muted/30 p-2">
+            <p className="mb-2 text-xs text-muted-foreground">
+              Devices (face capture only works on face-recognition models):
+            </p>
+            {loadingDevices ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">Loading devices…</p>
+            ) : devices.length === 0 ? (
+              <p className="py-2 text-center text-xs text-muted-foreground">No devices found.</p>
+            ) : (
+              <div className="max-h-48 space-y-1 overflow-y-auto">
+                {devices.map((d) => {
+                  const online = String(d.status) === "1";
+                  const scanning = scanningDevice === d.id;
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      disabled={!!scanningDevice}
+                      onClick={() => scanAndEnroll(d.id)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
+                        scanningDevice && "opacity-60",
+                      )}
+                    >
+                      <span className="truncate">{d.name || d.id}</span>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[10px]",
+                          online ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
+                        )}
+                      >
+                        {scanning ? "Scanning…" : online ? "Online" : "Offline"}
+                      </Badge>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {steps && (
+            <div className="space-y-1.5 rounded-md border p-3">
+              <p className="text-xs font-medium text-muted-foreground">Result</p>
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  {s.ok ? (
+                    <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <CircleX className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  )}
+                  <span>
+                    <span className="font-medium">{s.label}:</span>{" "}
+                    <span className={cn(!s.ok && "text-destructive")}>{s.message}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={!!scanningDevice}>
+            {done ? "Close" : "Cancel"}
           </Button>
         </DialogFooter>
       </DialogContent>
