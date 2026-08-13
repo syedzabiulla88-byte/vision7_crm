@@ -1586,10 +1586,15 @@ function FaceAssignDialog({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Face scan failed";
+      // Same lesson as cards, different shape: BioStar rejects a credential that
+      // clashes with another user (duplicate-face detection) with a plain 400 —
+      // translate it, since staff can't act on the raw message.
       toast.error(
         /not respond|timeout/i.test(msg)
           ? "Device timed out — click the device again and have the member face it within a few seconds."
-          : msg,
+          : /duplicate|already/i.test(msg)
+            ? "BioStar reports this face may already be enrolled on another member. Remove it there first, then retry."
+            : msg,
       );
     } finally {
       setScanningDevice(null);

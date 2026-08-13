@@ -221,6 +221,10 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
         faces?: Array<{ id?: string | number }>;
         visual_faces?: Array<{ id?: string | number }>;
         visualFaces?: Array<{ id?: string | number }>;
+        credentials?: {
+          faces?: Array<{ id?: string | number }>;
+          visualFaces?: Array<{ id?: string | number }>;
+        };
         expiry_datetime?: string;
       };
     }>(relayUrl, `/api/users/${encodeURIComponent(userId)}`);
@@ -233,9 +237,14 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
         .filter((c) => c.number),
       accessGroupIds: (u.access_groups || []).map((g) => String(g.id ?? "")).filter(Boolean),
       accessGroupNames: (u.access_groups || []).map((g) => String(g.name ?? g.id ?? "")).filter(Boolean),
+      // Official builds report faces under User.credentials.*; some report them
+      // top-level. A build that omits them entirely just shows "not enrolled".
       faces: [
-        ...(u.faces || []).map((f) => ({ id: String(f.id ?? ""), kind: "face" as const })),
-        ...(u.visual_faces || u.visualFaces || []).map((f) => ({ id: String(f.id ?? ""), kind: "visual_face" as const })),
+        ...((u.credentials?.faces || u.faces) || []).map((f) => ({ id: String(f.id ?? ""), kind: "face" as const })),
+        ...((u.credentials?.visualFaces || u.visual_faces || u.visualFaces) || []).map((f) => ({
+          id: String(f.id ?? ""),
+          kind: "visual_face" as const,
+        })),
       ],
       expiry: u.expiry_datetime,
     };
@@ -443,63 +452,98 @@ export interface ScannedFace {
 /**
  * Capture a face at a face-recognition device.
  *
- * BioStar splits faces into two credential families with separate endpoints:
- *   POST /api/devices/{id}/scan_visual_face  — "visual face" devices
- *                                              (FaceStation F2, BioStation 3)
- *   POST /api/devices/{id}/scan_face         — template-face devices
- *                                              (FaceStation 2, FaceLite)
- * We try visual-face first (the newer family) and fall back to template-face
- * when the device rejects it. NOTE: written blind against BioStar's documented
- * API — the LAN was unreachable when this shipped, so if the deployed BioStar
- * build nests the response differently, adjust the unwrap list below.
+ * OFFICIAL route (Suprema article 24000072992, "Add Visual Face Credential by
+ * Scanning Face on a Device", stated for BioStar <= 2.9.0):
+ *
+ *   GET /api/devices/{id}/credentials/face?pose_sensitivity=<0-9>
+ *   -> { credentials: { faces: [ { template_ex_normalized_image, templates: [...] } ] } }
+ *
+ * The returned face object is then attached to the user verbatim under
+ * User.credentials.visualFaces (see enrollFaceToUser). Newer/older BioStar
+ * builds have shipped device-scan variants, so when the official route is
+ * rejected we fall back to POST scan_visual_face, then POST scan_face (the
+ * legacy IR-template family used by FaceStation 2 / FaceLite).
  */
 export async function scanFace(relayUrl: string, deviceId: string): Promise<ScannedFace> {
-  const attempt = async (endpoint: string, kind: ScannedFace["kind"]): Promise<ScannedFace> => {
-    const res = await relayFetch<Record<string, any>>(
-      relayUrl,
-      `/api/devices/${encodeURIComponent(deviceId)}/${endpoint}`,
-      { method: "POST" },
-    );
-    // Known nesting variants, mirroring scan_card's behaviour across versions.
+  const dev = encodeURIComponent(deviceId);
+
+  const unwrap = (res: Record<string, any>): Record<string, unknown> | null => {
     const obj =
+      res?.credentials?.faces?.[0] ??            // official shape
+      res?.Credentials?.faces?.[0] ??
       res?.VisualFace ??
       res?.visual_face ??
       res?.Face ??
       res?.face ??
       res?.VisualFaceCollection?.rows?.[0] ??
       res?.FaceCollection?.rows?.[0] ??
-      res;
-    if (!obj || typeof obj !== "object" || Object.keys(obj).length === 0) {
-      throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
+      null;
+    if (obj && typeof obj === "object" && Object.keys(obj).length > 0) return obj;
+    // Some builds answer with the credential at top level.
+    if (res && typeof res === "object" && ("template_ex_normalized_image" in res || "templates" in res)) {
+      return res as Record<string, unknown>;
     }
-    return { kind, payload: obj as Record<string, unknown>, raw: res };
+    return null;
   };
+
+  const rejected = (e: RelayError) => !!e.status && [400, 404, 405].includes(e.status);
+
+  // 1) Official: GET credentials/face (pose_sensitivity is a required param; 8 of 0-9
+  //    accepts slightly imperfect poses, matching BioStar's own UI default region).
   try {
-    return await attempt("scan_visual_face", "visual_face");
+    const res = await relayFetch<Record<string, any>>(
+      relayUrl,
+      `/api/devices/${dev}/credentials/face?pose_sensitivity=8`,
+    );
+    const payload = unwrap(res);
+    if (payload) return { kind: "visual_face", payload, raw: res };
+    throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
   } catch (err) {
-    const e = err as RelayError;
-    // 400/404/405 → this device speaks the template-face dialect instead.
-    if (e.status && [400, 404, 405].includes(e.status)) {
-      return attempt("scan_face", "face");
-    }
-    throw err;
+    if (!rejected(err as RelayError)) throw err;
   }
+
+  // 2) Variant seen on some builds.
+  try {
+    const res = await relayFetch<Record<string, any>>(relayUrl, `/api/devices/${dev}/scan_visual_face`, {
+      method: "POST",
+    });
+    const payload = unwrap(res);
+    if (payload) return { kind: "visual_face", payload, raw: res };
+    throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
+  } catch (err) {
+    if (!rejected(err as RelayError)) throw err;
+  }
+
+  // 3) Legacy IR-template devices.
+  const res = await relayFetch<Record<string, any>>(relayUrl, `/api/devices/${dev}/scan_face`, {
+    method: "POST",
+  });
+  const payload = unwrap(res);
+  if (!payload) {
+    throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
+  }
+  return { kind: "face", payload, raw: res };
 }
 
-/** PUT /api/users/{id} — write a captured face onto the user (replace semantics). */
+/**
+ * PUT /api/users/{id} — write a captured face onto the user. Official nesting
+ * (same Suprema article): User.credentials.visualFaces for visual faces;
+ * the legacy IR family attaches as User.credentials.faces. Replace semantics,
+ * deliberately: re-scanning a member overwrites their previous face.
+ */
 export async function enrollFaceToUser(
   relayUrl: string,
   userId: string,
   scanned: ScannedFace,
 ): Promise<void> {
-  const key = scanned.kind === "visual_face" ? "visual_faces" : "faces";
-  const body = { User: { [key]: [scanned.payload] } };
+  const key = scanned.kind === "visual_face" ? "visualFaces" : "faces";
+  const body = { User: { credentials: { [key]: [scanned.payload] } } };
   await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
 }
 
-/** PUT /api/users/{id} with empty face arrays — remove ALL face data from the user. */
+/** PUT /api/users/{id} with empty credential arrays — remove ALL face data from the user. */
 export async function revokeUserFaces(relayUrl: string, userId: string): Promise<void> {
-  const body = { User: { faces: [], visual_faces: [] } };
+  const body = { User: { credentials: { visualFaces: [], faces: [] } } };
   await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
 }
 
