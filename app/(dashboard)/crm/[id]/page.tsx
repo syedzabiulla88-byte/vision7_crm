@@ -2093,6 +2093,8 @@ function AssignPlanDialog({
   const [plans, setPlans] = useState<any[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [planId, setPlanId] = useState("");
+  // Extra plans billed on the SAME invoice (multi-plan assignment).
+  const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
   const [startDate, setStartDate] = useState(() => toDateInput(new Date().toISOString()));
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -2255,7 +2257,12 @@ function AssignPlanDialog({
       toast.error("This person already has an active/pending membership — tick the box to add another.");
       return;
     }
-    const planPrice = Number(selectedPlan?.price) || 0;
+    const primaryPlanPrice = Number(selectedPlan?.price) || 0;
+    const extrasPrice = extraPlanIds.reduce(
+      (sum, id) => sum + (Number(plans.find((p) => p.id === id)?.price) || 0),
+      0,
+    );
+    const planPrice = primaryPlanPrice + extrasPrice; // combined invoice total
     // Deposit mode: validate 0 < amount < plan price before we hit the API.
     const depositValue = Number(depositAmount);
     if (planPrice > 0 && billingMode === "deposit") {
@@ -2341,6 +2348,7 @@ function AssignPlanDialog({
         res = await api.memberships.assign({
           athleteId: athlete.id,
           planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2366,6 +2374,7 @@ function AssignPlanDialog({
         res = await api.memberships.assign({
           athleteId: linkedAthleteId,
           planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2384,6 +2393,7 @@ function AssignPlanDialog({
         res = await api.memberships.assign({
           crmContactId: contact.id,
           planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2463,6 +2473,51 @@ function AssignPlanDialog({
                 ))}
               </SelectContent>
             </Select>
+            {planId && (
+              <div className="mt-2 space-y-1.5">
+                <Label>Additional plans (optional)</Label>
+                <Select
+                  items={planOptions.filter((o) => o.value !== planId && !extraPlanIds.includes(o.value))}
+                  value=""
+                  onValueChange={(v) => {
+                    if (v && v !== planId && !extraPlanIds.includes(v)) setExtraPlanIds((prev) => [...prev, v]);
+                  }}
+                >
+                  <SelectTrigger className="w-full" aria-label="Additional plans">
+                    <SelectValue placeholder="Add another plan…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {planOptions
+                      .filter((o) => o.value !== planId && !extraPlanIds.includes(o.value))
+                      .map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {extraPlanIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {extraPlanIds.map((id) => {
+                      const pl = plans.find((p) => p.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+                          {pl?.name || id}
+                          <button
+                            type="button"
+                            aria-label="Remove plan"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setExtraPlanIds((prev) => prev.filter((x) => x !== id))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             {!loadingPlans && plans.length === 0 && (
               <p className="text-xs text-muted-foreground">
                 No plans available.{" "}

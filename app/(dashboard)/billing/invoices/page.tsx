@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { api } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
+import { downloadCsv } from "@/lib/csv";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 import { PermissionGate } from "@/components/shared/permission-gate";
 import { usePermissions } from "@/components/hooks/use-permissions";
@@ -112,6 +113,8 @@ export default function InvoicesPage() {
     limit: number;
     totalPages: number;
   } | null>(null);
+
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -223,6 +226,57 @@ export default function InvoicesPage() {
   const hasFilters =
     statusFilter !== "ALL" || Boolean(fromDate) || Boolean(toDate) || Boolean(searchInput);
 
+  // Export EVERY invoice matching the current filters (not just the visible
+  // page) — walks the pagination server-side, capped at 5000 rows.
+  const handleExportCsv = useCallback(async () => {
+    setExporting(true);
+    try {
+      const all: Invoice[] = [];
+      for (let p = 1; p <= 25; p++) {
+        const params: Record<string, unknown> = { page: p, limit: 200 };
+        if (statusFilter !== "ALL") params.status = statusFilter;
+        if (fromDate) params.from = fromDate;
+        if (toDate) params.to = toDate;
+        if (search) params.search = search;
+        const result = await api.invoices.list(params);
+        const batch: Invoice[] = Array.isArray(result) ? result : result?.data || [];
+        all.push(...batch);
+        const totalPages = Array.isArray(result) ? 1 : Number(result?.meta?.totalPages) || 1;
+        if (p >= totalPages || batch.length === 0) break;
+      }
+      if (!all.length) {
+        toast.info("Nothing to export");
+        return;
+      }
+      downloadCsv(
+        `invoices-${new Date().toISOString().slice(0, 10)}.csv`,
+        all.map((inv) => {
+          const total = Number(inv.total ?? inv.grandTotal) || 0;
+          const paid = Number(inv.amountPaid ?? inv.paidAmount) || 0;
+          return {
+            number: inv.number || inv.invoiceNumber || inv.id,
+            status: inv.status || "",
+            customer:
+              inv.customerName ||
+              `${inv.athlete?.firstName ?? ""} ${inv.athlete?.lastName ?? ""}`.trim(),
+            issueDate: String(inv.issueDate || "").slice(0, 10),
+            dueDate: String(inv.dueDate || "").slice(0, 10),
+            subtotal: Number(inv.subtotal) || 0,
+            vat: Number(inv.taxAmount ?? inv.tax) || 0,
+            total,
+            paid,
+            balance: Math.max(0, total - paid),
+          };
+        }),
+      );
+      toast.success(`Exported ${all.length} invoice${all.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }, [statusFilter, fromDate, toDate, search]);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -230,12 +284,18 @@ export default function InvoicesPage() {
         description="Track billed amounts, payments, and outstanding balances."
         onRefresh={load}
         actions={
-          <PermissionGate permission="invoices:create">
-            <Button render={<Link href="/billing/invoices/new" />}>
-              <Plus className="h-4 w-4" />
-              New Invoice
+          <>
+            <Button variant="outline" onClick={handleExportCsv} disabled={exporting || loading}>
+              <Download className="h-4 w-4" />
+              {exporting ? "Exporting…" : "Export CSV"}
             </Button>
-          </PermissionGate>
+            <PermissionGate permission="invoices:create">
+              <Button render={<Link href="/billing/invoices/new" />}>
+                <Plus className="h-4 w-4" />
+                New Invoice
+              </Button>
+            </PermissionGate>
+          </>
         }
       />
 

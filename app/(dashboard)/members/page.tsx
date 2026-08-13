@@ -1213,6 +1213,9 @@ function NewMemberDialog({
   >([]);
   // Pay-link returned by assign for tabby/tamara — shown with a Copy button.
   const [payLink, setPayLink] = useState<{ url: string; provider: string } | null>(null);
+  // Extra plans billed on the SAME invoice (multi-plan assignment). The primary
+  // plan stays form.planId; each extra becomes its own membership server-side.
+  const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
 
   const set = <K extends keyof NewMemberForm>(k: K, v: NewMemberForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -1329,7 +1332,14 @@ function NewMemberDialog({
       return;
     }
 
-    const planPrice = Number(plans.find((p) => p.id === form.planId)?.price) || 0;
+    const primaryPlanPrice = Number(plans.find((p) => p.id === form.planId)?.price) || 0;
+    const extrasPrice = extraPlanIds.reduce(
+      (sum, id) => sum + (Number(plans.find((p) => p.id === id)?.price) || 0),
+      0,
+    );
+    // Combined across every selected plan: all the checks below (deposit bound,
+    // free-plan detection, gateway gating) care about the invoice total.
+    const planPrice = primaryPlanPrice + extrasPrice;
 
     // Validate the deposit before any network call: must be > 0 and < the plan total.
     const depositNum = Number(form.depositAmount);
@@ -1424,6 +1434,7 @@ function NewMemberDialog({
         const res = await api.memberships.assign({
           athleteId: athlete.id,
           planId: form.planId,
+          planIds: [form.planId, ...extraPlanIds],
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
           ...billingFields,
@@ -1457,6 +1468,7 @@ function NewMemberDialog({
         const res = await api.memberships.assign({
           crmContactId: contact.id,
           planId: form.planId,
+          planIds: [form.planId, ...extraPlanIds],
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
           ...billingFields,
@@ -1776,6 +1788,43 @@ function NewMemberDialog({
                   options={planOptions}
                   placeholder={plansLoading ? "Loading plans…" : "Select plan…"}
                 />
+              </Field>
+              <Field label="Additional plans (optional)">
+                <SelectField
+                  value=""
+                  onChange={(v) => {
+                    if (v && v !== form.planId && !extraPlanIds.includes(v)) {
+                      setExtraPlanIds((prev) => [...prev, v]);
+                    }
+                  }}
+                  options={planOptions.filter((o) => o.value !== form.planId && !extraPlanIds.includes(o.value))}
+                  placeholder="Add another plan…"
+                />
+                {extraPlanIds.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {extraPlanIds.map((id) => {
+                      const pl = plans.find((p) => p.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+                          {pl?.name || id}
+                          <button
+                            type="button"
+                            aria-label="Remove plan"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setExtraPlanIds((prev) => prev.filter((x) => x !== id))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {extraPlanIds.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    One invoice, one membership per plan. All plans activate together when it&rsquo;s paid.
+                  </p>
+                )}
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Start date" htmlFor="nm-start">
@@ -3317,6 +3366,8 @@ function AssignMembershipDialog({
 
   const [plans, setPlans] = useState<any[]>([]);
   const [planId, setPlanId] = useState("");
+  // Extra plans billed on the SAME invoice (multi-plan assignment).
+  const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
   const [startDate, setStartDate] = useState(toDateInput(new Date()));
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -3581,7 +3632,12 @@ function AssignMembershipDialog({
       toast.error(`${subject.name} already has an active/pending membership — tick the box to add another.`);
       return;
     }
-    const price = Number(selectedPlan?.price) || 0;
+    const primaryPrice = Number(selectedPlan?.price) || 0;
+    const extrasPrice = extraPlanIds.reduce(
+      (sum, id) => sum + (Number(plans.find((p) => p.id === id)?.price) || 0),
+      0,
+    );
+    const price = primaryPrice + extrasPrice; // combined: every check below is about the invoice total
 
     // Validate the deposit before any network call: must be > 0 and < the plan total.
     const depositNum = Number(depositAmount);
@@ -3665,6 +3721,7 @@ function AssignMembershipDialog({
         res = await api.memberships.assign({
           athleteId: athlete.id,
           planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3695,6 +3752,7 @@ function AssignMembershipDialog({
         res = await api.memberships.assign({
           athleteId: linkedAthleteId,
           planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3724,6 +3782,7 @@ function AssignMembershipDialog({
         res = await api.memberships.assign({
           crmContactId: subject.id,
           planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3908,6 +3967,36 @@ function AssignMembershipDialog({
                   options={planOptions}
                   placeholder="Select plan…"
                 />
+              </Field>
+              <Field label="Additional plans (optional)">
+                <SelectField
+                  value=""
+                  onChange={(v) => {
+                    if (v && v !== planId && !extraPlanIds.includes(v)) setExtraPlanIds((prev) => [...prev, v]);
+                  }}
+                  options={planOptions.filter((o) => o.value !== planId && !extraPlanIds.includes(o.value))}
+                  placeholder="Add another plan…"
+                />
+                {extraPlanIds.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {extraPlanIds.map((id) => {
+                      const pl = plans.find((p) => p.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+                          {pl?.name || id}
+                          <button
+                            type="button"
+                            aria-label="Remove plan"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setExtraPlanIds((prev) => prev.filter((x) => x !== id))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </Field>
               </div>
 
