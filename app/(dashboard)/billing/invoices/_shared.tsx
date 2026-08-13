@@ -112,6 +112,9 @@ export interface Invoice {
    * so it is absent on list rows.
    */
   createdBy?: { id?: string; name?: string | null; email?: string | null } | null;
+  /** Sales rep credited with the sale — resolved server-side from salesUserId. */
+  salesUserId?: string | null;
+  salesUser?: { id?: string; name?: string | null; email?: string | null } | null;
   /**
    * Customer reference (displayed as VCN-00042). Resolved server-side on the
    * detail endpoint: directly for contact-linked invoices, via the athlete's

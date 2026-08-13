@@ -2095,6 +2095,15 @@ function AssignPlanDialog({
   const [planId, setPlanId] = useState("");
   // Extra plans billed on the SAME invoice (multi-plan assignment).
   const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
+  // Sales rep credited with the sale (lands on the invoice; drives the report).
+  const [salesUserId, setSalesUserId] = useState("");
+  const [staff, setStaff] = useState<any[]>([]);
+  useEffect(() => {
+    api.users
+      .list({ limit: 200 })
+      .then((res: any) => setStaff(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setStaff([]));
+  }, []);
   const [startDate, setStartDate] = useState(() => toDateInput(new Date().toISOString()));
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -2349,6 +2358,7 @@ function AssignPlanDialog({
           athleteId: athlete.id,
           planId,
           planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2375,6 +2385,7 @@ function AssignPlanDialog({
           athleteId: linkedAthleteId,
           planId,
           planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2394,6 +2405,7 @@ function AssignPlanDialog({
           crmContactId: contact.id,
           planId,
           planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2516,6 +2528,31 @@ function AssignPlanDialog({
                     })}
                   </div>
                 )}
+              </div>
+            )}
+            {staff.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                <Label>Sales person (optional)</Label>
+                <Select
+                  items={[
+                    { value: "none", label: "None" },
+                    ...staff.map((u: any) => ({ value: u.id, label: u.name || u.email || "(unnamed)" })),
+                  ]}
+                  value={salesUserId || "none"}
+                  onValueChange={(v) => setSalesUserId(v === "none" ? "" : (v ?? ""))}
+                >
+                  <SelectTrigger className="w-full" aria-label="Sales person">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {staff.map((u: any) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name || u.email || "(unnamed)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
             {!loadingPlans && plans.length === 0 && (

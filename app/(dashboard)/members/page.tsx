@@ -1216,6 +1216,15 @@ function NewMemberDialog({
   // Extra plans billed on the SAME invoice (multi-plan assignment). The primary
   // plan stays form.planId; each extra becomes its own membership server-side.
   const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
+  // Sales rep credited with the sale (lands on the invoice; drives the report).
+  const [salesUserId, setSalesUserId] = useState("");
+  const [staff, setStaff] = useState<any[]>([]);
+  useEffect(() => {
+    api.users
+      .list({ limit: 200 })
+      .then((res: any) => setStaff(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setStaff([]));
+  }, []);
 
   const set = <K extends keyof NewMemberForm>(k: K, v: NewMemberForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -1435,6 +1444,7 @@ function NewMemberDialog({
           athleteId: athlete.id,
           planId: form.planId,
           planIds: [form.planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
           ...billingFields,
@@ -1469,6 +1479,7 @@ function NewMemberDialog({
           crmContactId: contact.id,
           planId: form.planId,
           planIds: [form.planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
           ...billingFields,
@@ -1826,6 +1837,19 @@ function NewMemberDialog({
                   </p>
                 )}
               </Field>
+              {staff.length > 0 && (
+                <Field label="Sales person (optional)">
+                  <SelectField
+                    value={salesUserId}
+                    onChange={setSalesUserId}
+                    options={[
+                      { value: "", label: "— none —" },
+                      ...staff.map((u: any) => ({ value: u.id, label: u.name || u.email || "(unnamed)" })),
+                    ]}
+                    placeholder="Select sales person…"
+                  />
+                </Field>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Start date" htmlFor="nm-start">
                   <Input
@@ -3408,6 +3432,9 @@ function AssignMembershipDialog({
   // Optional assigned PT trainer — picked from the COACH pool, sent as trainerId.
   const [trainerId, setTrainerId] = useState("");
   const [coaches, setCoaches] = useState<any[]>([]);
+  // Sales rep credited with the sale (lands on the invoice; drives the report).
+  const [salesUserId, setSalesUserId] = useState("");
+  const [staff, setStaff] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -3432,6 +3459,14 @@ function AssignMembershipDialog({
       .list({ role: "COACH", limit: 100 })
       .then((res: any) => setCoaches(Array.isArray(res) ? res : res?.data || []))
       .catch(() => setCoaches([]));
+  }, []);
+
+  // Sales-person pool — every staff user, non-fatal when users:view is missing.
+  useEffect(() => {
+    api.users
+      .list({ limit: 200 })
+      .then((res: any) => setStaff(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setStaff([]));
   }, []);
 
   // Which BNPL gateways are configured — Tabby/Tamara options are disabled
@@ -3722,6 +3757,7 @@ function AssignMembershipDialog({
           athleteId: athlete.id,
           planId,
           planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3753,6 +3789,7 @@ function AssignMembershipDialog({
           athleteId: linkedAthleteId,
           planId,
           planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3783,6 +3820,7 @@ function AssignMembershipDialog({
           crmContactId: subject.id,
           planId,
           planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3825,6 +3863,11 @@ function AssignMembershipDialog({
   const trainerOptions = [
     { value: "", label: "— none —" },
     ...coaches.map((c) => ({ value: c.id, label: c.name || c.email || "(unnamed)" })),
+  ];
+
+  const salesOptions = [
+    { value: "", label: "— none —" },
+    ...staff.map((u) => ({ value: u.id, label: u.name || u.email || "(unnamed)" })),
   ];
 
   return (
@@ -4072,6 +4115,15 @@ function AssignMembershipDialog({
                   onChange={setTrainerId}
                   options={trainerOptions}
                   placeholder="Select trainer…"
+                />
+              </Field>
+
+              <Field label="Sales person (optional)">
+                <ComboField
+                  value={salesUserId}
+                  onChange={setSalesUserId}
+                  options={salesOptions}
+                  placeholder="Select sales person…"
                 />
               </Field>
 

@@ -374,6 +374,12 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                   {invoice.createdBy?.name || invoice.createdBy?.email}
                 </p>
               )}
+              {(invoice.salesUser?.name || invoice.salesUser?.email) && (
+                <p className="text-muted-foreground print:text-black">
+                  <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Sales person</span>{" "}
+                  {invoice.salesUser?.name || invoice.salesUser?.email}
+                </p>
+              )}
             </div>
           </div>
         </div>

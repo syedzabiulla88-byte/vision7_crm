@@ -42,6 +42,12 @@ const REPORTS = [
     icon: LayoutGrid,
   },
   {
+    href: "/reports/sales",
+    title: "Sales by Salesperson",
+    body: "Invoices, billed, collected and outstanding per sales rep, with membership counts.",
+    icon: Chart,
+  },
+  {
     href: "/reports/followups",
     title: "Sales Follow-ups",
     body: "Per-rep follow-up load — assigned, completed, overdue, completion rate; run reminder digest.",

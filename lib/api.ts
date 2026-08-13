@@ -276,6 +276,8 @@ export const api = {
     facilities: (params?: Params) => apiFetch<any>(`/reports/facilities${qs(params)}`),
     // Per-customer AR aging / statements
     statements: (params?: Params) => apiFetch<any>(`/reports/statements${qs(params)}`),
+    // Salesperson-wise sales — invoices / billed / collected per rep
+    sales: (params?: Params) => apiFetch<any>(`/reports/sales${qs(params)}`),
     // §control-plane — cross-app KPI bundle for the dashboard / single pane of glass
     overview: () => apiFetch<any>(`/reports/overview`),
   },
