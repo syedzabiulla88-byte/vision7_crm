@@ -112,6 +112,12 @@ export interface Invoice {
    * so it is absent on list rows.
    */
   createdBy?: { id?: string; name?: string | null; email?: string | null } | null;
+  /**
+   * Customer reference (displayed as VCN-00042). Resolved server-side on the
+   * detail endpoint: directly for contact-linked invoices, via the athlete's
+   * linked contact otherwise. Null when the customer has no CRM contact.
+   */
+  customerCrn?: number | null;
   lineItems?: InvoiceLine[];
   items?: InvoiceLine[];
   payments?: Payment[];

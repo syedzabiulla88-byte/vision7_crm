@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { formatCrn } from "@/lib/utils";
+import { formatVcn } from "@/lib/utils";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -571,7 +571,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {contact.crn != null && (
                   <Badge variant="outline" className="font-mono text-[11px]">
-                    {formatCrn(contact.crn)}
+                    {formatVcn(contact.crn)}
                   </Badge>
                 )}
                 <StageQuickPicker contact={contact} onChanged={load} />
@@ -846,6 +846,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
           <MembershipsBlock memberships={contact.memberships || []} />
 
           <FamilyMembersBlock familyMembers={contact.familyMembers || []} />
+          <FamilyOfBlock familyOf={contact.familyOf || []} />
 
           <GuardianBlock contact={contact} onChanged={load} />
 
@@ -1485,10 +1486,19 @@ function FamilyMembersBlock({ familyMembers }: { familyMembers: any[] }) {
       </CardHeader>
       <CardContent className="space-y-2">
         {rows.map((f: any) => {
-          const name = [f.firstName, f.lastName].filter(Boolean).join(" ") || f.name || "—";
+          // Prefer the dependent's own linked contact (the blob name fields are
+          // only used for legacy rows that never got a contact of their own).
+          const linked = f.memberContact || null;
+          const first = linked?.firstName ?? f.firstName;
+          const last = linked?.lastName ?? f.lastName;
+          const name = [first, last].filter(Boolean).join(" ") || f.name || "—";
           const age = ageFromDob(f.dob);
           const meta = [
             f.relation || f.relationship,
+            linked?.crn != null ? formatVcn(linked.crn) : null,
+            f.membership?.plan?.name
+              ? `${f.membership.plan.name} (${String(f.membership.status || "").toLowerCase()})`
+              : null,
             f.dob
               ? `${formatDate(f.dob)}${age !== null ? ` · ${age}y` : ""}`
               : age !== null
@@ -1497,18 +1507,67 @@ function FamilyMembersBlock({ familyMembers }: { familyMembers: any[] }) {
           ]
             .filter(Boolean)
             .join(" · ");
-          return (
-            <div key={f.id} className="flex items-center gap-3 rounded-md border p-3">
+          const row = (
+            <div className="flex items-center gap-3 rounded-md border p-3 transition-colors hover:bg-muted/40">
               <Avatar className="h-8 w-8 shrink-0">
                 <AvatarFallback className="text-[10px] font-semibold">
-                  {initials(f.firstName || f.name, f.lastName)}
+                  {initials(first || f.name, last)}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{name}</p>
                 <p className="text-xs text-muted-foreground">{meta || "—"}</p>
               </div>
+              {linked && <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
             </div>
+          );
+          return linked ? (
+            <Link key={f.id} href={`/crm/${linked.id}`} className="block">
+              {row}
+            </Link>
+          ) : (
+            <div key={f.id}>{row}</div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The families THIS contact belongs to — the reverse of FamilyMembersBlock. */
+function FamilyOfBlock({ familyOf }: { familyOf: any[] }) {
+  const rows = (familyOf || []).filter((f: any) => f.primaryContact);
+  if (rows.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UsersIcon className="h-4 w-4" /> Family of
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.map((f: any) => {
+          const pc = f.primaryContact;
+          const name = [pc.firstName, pc.lastName].filter(Boolean).join(" ") || "—";
+          return (
+            <Link key={f.id} href={`/crm/${pc.id}`} className="block">
+              <div className="flex items-center gap-3 rounded-md border p-3 transition-colors hover:bg-muted/40">
+                <Avatar className="h-8 w-8 shrink-0">
+                  <AvatarFallback className="text-[10px] font-semibold">
+                    {initials(pc.firstName, pc.lastName)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {[pc.crn != null ? formatVcn(pc.crn) : null, f.relation ? `this contact is their ${String(f.relation).toLowerCase()}` : null]
+                      .filter(Boolean)
+                      .join(" · ") || "primary member"}
+                  </p>
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </div>
+            </Link>
           );
         })}
       </CardContent>

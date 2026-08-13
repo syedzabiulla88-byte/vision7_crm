@@ -5,7 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-/** Human-facing customer reference: crn 42 -> "CRN-00042". */
-export function formatCrn(crn?: number | null): string {
-  return crn == null ? "" : `CRN-${String(crn).padStart(5, "0")}`;
+/**
+ * Human-facing customer reference: 42 -> "VCN-00042" (Vision7 Customer
+ * Number). Stored in the DB as crm_contacts.crn; VCN is the display name.
+ */
+export function formatVcn(crn?: number | null): string {
+  return crn == null ? "" : `VCN-${String(crn).padStart(5, "0")}`;
 }

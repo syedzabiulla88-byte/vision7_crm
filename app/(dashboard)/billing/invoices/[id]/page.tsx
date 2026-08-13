@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
+import { formatVcn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -230,16 +231,18 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       {/* Actions bar */}
       <div className="flex flex-wrap gap-2 print:hidden">
         {isDraft && canEdit && (
-          <>
-            <Button onClick={() => setConfirm("send")}>
-              <Send className="h-4 w-4" />
-              Send
-            </Button>
-            <Button variant="outline" render={<Link href={`/billing/invoices/${id}/edit`} />}>
-              <Pencil className="h-4 w-4" />
-              Edit
-            </Button>
-          </>
+          <Button onClick={() => setConfirm("send")}>
+            <Send className="h-4 w-4" />
+            Send
+          </Button>
+        )}
+        {/* Editable while nothing has been collected: totals can still change
+            freely. Once a payment lands, content is locked (backend enforces). */}
+        {canEdit && paid === 0 && ["DRAFT", "SENT", "OVERDUE"].includes(status) && (
+          <Button variant="outline" render={<Link href={`/billing/invoices/${id}/edit`} />}>
+            <Pencil className="h-4 w-4" />
+            Edit
+          </Button>
         )}
         {canDelete && (
           <Button
@@ -289,7 +292,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             Reopen
           </Button>
         )}
-        {!isPaid && !isCancelled && canDelete && (
+        {!isPaid && !isCancelled && canEdit && (
           <Button
             variant="outline"
             onClick={() => setConfirm("cancel")}
@@ -387,6 +390,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
               Billed to
+              {invoice.customerCrn != null && (
+                <span className="ml-2 font-mono text-[11px] normal-case tracking-normal text-muted-foreground print:text-black">
+                  {formatVcn(invoice.customerCrn)}
+                </span>
+              )}
             </p>
             {invoice.athlete ? (
               <>
