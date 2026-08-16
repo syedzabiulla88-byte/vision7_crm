@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { provisionAthleteForContact } from "@/lib/athlete-provision";
 import { formatVcn } from "@/lib/utils";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
 import { Button } from "@/components/ui/button";
@@ -2137,6 +2138,8 @@ function AssignPlanDialog({
 
   // Athlete provisioning fields (only used for academy plans without a linked athlete).
   const [athleteDob, setAthleteDob] = useState("");
+  // Email for the athlete login when the contact has none on file.
+  const [athleteEmail, setAthleteEmail] = useState("");
   const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
   const [athleteJersey, setAthleteJersey] = useState("");
   const [athleteNationality, setAthleteNationality] = useState("");
@@ -2261,6 +2264,10 @@ function AssignPlanDialog({
         toast.error("Pick a playing position for the athlete.");
         return;
       }
+      if (!contact.email && !athleteEmail.trim()) {
+        toast.error("An email is required for the athlete profile (it becomes their app login).");
+        return;
+      }
     }
     if (existingActive.length && !confirmDup) {
       toast.error("This person already has an active/pending membership — tick the box to add another.");
@@ -2339,23 +2346,33 @@ function AssignPlanDialog({
       let res: any;
       if (needsAthleteDetails) {
         // 1. Provision the athlete (creates a user login + auto-links a CRM contact).
-        const athlete = await api.athletes.create({
-          firstName: contact.firstName,
-          lastName: contact.lastName,
-          email: contact.email,
-          phone: contact.phone,
-          dob: athleteDob,
-          position: athletePosition,
-          jerseyNumber: Number(athleteJersey) || 0,
-          nationality: athleteNationality.trim() || undefined,
-          gender: contact.gender || undefined,
-          idType,
-          idNumber: idNumber.trim() || undefined,
-          idExpiry: idExpiry || null,
+        const prov = await provisionAthleteForContact({
+          contact,
+          email: athleteEmail,
+          payload: {
+            firstName: contact.firstName,
+            lastName: contact.lastName,
+            phone: contact.phone,
+            dob: athleteDob,
+            position: athletePosition,
+            jerseyNumber: Number(athleteJersey) || 0,
+            nationality: athleteNationality.trim() || undefined,
+            gender: contact.gender || undefined,
+            idType,
+            idNumber: idNumber.trim() || undefined,
+            idExpiry: idExpiry || null,
+          },
         });
-        // 2. Bill for the plan, tied to the freshly created athlete.
+        if (prov.reused) {
+          toast.info(
+            prov.linkedElsewhereId
+              ? "An athlete profile already existed for this email (linked to another contact record) — reused it. Merge the duplicate contacts when convenient."
+              : "An athlete profile already existed for this email — reused it and linked the contact.",
+          );
+        }
+        // 2. Bill for the plan, tied to the athlete.
         res = await api.memberships.assign({
-          athleteId: athlete.id,
+          athleteId: prov.athleteId,
           planId,
           planIds: [planId, ...extraPlanIds],
           salesUserId: salesUserId || undefined,
@@ -2871,6 +2888,18 @@ function AssignPlanDialog({
                   login) and tie the membership to it — all in one click.
                 </p>
               </div>
+              {!contact.email && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="athlete-email">Email * (becomes the athlete&apos;s app login)</Label>
+                  <Input
+                    id="athlete-email"
+                    type="email"
+                    value={athleteEmail}
+                    onChange={(e) => setAthleteEmail(e.target.value)}
+                    placeholder="name@example.com"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="athlete-dob">Date of birth</Label>

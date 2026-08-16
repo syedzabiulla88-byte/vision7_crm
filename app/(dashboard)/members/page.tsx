@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { api, uploadFile } from "@/lib/api";
+import { provisionAthleteForContact } from "@/lib/athlete-provision";
 import { cn } from "@/lib/utils";
 import { idExpiryStatus, toDateInputValue } from "@/lib/id-expiry";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
@@ -3429,6 +3430,9 @@ function AssignMembershipDialog({
   const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
   const [athleteJersey, setAthleteJersey] = useState("");
   const [athleteNationality, setAthleteNationality] = useState("");
+  // Email for the athlete login when the contact has none on file (saved onto
+  // the contact before the athlete is provisioned).
+  const [athleteEmail, setAthleteEmail] = useState("");
   // Optional assigned PT trainer — picked from the COACH pool, sent as trainerId.
   const [trainerId, setTrainerId] = useState("");
   const [coaches, setCoaches] = useState<any[]>([]);
@@ -3653,6 +3657,10 @@ function AssignMembershipDialog({
         toast.error("Pick a playing position for the athlete.");
         return;
       }
+      if (!subject?.email && !athleteEmail.trim()) {
+        toast.error("An email is required for the athlete profile (it becomes their app login).");
+        return;
+      }
     }
     // ID is mandatory when the member has none on file yet.
     if (needsId && (!idNumber.trim() || !idDocumentUrl)) {
@@ -3739,22 +3747,32 @@ function AssignMembershipDialog({
       if (needsAthleteDetails) {
         // Academy plan + contact has no athlete: provision the athlete (creates a
         // user login + auto-links the CRM contact), then bill via athleteId.
-        const athlete = await api.athletes.create({
-          firstName: subject.firstName,
-          lastName: subject.lastName,
-          email: subject.email,
-          phone: subject.phone,
-          dob: new Date(athleteDob).toISOString(),
-          position: athletePosition,
-          jerseyNumber: Number(athleteJersey) || 0,
-          nationality: athleteNationality.trim() || undefined,
-          idType: idNumber.trim() ? idType : undefined,
-          idNumber: idNumber.trim() || undefined,
-          idExpiry: idExpiry || null,
-          idDocumentUrl: idDocumentUrl || undefined,
+        const prov = await provisionAthleteForContact({
+          contact: subject,
+          email: athleteEmail,
+          payload: {
+            firstName: subject.firstName,
+            lastName: subject.lastName,
+            phone: subject.phone,
+            dob: new Date(athleteDob).toISOString(),
+            position: athletePosition,
+            jerseyNumber: Number(athleteJersey) || 0,
+            nationality: athleteNationality.trim() || undefined,
+            idType: idNumber.trim() ? idType : undefined,
+            idNumber: idNumber.trim() || undefined,
+            idExpiry: idExpiry || null,
+            idDocumentUrl: idDocumentUrl || undefined,
+          },
         });
+        if (prov.reused) {
+          toast.info(
+            prov.linkedElsewhereId
+              ? "An athlete profile already existed for this email (linked to another contact record) — reused it. Merge the duplicate contacts when convenient."
+              : "An athlete profile already existed for this email — reused it and linked the contact.",
+          );
+        }
         res = await api.memberships.assign({
-          athleteId: athlete.id,
+          athleteId: prov.athleteId,
           planId,
           planIds: [planId, ...extraPlanIds],
           salesUserId: salesUserId || undefined,
@@ -4377,6 +4395,17 @@ function AssignMembershipDialog({
                       login) and tie the membership to it — all in one click.
                     </p>
                   </div>
+                  {!subject?.email && (
+                    <Field label="Email * (becomes the athlete's app login)" htmlFor="am-athlete-email">
+                      <Input
+                        id="am-athlete-email"
+                        type="email"
+                        value={athleteEmail}
+                        onChange={(e) => setAthleteEmail(e.target.value)}
+                        placeholder="name@example.com"
+                      />
+                    </Field>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Date of birth *" htmlFor="am-athlete-dob">
                       <Input
