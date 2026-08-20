@@ -73,6 +73,8 @@ export interface Plan {
   price?: number | null;
   billingCycle?: string | null;
   durationDays?: number | null;
+  /** Sub-day session length (minutes) — 60/90/120-minute pitch rentals. */
+  durationMinutes?: number | null;
   registrationFee?: number | null;
   features?: string[] | null;
   isActive?: boolean;
@@ -87,6 +89,10 @@ export interface Plan {
    * this package already paid for them.
    */
   isFamilyPlan?: boolean | null;
+  /** BioStar access-group ids this plan grants — synced to members automatically. */
+  accessDoorIds?: string[] | null;
+  /** Mint a BioStar QR credential automatically when staff assign this plan. */
+  issueQrOnAssign?: boolean | null;
 }
 
 export function formatSAR(n: number | string | null | undefined): string {

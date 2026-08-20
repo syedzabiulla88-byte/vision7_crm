@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { idExpiryStatus, toDateInputValue } from "@/lib/id-expiry";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
 import { NATIONALITY_OPTIONS } from "@/lib/nationalities";
+import { useBiostarRelay, stableUserId, issueQrCredential } from "@/lib/biostar-relay";
+import QRCode from "qrcode";
 import {
   Combobox,
   ComboboxContent,
@@ -3338,6 +3340,18 @@ function AssignMembershipDialog({
   >([]);
   // Pay-link returned by assign for tabby/tamara — shown with a Copy button.
   const [payLink, setPayLink] = useState<{ url: string; provider: string } | null>(null);
+  // Day-pass / rental plans (plan.issueQrOnAssign): a QR credential minted in
+  // BioStar right after a successful active assign. Kept open in the dialog
+  // (same pattern as payLink) so staff can show/screenshot it for the customer.
+  const relay = useBiostarRelay();
+  const [qrIssuing, setQrIssuing] = useState(false);
+  const [qrResult, setQrResult] = useState<{
+    dataUrl: string;
+    cardId: string;
+    memberName: string;
+    expiresAt?: string | null;
+  } | null>(null);
+  const [qrError, setQrError] = useState<string | null>(null);
   // ID capture — writes back to the selected subject before assigning. Required
   // when the chosen member has no ID on file yet (see subjectHasId / needsId).
   const [idType, setIdType] = useState("NATIONAL_ID");
@@ -3542,6 +3556,53 @@ function AssignMembershipDialog({
     }
   };
 
+  // Mint a fresh BioStar QR credential for a just-activated membership and render
+  // it as an image. Only called when the plan has issueQrOnAssign — best-effort:
+  // a QR failure never blocks or unwinds the (already-successful) membership
+  // assign, it just surfaces the error next to where the QR would have shown.
+  const issueQr = async (
+    subjectKind: "ATHLETE" | "CRM_CONTACT",
+    subjectId: string,
+    memberName: string,
+    endDate: string | null | undefined,
+  ) => {
+    if (!relay.relayUrl || !relay.online) {
+      setQrError(
+        "BioStar relay is offline — the membership was assigned, but no QR was issued. Issue one later from Card Access once the relay is back online.",
+      );
+      return;
+    }
+    setQrIssuing(true);
+    setQrError(null);
+    try {
+      const result = await issueQrCredential({
+        relayUrl: relay.relayUrl,
+        name: memberName,
+        userId: stableUserId(subjectKind, subjectId),
+        accessGroupIds: Array.isArray(selectedPlan?.accessDoorIds)
+          ? selectedPlan!.accessDoorIds!.map(String)
+          : [],
+        expiry: endDate,
+      });
+      if (!result.qrCardId) {
+        setQrError(result.steps.find((s) => !s.ok)?.message || "Failed to issue QR credential");
+        return;
+      }
+      const dataUrl = await QRCode.toDataURL(result.qrCardId, { width: 320, margin: 2 });
+      setQrResult({ dataUrl, cardId: result.qrCardId, memberName, expiresAt: endDate });
+      const failed = result.steps.find((s) => !s.ok);
+      if (failed) {
+        toast.error(`QR issued, but ${failed.label.toLowerCase()} failed: ${failed.message}`);
+      } else {
+        toast.success("QR credential issued");
+      }
+    } catch (err) {
+      setQrError(err instanceof Error ? err.message : "Failed to issue QR credential");
+    } finally {
+      setQrIssuing(false);
+    }
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject?.id) {
@@ -3644,6 +3705,7 @@ function AssignMembershipDialog({
     const payLinkLabel = payLinkGateway ? GATEWAY_LABEL[payLinkGateway] : "Pay";
     try {
       let res: any;
+      let qrSubject: { subjectKind: "ATHLETE" | "CRM_CONTACT"; subjectId: string } | null = null;
       if (needsAthleteDetails) {
         // Academy plan + contact has no athlete: provision the athlete (creates a
         // user login + auto-links the CRM contact), then bill via athleteId.
@@ -3671,6 +3733,7 @@ function AssignMembershipDialog({
           trainerId: trainerId || undefined,
           ...billingFields,
         });
+        qrSubject = { subjectKind: "ATHLETE", subjectId: athlete.id };
         const memStatus = res?.membership?.status;
         if (isPayLinkMode) {
           /* pay-link toast handled below */
@@ -3701,6 +3764,7 @@ function AssignMembershipDialog({
           trainerId: trainerId || undefined,
           ...billingFields,
         });
+        qrSubject = { subjectKind: "ATHLETE", subjectId: linkedAthleteId };
         const memStatus = res?.membership?.status;
         if (isPayLinkMode) {
           /* pay-link toast handled below */
@@ -3730,6 +3794,7 @@ function AssignMembershipDialog({
           trainerId: trainerId || undefined,
           ...billingFields,
         });
+        qrSubject = { subjectKind: "CRM_CONTACT", subjectId: subject.id };
         const memStatus = res?.membership?.status;
         if (isPayLinkMode) {
           /* pay-link toast handled below */
@@ -3741,12 +3806,18 @@ function AssignMembershipDialog({
         else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
         else toast.success("Invoice raised — membership pending until paid");
       }
-      // Pay-link modes: surface the returned link (Copy + emailed note) and keep
-      // the dialog open so staff can copy it. Other modes close via onCreated().
+      // Day-pass / rental plans: mint the QR now that the membership is genuinely
+      // active (never for PENDING — deposit/invoice/BNPL modes haven't paid yet).
+      const willIssueQr = !!(selectedPlan?.issueQrOnAssign && res?.membership?.status === "ACTIVE" && qrSubject);
+      if (willIssueQr && qrSubject) {
+        await issueQr(qrSubject.subjectKind, qrSubject.subjectId, subject.name, res.membership.endDate);
+      }
+      // Pay-link / QR modes: keep the dialog open so staff can copy the link or
+      // see/screenshot the QR. Other modes close immediately via onCreated().
       if (isPayLinkMode && res?.payLink?.url) {
         setPayLink({ url: res.payLink.url, provider: res.payLink.provider || billingMode });
         toast.success(`${payLinkLabel} pay-link created`);
-      } else {
+      } else if (!willIssueQr) {
         onCreated();
       }
     } catch (err: any) {
@@ -4284,9 +4355,41 @@ function AssignMembershipDialog({
             </div>
           )}
 
+          {(qrIssuing || qrResult || qrError) && (
+            <div className="border-t p-4">
+              {qrIssuing ? (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  Issuing BioStar QR credential…
+                </p>
+              ) : qrResult ? (
+                <div className="flex flex-col items-center gap-3 rounded-md border bg-muted/30 p-4 text-center">
+                  <p className="text-sm font-medium text-foreground">
+                    QR pass for {qrResult.memberName}
+                  </p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={qrResult.dataUrl} alt="BioStar QR access pass" className="h-56 w-56" />
+                  <p className="font-mono text-[11px] text-muted-foreground">{qrResult.cardId}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Show this to the reader at the door — readable by any connected BioStar face/QR
+                    device.
+                    {qrResult.expiresAt
+                      ? ` Valid until ${new Date(qrResult.expiresAt).toLocaleString()}.`
+                      : ""}
+                  </p>
+                </div>
+              ) : qrError ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">{qrError}</p>
+              ) : null}
+            </div>
+          )}
+
           <DialogFooter className="border-t p-4">
             {payLink ? (
               <Button type="button" onClick={() => onCreated()}>
+                Done
+              </Button>
+            ) : qrResult || qrError ? (
+              <Button type="button" onClick={() => onCreated()} disabled={qrIssuing}>
                 Done
               </Button>
             ) : (

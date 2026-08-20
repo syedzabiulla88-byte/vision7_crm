@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useBiostarRelay, listAccessGroups, type BiostarAccessGroup } from "@/lib/biostar-relay";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -34,6 +36,7 @@ interface PlanFormState {
   price: string;
   billingCycle: string;
   durationDays: string;
+  durationMinutes: string;
   registrationFee: string;
   features: string[];
   isActive: boolean;
@@ -43,6 +46,8 @@ interface PlanFormState {
   maxFreezeDays: string;
   requiresAthlete: boolean;
   isFamilyPlan: boolean;
+  accessDoorIds: string[];
+  issueQrOnAssign: boolean;
 }
 
 function emptyPlan(): PlanFormState {
@@ -54,6 +59,7 @@ function emptyPlan(): PlanFormState {
     price: "",
     billingCycle: "monthly",
     durationDays: "",
+    durationMinutes: "",
     registrationFee: "",
     features: [],
     isActive: true,
@@ -63,6 +69,8 @@ function emptyPlan(): PlanFormState {
     maxFreezeDays: "",
     requiresAthlete: true,
     isFamilyPlan: false,
+    accessDoorIds: [],
+    issueQrOnAssign: false,
   };
 }
 
@@ -79,6 +87,7 @@ function fromPlan(initial: Plan): PlanFormState {
     price: initial.price != null ? String(initial.price) : "",
     billingCycle: initial.billingCycle || "monthly",
     durationDays: initial.durationDays != null ? String(initial.durationDays) : "",
+    durationMinutes: initial.durationMinutes != null ? String(initial.durationMinutes) : "",
     registrationFee:
       initial.registrationFee != null ? String(initial.registrationFee) : "",
     features: Array.isArray(initial.features) ? initial.features : [],
@@ -93,6 +102,8 @@ function fromPlan(initial: Plan): PlanFormState {
         ? initial.requiresAthlete
         : selectorType === "ACADEMY",
     isFamilyPlan: !!initial.isFamilyPlan,
+    accessDoorIds: Array.isArray(initial.accessDoorIds) ? initial.accessDoorIds.map(String) : [],
+    issueQrOnAssign: !!initial.issueQrOnAssign,
   };
 }
 
@@ -107,6 +118,41 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
     initial ? fromPlan(initial) : emptyPlan(),
   );
   const [saving, setSaving] = useState(false);
+
+  // Door access groups this plan can grant — fetched from BioStar via the relay
+  // (only available when staff are on the facility LAN with the relay online).
+  const relay = useBiostarRelay();
+  const [accessGroups, setAccessGroups] = useState<BiostarAccessGroup[]>([]);
+  const [accessGroupsLoading, setAccessGroupsLoading] = useState(false);
+  useEffect(() => {
+    if (!relay.relayUrl || !relay.online) {
+      setAccessGroups([]);
+      return;
+    }
+    let active = true;
+    setAccessGroupsLoading(true);
+    listAccessGroups(relay.relayUrl)
+      .then((rows) => {
+        if (active) setAccessGroups(rows);
+      })
+      .catch(() => {
+        if (active) setAccessGroups([]);
+      })
+      .finally(() => {
+        if (active) setAccessGroupsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [relay.relayUrl, relay.online]);
+
+  const toggleAccessGroup = (id: string) =>
+    setForm((f) => ({
+      ...f,
+      accessDoorIds: f.accessDoorIds.includes(id)
+        ? f.accessDoorIds.filter((g) => g !== id)
+        : [...f.accessDoorIds, id],
+    }));
 
   const set = <K extends keyof PlanFormState>(key: K, value: PlanFormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -146,6 +192,7 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
         price: Number(form.price) || 0,
         billingCycle: form.billingCycle,
         durationDays: form.durationDays === "" ? undefined : Number(form.durationDays),
+        durationMinutes: form.durationMinutes === "" ? null : Number(form.durationMinutes),
         registrationFee:
           form.registrationFee === "" ? undefined : Number(form.registrationFee),
         features: form.features.map((f) => String(f).trim()).filter(Boolean),
@@ -157,6 +204,8 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
           form.maxFreezeDays === "" ? null : Number(form.maxFreezeDays),
         requiresAthlete: form.requiresAthlete,
         isFamilyPlan: form.isFamilyPlan,
+        accessDoorIds: form.accessDoorIds,
+        issueQrOnAssign: form.issueQrOnAssign,
       };
 
       if (editingId) {
@@ -301,6 +350,21 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
                     onChange={(e) => set("durationDays", e.target.value)}
                     placeholder="Optional"
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="plan-duration-minutes">Duration (minutes)</Label>
+                  <Input
+                    id="plan-duration-minutes"
+                    type="number"
+                    min="0"
+                    value={form.durationMinutes}
+                    onChange={(e) => set("durationMinutes", e.target.value)}
+                    placeholder="e.g. 90 for a pitch rental"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    For sub-day session plans (pitch rentals). Ignored if Duration
+                    (days) is also set.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="plan-regfee">Registration fee (SAR)</Label>
@@ -455,6 +519,61 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
                   id="plan-family"
                   checked={form.isFamilyPlan}
                   onCheckedChange={(v) => set("isFamilyPlan", v)}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>BioStar access</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <Label>Door access groups</Label>
+                {!relay.relayUrl ? (
+                  <p className="text-xs text-muted-foreground">
+                    BioStar relay isn&apos;t configured — set it in Settings → BioStar
+                    to pick door groups.
+                  </p>
+                ) : !relay.online ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    Relay offline — can&apos;t load door groups right now.
+                  </p>
+                ) : accessGroupsLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading door groups…</p>
+                ) : accessGroups.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No door groups found in BioStar.</p>
+                ) : (
+                  <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
+                    {accessGroups.map((g) => (
+                      <label key={g.id} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={form.accessDoorIds.includes(g.id)}
+                          onCheckedChange={() => toggleAccessGroup(g.id)}
+                        />
+                        {g.name || g.id}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Members with a currently-valid membership on this plan get these
+                  door groups auto-synced on the Card Access page.
+                </p>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-0.5">
+                  <Label htmlFor="plan-issue-qr">Issue QR on assign</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Mint a BioStar QR credential automatically when staff assign this
+                    plan, valid until it expires. For day-pass / rental-style plans.
+                  </p>
+                </div>
+                <Switch
+                  id="plan-issue-qr"
+                  checked={form.issueQrOnAssign}
+                  onCheckedChange={(v) => set("issueQrOnAssign", v)}
                 />
               </div>
             </CardContent>

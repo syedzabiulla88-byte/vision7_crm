@@ -19,8 +19,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  getRelayUrl,
-  relayHealth,
   listAccessGroups,
   listDevices,
   scanCard,
@@ -28,11 +26,13 @@ import {
   getBiostarUser,
   revokeUserCard,
   findCardByNumber,
-  type RelayHealth,
+  stableUserId,
+  useBiostarRelay,
   type BiostarAccessGroup,
   type BiostarDevice,
   type BiostarUserState,
   type StepResult,
+  type BiostarRelay,
 } from "@/lib/biostar-relay";
 import {
   Card,
@@ -195,58 +195,6 @@ function statusPillClass(status: unknown): string {
     default:
       return "border-border bg-muted/40 text-muted-foreground";
   }
-}
-
-// ─── Shared BioStar relay state ──────────────────────────────────────────────────
-//
-// The relay URL + health are needed by BOTH the "Access cards" panel (now BioStar-backed)
-// and the "BioStar door access" panel. This hook reads the configured relay URL once and
-// probes its health, exposing `online` (health.ok) + a `recheck()` so a single fetch feeds
-// both panels instead of each fetching its own.
-
-interface BiostarRelay {
-  /** null = still loading; "" = not configured. */
-  relayUrl: string | null;
-  health: RelayHealth | null;
-  checking: boolean;
-  online: boolean;
-  recheck: () => void;
-}
-
-function useBiostarRelay(): BiostarRelay {
-  const [relayUrl, setRelayUrl] = useState<string | null>(null); // null = loading
-  const [health, setHealth] = useState<RelayHealth | null>(null);
-  const [checking, setChecking] = useState(false);
-
-  const checkHealth = useCallback(async (url: string) => {
-    setChecking(true);
-    try {
-      setHealth(await relayHealth(url));
-    } catch {
-      setHealth({ ok: false, reachable: false, error: "Relay unreachable" });
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const url = await getRelayUrl();
-      if (!active) return;
-      setRelayUrl(url);
-      if (url) checkHealth(url);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [checkHealth]);
-
-  const recheck = useCallback(() => {
-    if (relayUrl) checkHealth(relayUrl);
-  }, [relayUrl, checkHealth]);
-
-  return { relayUrl, health, checking, online: Boolean(health?.ok), recheck };
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -663,7 +611,7 @@ function CardsPanel({
   relay: BiostarRelay;
 }) {
   const { relayUrl, online } = relay;
-  const userId = stableUserId(selected);
+  const userId = stableUserId(selected.subjectKind, selected.subjectId);
 
   const [cards, setCards] = useState<BiostarUserState["cards"]>([]);
   const [loading, setLoading] = useState(false);
@@ -839,7 +787,7 @@ function CardsAssignDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const userId = stableUserId(selected);
+  const userId = stableUserId(selected.subjectKind, selected.subjectId);
   const validUntil = detail?.membership?.validUntil ?? undefined;
 
   const [cardNumber, setCardNumber] = useState("");
@@ -1091,20 +1039,6 @@ function CardsAssignDialog({
 // accesscontrol:manage (the caller already checks; the panel guards again on render).
 
 /**
- * A stable numeric BioStar user_id for a member, kept inside BioStar's valid range
- * [1, 2_000_000_000]. BioStar requires a NUMERIC user_id and rejects values above
- * ~2^31 — and any non-digit id — with "Invalid Parameters", so phone digits (12) and
- * many ID numbers overflow and can't be used. We derive it from a stable djb2 hash of
- * subjectKind:subjectId instead; staff recognise the user by the name we send on create.
- */
-function stableUserId(m: MemberPick): string {
-  let h = 5381;
-  const input = `${m.subjectKind}:${m.subjectId}`;
-  for (let i = 0; i < input.length; i++) h = ((h << 5) + h + input.charCodeAt(i)) >>> 0;
-  return String((h % 2_000_000_000) + 1);
-}
-
-/**
  * Auto-sync a subject's BioStar access groups to exactly what their current
  * membership(s) grant, whenever staff have this member open and the relay is
  * online — no manual "Set door access" click needed. Runs once per distinct
@@ -1124,7 +1058,7 @@ function useAutoSyncDoorAccess(
   const [error, setError] = useState<string | null>(null);
   const lastSyncKey = useRef<string | null>(null);
 
-  const userId = stableUserId(selected);
+  const userId = stableUserId(selected.subjectKind, selected.subjectId);
   const desired = Array.from(new Set(detail?.membership?.grantedDoorIds || [])).sort();
   const validUntil = detail?.membership?.validUntil ?? undefined;
 
@@ -1339,7 +1273,7 @@ function BiostarAssignDialog({
   detail: MemberDetail | null;
   onClose: () => void;
 }) {
-  const userId = stableUserId(selected);
+  const userId = stableUserId(selected.subjectKind, selected.subjectId);
   const validUntil = detail?.membership?.validUntil ?? undefined;
 
   const [groups, setGroups] = useState<BiostarAccessGroup[]>([]);

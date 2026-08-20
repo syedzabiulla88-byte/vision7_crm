@@ -13,7 +13,75 @@
 // Responses from `${relayUrl}/api/*` are RAW BioStar JSON (NOT the NestJS envelope).
 // The relay URL is admin-configured via the settings key `integrations.biostar.relay_url`.
 
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+
+// ─── Stable BioStar user id ────────────────────────────────────────────────────────
+
+/**
+ * A stable numeric BioStar user_id for a subject, kept inside BioStar's valid range
+ * [1, 2_000_000_000]. BioStar requires a NUMERIC user_id and rejects values above
+ * ~2^31 — and any non-digit id — with "Invalid Parameters", so phone digits (12) and
+ * many ID numbers overflow and can't be used. We derive it from a stable djb2 hash of
+ * subjectKind:subjectId instead; staff recognise the user by the name we send on create.
+ */
+export function stableUserId(subjectKind: string, subjectId: string): string {
+  let h = 5381;
+  const input = `${subjectKind}:${subjectId}`;
+  for (let i = 0; i < input.length; i++) h = ((h << 5) + h + input.charCodeAt(i)) >>> 0;
+  return String((h % 2_000_000_000) + 1);
+}
+
+// ─── Shared relay connection hook ──────────────────────────────────────────────────
+//
+// Reads the configured relay URL once and probes its health, exposing `online`
+// (health.ok) + a `recheck()`. Shared by the Card Access page and the Assign
+// Membership dialog's QR-issuance flow so both read the same connection state.
+
+export interface BiostarRelay {
+  /** null = still loading; "" = not configured. */
+  relayUrl: string | null;
+  health: RelayHealth | null;
+  checking: boolean;
+  online: boolean;
+  recheck: () => void;
+}
+
+export function useBiostarRelay(): BiostarRelay {
+  const [relayUrl, setRelayUrl] = useState<string | null>(null); // null = loading
+  const [health, setHealth] = useState<RelayHealth | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const checkHealth = useCallback(async (url: string) => {
+    setChecking(true);
+    try {
+      setHealth(await relayHealth(url));
+    } catch {
+      setHealth({ ok: false, reachable: false, error: "Relay unreachable" });
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const url = await getRelayUrl();
+      if (!active) return;
+      setRelayUrl(url);
+      if (url) checkHealth(url);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [checkHealth]);
+
+  const recheck = useCallback(() => {
+    if (relayUrl) checkHealth(relayUrl);
+  }, [relayUrl, checkHealth]);
+
+  return { relayUrl, health, checking, online: Boolean(health?.ok), recheck };
+}
 
 // ─── Relay URL (from app settings) ────────────────────────────────────────────────
 
@@ -513,6 +581,115 @@ export async function assignCardAndAccess(args: AssignArgs): Promise<StepResult[
   }
 
   return steps;
+}
+
+// ─── QR credentials (day-pass / rental plans) ──────────────────────────────────────
+//
+// BioStar treats a QR code as just another card type (card_type.id "7" = native
+// "BioStar 2 QR"), read by any connected face/QR reader once it's on the user — same
+// /api/cards + /api/users/{id} endpoints as a physical card, no per-device setup.
+// We mint the card_id (there's no physical card to scan) and render IT as the QR
+// image client-side; when a reader scans the printed/shown code, BioStar matches
+// this exact string against the registered card.
+
+/** BioStar's native "BioStar 2 QR" card type. */
+const QR_CARD_TYPE_ID = "7";
+
+/** A unique-enough numeric card_id for a freshly-minted QR credential. */
+function mintQrCardId(): string {
+  return `${Date.now()}${Math.floor(Math.random() * 900 + 100)}`;
+}
+
+/**
+ * POST /api/cards with card_type "7" — mints a new QR credential (no physical card
+ * involved). Returns the card_id to encode as the QR image plus the BioStar card id
+ * needed to assign it to a user.
+ */
+export async function enrollQrCard(
+  relayUrl: string,
+): Promise<{ biostarCardId: string; cardId: string }> {
+  const cardId = mintQrCardId();
+  const body = { Card: { card_id: cardId, card_type: { id: QR_CARD_TYPE_ID } } };
+  const res = await relayFetch<CardCollection>(relayUrl, `/api/cards`, { method: "POST", body });
+  const row = res?.CardCollection?.rows?.[0];
+  if (!row?.id) throw makeError("QR credential created but BioStar returned no card id", undefined, res);
+  return { biostarCardId: row.id, cardId: row.card_id || cardId };
+}
+
+export interface IssueQrArgs {
+  relayUrl: string;
+  name: string;
+  userId: string;
+  accessGroupIds: string[];
+  /** Membership endDate (any date string) — the QR stops working the instant this passes. */
+  expiry?: string | null;
+}
+
+export interface IssueQrResult {
+  steps: StepResult[];
+  /** The value encoded in the QR image, when issuance succeeded through that step. */
+  qrCardId?: string;
+}
+
+/**
+ * Issue a fresh QR credential to a member and set their door access groups —
+ * the "Assign Membership" counterpart to assignCardAndAccess. Always mints a NEW
+ * QR (a fresh code per assignment, not reused), so a customer can't reuse an old
+ * day pass's code after a new one is issued.
+ */
+export async function issueQrCredential(args: IssueQrArgs): Promise<IssueQrResult> {
+  const { relayUrl, name, userId, accessGroupIds, expiry } = args;
+  const steps: StepResult[] = [];
+
+  try {
+    const exists = await findUser(relayUrl, userId);
+    if (exists) {
+      await updateUser(relayUrl, { name, userId, expiry: expiry || undefined });
+      steps.push({ label: "User", ok: true, message: `Updated ${name} (#${userId})` });
+    } else {
+      await createUser(relayUrl, { name, userId, expiry: expiry || undefined });
+      steps.push({ label: "User", ok: true, message: `Created ${name} (#${userId})` });
+    }
+  } catch (err) {
+    steps.push({ label: "User", ok: false, message: errMsg(err) });
+    return { steps };
+  }
+
+  let biostarCardId: string;
+  let qrCardId: string;
+  try {
+    const enrolled = await enrollQrCard(relayUrl);
+    biostarCardId = enrolled.biostarCardId;
+    qrCardId = enrolled.cardId;
+    steps.push({ label: "Mint QR", ok: true, message: `QR credential ${qrCardId} created` });
+  } catch (err) {
+    steps.push({ label: "Mint QR", ok: false, message: errMsg(err) });
+    return { steps };
+  }
+
+  try {
+    await assignCardToUser(relayUrl, userId, biostarCardId);
+    steps.push({ label: "Assign QR", ok: true, message: "QR assigned to user" });
+  } catch (err) {
+    steps.push({ label: "Assign QR", ok: false, message: errMsg(err) });
+    return { steps };
+  }
+
+  try {
+    await grantAccessGroups(relayUrl, userId, accessGroupIds);
+    steps.push({
+      label: "Access groups",
+      ok: true,
+      message:
+        accessGroupIds.length === 0
+          ? "No door groups configured on this plan"
+          : `Set ${accessGroupIds.length} door group${accessGroupIds.length === 1 ? "" : "s"}`,
+    });
+  } catch (err) {
+    steps.push({ label: "Access groups", ok: false, message: errMsg(err) });
+  }
+
+  return { steps, qrCardId };
 }
 
 function errMsg(err: unknown): string {
