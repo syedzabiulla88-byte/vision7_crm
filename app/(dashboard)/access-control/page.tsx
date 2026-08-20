@@ -28,12 +28,14 @@ import {
   findCardByNumber,
   stableUserId,
   useBiostarRelay,
+  issueQrCredential,
   type BiostarAccessGroup,
   type BiostarDevice,
   type BiostarUserState,
   type StepResult,
   type BiostarRelay,
 } from "@/lib/biostar-relay";
+import QRCode from "qrcode";
 import {
   Card,
   CardContent,
@@ -1150,6 +1152,41 @@ function BiostarPanel({
 
   const configured = !!relayUrl;
 
+  // Manual "issue a QR now" — the retry path for a day-pass/rental assign that
+  // couldn't mint one at the time (e.g. relay was offline). Uses the same
+  // currently-granted door groups + validUntil already computed for this member.
+  const [qrIssuing, setQrIssuing] = useState(false);
+  const [qrResult, setQrResult] = useState<{ dataUrl: string; cardId: string } | null>(null);
+  const [qrError, setQrError] = useState<string | null>(null);
+  const issueQrNow = async () => {
+    if (!relayUrl) return;
+    setQrIssuing(true);
+    setQrError(null);
+    setQrResult(null);
+    try {
+      const result = await issueQrCredential({
+        relayUrl,
+        name: selected.name,
+        userId: stableUserId(selected.subjectKind, selected.subjectId),
+        accessGroupIds: detail?.membership?.grantedDoorIds || [],
+        expiry: detail?.membership?.validUntil,
+      });
+      if (!result.qrCardId) {
+        setQrError(result.steps.find((s) => !s.ok)?.message || "Failed to issue QR credential");
+        return;
+      }
+      const dataUrl = await QRCode.toDataURL(result.qrCardId, { width: 280, margin: 2 });
+      setQrResult({ dataUrl, cardId: result.qrCardId });
+      const failed = result.steps.find((s) => !s.ok);
+      if (failed) toast.error(`QR issued, but ${failed.label.toLowerCase()} failed: ${failed.message}`);
+      else toast.success("QR credential issued");
+    } catch (err) {
+      setQrError(err instanceof Error ? err.message : "Failed to issue QR credential");
+    } finally {
+      setQrIssuing(false);
+    }
+  };
+
   return (
     <Card className="border-l-4 border-l-primary/50">
       <CardHeader>
@@ -1212,20 +1249,43 @@ function BiostarPanel({
           </div>
         ) : (
           <>
-            <Button
-              onClick={() => setAssignOpen(true)}
-              disabled={!configured || !health?.ok}
-            >
-              <DoorOpen className="h-4 w-4" />
-              Set door access
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => setAssignOpen(true)}
+                disabled={!configured || !health?.ok}
+              >
+                <DoorOpen className="h-4 w-4" />
+                Set door access
+              </Button>
+              <Button
+                variant="outline"
+                onClick={issueQrNow}
+                disabled={!configured || !health?.ok || qrIssuing}
+              >
+                {qrIssuing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <DoorOpen className="h-4 w-4" />}
+                Issue QR credential
+              </Button>
+            </div>
             {health && !health.ok && health.error && (
               <p className="text-xs text-destructive">{health.error}</p>
             )}
             <p className="text-xs text-muted-foreground">
               Shows <span className="font-medium">{selected.name}</span>&apos;s current BioStar door
-              groups, then creates/updates the user and sets their door access groups.
+              groups, then creates/updates the user and sets their door access groups. &ldquo;Issue QR
+              credential&rdquo; mints a fresh QR pass valid until their current membership expires —
+              use this to issue one after an Assign Membership dialog reported the relay as offline.
             </p>
+            {qrIssuing ? (
+              <p className="text-xs text-muted-foreground">Issuing QR credential…</p>
+            ) : qrResult ? (
+              <div className="flex flex-col items-center gap-2 rounded-md border bg-muted/30 p-4 text-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={qrResult.dataUrl} alt="BioStar QR access pass" className="h-48 w-48" />
+                <p className="font-mono text-[11px] text-muted-foreground">{qrResult.cardId}</p>
+              </div>
+            ) : qrError ? (
+              <p className="text-xs text-amber-600 dark:text-amber-400">{qrError}</p>
+            ) : null}
             {health?.ok && (
               <div className="flex items-center gap-1.5 text-xs">
                 {autoSync.status === "syncing" ? (
