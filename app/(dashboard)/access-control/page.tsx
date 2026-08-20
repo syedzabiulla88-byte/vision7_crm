@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -127,6 +127,9 @@ interface MembershipGate {
   valid?: boolean;
   validUntil?: string | null;
   plans?: Array<{ id: string; name: string }>;
+  /** Union of accessDoorIds across the subject's currently-valid memberships — what
+   * their BioStar access groups SHOULD be. Drives the auto-sync in BiostarPanel. */
+  grantedDoorIds?: string[] | null;
 }
 
 interface MemberDetail {
@@ -1101,6 +1104,103 @@ function stableUserId(m: MemberPick): string {
   return String((h % 2_000_000_000) + 1);
 }
 
+/**
+ * Auto-sync a subject's BioStar access groups to exactly what their current
+ * membership(s) grant, whenever staff have this member open and the relay is
+ * online — no manual "Set door access" click needed. Runs once per distinct
+ * (userId, desired-groups) pair so re-renders don't re-trigger it.
+ *
+ * Deliberately narrow: only touches access_groups (never cards), and skips
+ * entirely when the subject has no BioStar presence AND nothing to grant —
+ * no point creating an empty user just to represent zero access.
+ */
+function useAutoSyncDoorAccess(
+  relayUrl: string | null,
+  online: boolean,
+  selected: MemberPick,
+  detail: MemberDetail | null,
+) {
+  const [status, setStatus] = useState<"idle" | "syncing" | "synced" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const lastSyncKey = useRef<string | null>(null);
+
+  const userId = stableUserId(selected);
+  const desired = Array.from(new Set(detail?.membership?.grantedDoorIds || [])).sort();
+  const validUntil = detail?.membership?.validUntil ?? undefined;
+
+  useEffect(() => {
+    if (!relayUrl || !online || !detail?.membership) return;
+
+    const key = `${userId}:${desired.join(",")}`;
+    if (lastSyncKey.current === key) return; // already handled this exact state
+
+    let cancelled = false;
+    (async () => {
+      setStatus("syncing");
+      setError(null);
+      try {
+        const current = await getBiostarUser(relayUrl, userId);
+        if (cancelled) return;
+
+        const currentGroups = [...current.accessGroupIds].sort();
+        const inSync =
+          currentGroups.length === desired.length && currentGroups.every((g, i) => g === desired[i]);
+
+        if (!current.exists && desired.length === 0) {
+          // Nothing granted, no BioStar presence — nothing to do.
+          lastSyncKey.current = key;
+          setStatus("idle");
+          return;
+        }
+
+        if (inSync) {
+          lastSyncKey.current = key;
+          setStatus("synced");
+          return;
+        }
+
+        const added = desired.filter((g) => !currentGroups.includes(g));
+        const removed = currentGroups.filter((g) => !desired.includes(g));
+
+        const result = await assignCardAndAccess({
+          relayUrl,
+          name: selected.name,
+          userId,
+          accessGroupIds: desired,
+          applyGroups: true,
+          expiry: validUntil,
+        });
+        if (cancelled) return;
+
+        if (result.every((s) => s.ok)) {
+          lastSyncKey.current = key;
+          setStatus("synced");
+          const parts: string[] = [];
+          if (added.length) parts.push(`granted ${added.length} door group${added.length === 1 ? "" : "s"}`);
+          if (removed.length) parts.push(`revoked ${removed.length} door group${removed.length === 1 ? "" : "s"}`);
+          if (parts.length) {
+            toast.success(`${selected.name}: auto-synced BioStar access — ${parts.join(", ")}.`);
+          }
+        } else {
+          setStatus("error");
+          setError(result.find((s) => !s.ok)?.message || "Auto-sync failed");
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setStatus("error");
+        setError(err instanceof Error ? err.message : "Auto-sync failed");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relayUrl, online, userId, desired.join(","), validUntil]);
+
+  return { status, error };
+}
+
 function BiostarPanel({
   selected,
   detail,
@@ -1112,6 +1212,7 @@ function BiostarPanel({
 }) {
   const { relayUrl, health, checking, recheck } = relay;
   const [assignOpen, setAssignOpen] = useState(false);
+  const autoSync = useAutoSyncDoorAccess(relayUrl, Boolean(health?.ok), selected, detail);
 
   const configured = !!relayUrl;
 
@@ -1191,6 +1292,24 @@ function BiostarPanel({
               Shows <span className="font-medium">{selected.name}</span>&apos;s current BioStar door
               groups, then creates/updates the user and sets their door access groups.
             </p>
+            {health?.ok && (
+              <div className="flex items-center gap-1.5 text-xs">
+                {autoSync.status === "syncing" ? (
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <RefreshCw className="h-3 w-3 animate-spin" /> Auto-syncing door access to their
+                    current membership…
+                  </span>
+                ) : autoSync.status === "synced" ? (
+                  <span className="text-emerald-700 dark:text-emerald-400">
+                    ✓ Door access matches their current membership
+                  </span>
+                ) : autoSync.status === "error" ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    Auto-sync couldn&apos;t run — {autoSync.error || "unknown error"}
+                  </span>
+                ) : null}
+              </div>
+            )}
           </>
         )}
       </CardContent>
