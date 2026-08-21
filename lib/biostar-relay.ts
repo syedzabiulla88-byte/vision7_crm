@@ -86,15 +86,19 @@ export function useBiostarRelay(): BiostarRelay {
 // ─── Relay URL (from app settings) ────────────────────────────────────────────────
 
 /**
- * Read the configured relay URL from `integrations.biostar.relay_url`.
- * `api.settings.list()` returns a flat key→value record. Returns "" when unset.
+ * Read the configured relay URL from `integrations.biostar.relay_url` via
+ * GET /settings/relay-url (any authenticated staff). Returns "" when unset.
  * The trailing slash is trimmed so callers can safely append `/api/...`.
  */
 export async function getRelayUrl(): Promise<string> {
   try {
-    const all = await api.settings.list();
-    const raw = (all?.["integrations.biostar.relay_url"] || "").trim();
-    return raw.replace(/\/+$/, "");
+    // /settings/relay-url — readable by ANY authenticated staff member (unlike
+    // the general settings list, which needs settings:manage and 403s for
+    // non-admin roles). Using the gated list here previously meant Card Access
+    // silently did nothing for every non-admin operator — their fetch threw,
+    // was swallowed by this catch, and the page read as "relay not configured".
+    const res = await api.settings.relayUrl();
+    return (res?.url || "").trim().replace(/\/+$/, "");
   } catch {
     return "";
   }

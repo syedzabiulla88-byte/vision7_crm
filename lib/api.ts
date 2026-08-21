@@ -480,6 +480,9 @@ export const api = {
   settings: {
     public: () => apiFetch<Record<string, string>>(`/settings/public`),
     list: () => apiFetch<Record<string, string>>(`/settings`),
+    // Any authenticated staff (not gated on settings:manage, unlike list()) —
+    // the BioStar relay URL specifically, so Card Access works for non-admin roles.
+    relayUrl: () => apiFetch<{ url: string }>(`/settings/relay-url`),
     // §control-plane — typed settings catalog (namespaced keys + metadata)
     catalog: () =>
       apiFetch<Array<{ key: string; label: string; group: string; type: string; public: boolean; secret: boolean }>>(
