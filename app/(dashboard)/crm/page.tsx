@@ -70,6 +70,14 @@ const SOURCE_FILTERS = [
   { value: "other", label: "Other" },
 ];
 
+const SORT_OPTIONS = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "recent", label: "Recently contacted" },
+  { value: "name", label: "Name (A–Z)" },
+  { value: "stage", label: "Pipeline stage" },
+];
+
 function typeBadgeClass(t?: string): string {
   switch (String(t || "").toUpperCase()) {
     case "LEAD":
@@ -131,6 +139,7 @@ export default function CrmContactsPage() {
   const [type, setType] = useState("ALL");
   const [stage, setStage] = useState("ALL");
   const [source, setSource] = useState("ALL");
+  const [sort, setSort] = useState("newest");
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState<{
     total: number;
@@ -148,6 +157,7 @@ export default function CrmContactsPage() {
           type: type === "ALL" ? undefined : type,
           stage: stage === "ALL" ? undefined : stage,
           source: source === "ALL" ? undefined : source,
+          sort,
           page,
           limit: PAGE_SIZE,
         }),
@@ -162,7 +172,7 @@ export default function CrmContactsPage() {
     } finally {
       setLoading(false);
     }
-  }, [q, type, stage, source, page]);
+  }, [q, type, stage, source, sort, page]);
 
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
@@ -268,6 +278,25 @@ export default function CrmContactsPage() {
               </SelectTrigger>
               <SelectContent>
                 {SOURCE_FILTERS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              items={SORT_OPTIONS}
+              value={sort}
+              onValueChange={(v) => {
+                setSort(v ?? "newest");
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-full md:w-48" aria-label="Sort contacts">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((o) => (
                   <SelectItem key={o.value} value={o.value}>
                     {o.label}
                   </SelectItem>

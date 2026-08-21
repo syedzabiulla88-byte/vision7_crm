@@ -93,6 +93,13 @@ import {
 
 const STATUS_LIST = ["ALL", "ACTIVE", "PENDING", "EXPIRED", "SUSPENDED", "FROZEN", "CANCELLED"] as const;
 
+const SORT_OPTIONS = [
+  { value: "default", label: "Default (active first)" },
+  { value: "name", label: "Name (A–Z)" },
+  { value: "newest", label: "Newest membership" },
+  { value: "oldest", label: "Oldest membership" },
+];
+
 const PAGE_SIZE = 20;
 
 const LANGUAGE_OPTIONS = [
@@ -356,6 +363,7 @@ export default function MembersPage() {
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [typeFilter, setTypeFilter] = useState<"ALL" | "ACADEMY" | "LEISURE">("ALL");
   const [trainerFilter, setTrainerFilter] = useState<string>("");
+  const [sortFilter, setSortFilter] = useState<string>("default");
   const [coaches, setCoaches] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -437,6 +445,7 @@ export default function MembersPage() {
       status = "ALL",
       side: "ALL" | "ACADEMY" | "LEISURE" = "ALL",
       trainer = "",
+      sort = "default",
     ) => {
       setLoading(true);
       setError(null);
@@ -447,6 +456,7 @@ export default function MembersPage() {
         if (status !== "ALL") params.status = status;
         if (side !== "ALL") params.type = side;
         if (trainer) params.trainerId = trainer;
+        if (sort !== "default") params.sort = sort;
         const result = await api.memberships.listGrouped(params);
         const rows: Person[] = Array.isArray(result) ? result : result?.data || [];
         setPeople(rows);
@@ -466,11 +476,11 @@ export default function MembersPage() {
   // status, side or trainer changes — all filtering happens server-side now.
   useEffect(() => {
     const t = setTimeout(
-      () => load(query, page, statusFilter, typeFilter, trainerFilter),
+      () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter),
       300,
     );
     return () => clearTimeout(t);
-  }, [query, page, statusFilter, typeFilter, trainerFilter, load]);
+  }, [query, page, statusFilter, typeFilter, trainerFilter, sortFilter, load]);
 
   // Coach pool for the trainer filter — loaded once. Uses the low-privilege
   // staff directory (not the admin-gated /users list) so any staff member can
@@ -488,8 +498,8 @@ export default function MembersPage() {
   // Re-query keeping the current filters + page so the list doesn't reset after
   // create / edit / freeze actions.
   const reload = useCallback(
-    () => load(query, page, statusFilter, typeFilter, trainerFilter),
-    [load, query, page, statusFilter, typeFilter, trainerFilter],
+    () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter),
+    [load, query, page, statusFilter, typeFilter, trainerFilter, sortFilter],
   );
 
   const memberLabel = (m: Membership) => displayName(m) || "this membership";
@@ -630,6 +640,27 @@ export default function MembersPage() {
             ]}
             placeholder="All trainers"
           />
+        </div>
+        <div className="md:w-48">
+          <Select
+            items={SORT_OPTIONS}
+            value={sortFilter}
+            onValueChange={(v) => {
+              setSortFilter(v ?? "default");
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-full" aria-label="Sort members">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
