@@ -470,7 +470,7 @@ export const api = {
       subjectId: string,
       data: { planName?: string; cardId: string; expiresAt?: string | null },
     ) =>
-      apiFetch<{ activityLogged: boolean; emailSent: boolean }>(
+      apiFetch<{ activityLogged: boolean; emailSent: boolean; pushedToApp: boolean }>(
         `/access-control/members/${subjectKind}/${subjectId}/qr-issued`,
         { method: "POST", body: JSON.stringify(data) },
       ),

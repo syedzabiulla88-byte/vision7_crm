@@ -1189,6 +1189,7 @@ function BiostarPanel({
         })
         .then((n) => {
           if (n.emailSent) toast.success("QR emailed to the member");
+          if (n.pushedToApp) toast.success("QR pushed to the member's Vision7 app");
         })
         .catch(() => undefined);
     } catch (err) {

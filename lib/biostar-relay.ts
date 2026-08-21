@@ -585,35 +585,33 @@ export async function assignCardAndAccess(args: AssignArgs): Promise<StepResult[
 
 // ─── QR credentials (day-pass / rental plans) ──────────────────────────────────────
 //
-// BioStar treats a QR code as just another card type (card_type.id "7" = native
-// "BioStar 2 QR"), read by any connected face/QR reader once it's on the user — same
-// /api/cards + /api/users/{id} endpoints as a physical card, no per-device setup.
-// We mint the card_id (there's no physical card to scan) and render IT as the QR
-// image client-side; when a reader scans the printed/shown code, BioStar matches
-// this exact string against the registered card.
+// IMPORTANT: this is NOT card_type 7 ("BioStar 2 QR") — Suprema's own docs say that
+// managed type explicitly does NOT support externally-generated QR content ("This
+// function is not supported for BioStar 2 QR"). What actually works for "render our
+// own QR, have a reader recognise it" is BioStar's separate "Use QR as Card" reader
+// mode: enrol a perfectly ordinary CSN card (card_type 0, same as a physical card —
+// see enrollCard() above) whose card_id is the decimal string we then render as the
+// QR image. A reader in "Use QR as Card" mode scans the code, reads the decimal text
+// back out, and matches it against that CSN card — same code path as a card tap.
+// (This also means the physical reader must have "Use QR as Card" enabled in BioStar
+// device settings, or it will never recognise these QR codes no matter what we send.)
 
-/** BioStar's native "BioStar 2 QR" card type. */
-const QR_CARD_TYPE_ID = "7";
-
-/** A unique-enough numeric card_id for a freshly-minted QR credential. */
+/** A unique-enough decimal card_id for a freshly-minted QR credential. */
 function mintQrCardId(): string {
   return `${Date.now()}${Math.floor(Math.random() * 900 + 100)}`;
 }
 
 /**
- * POST /api/cards with card_type "7" — mints a new QR credential (no physical card
- * involved). Returns the card_id to encode as the QR image plus the BioStar card id
- * needed to assign it to a user.
+ * Mints a virtual CSN card whose card_id becomes the QR image's content. No
+ * physical card involved — thin wrapper over enrollCard() for the "Use QR as
+ * Card" reader mode described above.
  */
 export async function enrollQrCard(
   relayUrl: string,
 ): Promise<{ biostarCardId: string; cardId: string }> {
   const cardId = mintQrCardId();
-  const body = { Card: { card_id: cardId, card_type: { id: QR_CARD_TYPE_ID } } };
-  const res = await relayFetch<CardCollection>(relayUrl, `/api/cards`, { method: "POST", body });
-  const row = res?.CardCollection?.rows?.[0];
-  if (!row?.id) throw makeError("QR credential created but BioStar returned no card id", undefined, res);
-  return { biostarCardId: row.id, cardId: row.card_id || cardId };
+  const enrolled = await enrollCard(relayUrl, cardId);
+  return { biostarCardId: enrolled.biostarCardId, cardId: enrolled.cardId || cardId };
 }
 
 export interface IssueQrArgs {
