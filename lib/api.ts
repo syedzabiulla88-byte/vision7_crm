@@ -463,6 +463,17 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    // Record a QR pass issuance (already done directly against BioStar via the
+    // relay) — logs a CrmActivity + emails the QR when the subject has an address.
+    notifyQrIssued: (
+      subjectKind: string,
+      subjectId: string,
+      data: { planName?: string; cardId: string; expiresAt?: string | null },
+    ) =>
+      apiFetch<{ activityLogged: boolean; emailSent: boolean }>(
+        `/access-control/members/${subjectKind}/${subjectId}/qr-issued`,
+        { method: "POST", body: JSON.stringify(data) },
+      ),
   },
 
   // App settings (admin-configurable key-value store)

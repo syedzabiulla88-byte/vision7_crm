@@ -3624,6 +3624,18 @@ function AssignMembershipDialog({
       } else {
         toast.success("QR credential issued");
       }
+      // Best-effort: log to the contact + email the QR. Never blocks the
+      // already-issued credential — BioStar itself doesn't need this to succeed.
+      api.accessControl
+        .notifyQrIssued(subjectKind, subjectId, {
+          planName: selectedPlan?.name,
+          cardId: result.qrCardId,
+          expiresAt: endDate,
+        })
+        .then((n) => {
+          if (n.emailSent) toast.success("QR emailed to the member");
+        })
+        .catch(() => undefined);
     } catch (err) {
       setQrError(err instanceof Error ? err.message : "Failed to issue QR credential");
     } finally {

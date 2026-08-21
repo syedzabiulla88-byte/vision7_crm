@@ -1180,6 +1180,17 @@ function BiostarPanel({
       const failed = result.steps.find((s) => !s.ok);
       if (failed) toast.error(`QR issued, but ${failed.label.toLowerCase()} failed: ${failed.message}`);
       else toast.success("QR credential issued");
+      // Best-effort: log to the contact + email the QR.
+      api.accessControl
+        .notifyQrIssued(selected.subjectKind, selected.subjectId, {
+          planName: detail?.membership?.plans?.[0]?.name,
+          cardId: result.qrCardId,
+          expiresAt: detail?.membership?.validUntil,
+        })
+        .then((n) => {
+          if (n.emailSent) toast.success("QR emailed to the member");
+        })
+        .catch(() => undefined);
     } catch (err) {
       setQrError(err instanceof Error ? err.message : "Failed to issue QR credential");
     } finally {
