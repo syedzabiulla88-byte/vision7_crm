@@ -1065,7 +1065,12 @@ function useAutoSyncDoorAccess(
   const validUntil = detail?.membership?.validUntil ?? undefined;
 
   useEffect(() => {
-    if (!relayUrl || !online || !detail?.membership) return;
+    // Staff (USER) accounts have no memberships at all — their door access is
+    // set manually per job role, not derived from a purchased plan. Auto-sync
+    // would otherwise compute "0 doors granted" for every staff member and
+    // silently wipe their real access the moment their Card Access page is
+    // opened. Bug found 2026-08-21: broke a real staff member's access this way.
+    if (!relayUrl || !online || !detail?.membership || selected.subjectKind === "USER") return;
 
     const key = `${userId}:${desired.join(",")}`;
     if (lastSyncKey.current === key) return; // already handled this exact state
