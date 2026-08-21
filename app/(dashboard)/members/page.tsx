@@ -3348,6 +3348,11 @@ function AssignMembershipDialog({
   // Day-pass / rental plans (plan.issueQrOnAssign): a QR credential minted in
   // BioStar right after a successful active assign. Kept open in the dialog
   // (same pattern as payLink) so staff can show/screenshot it for the customer.
+  // Gated on accesscontrol:manage — the same permission Card Access already
+  // requires to touch BioStar, so "has Card Access" and "can issue a QR" stay
+  // the same permission everywhere, not something memberships:allocate alone grants.
+  const { can } = usePermissions();
+  const canIssueQr = can("accesscontrol:manage");
   const relay = useBiostarRelay();
   const [qrIssuing, setQrIssuing] = useState(false);
   const [qrResult, setQrResult] = useState<{
@@ -3583,6 +3588,12 @@ function AssignMembershipDialog({
     memberName: string,
     endDate: string | null | undefined,
   ) => {
+    if (!canIssueQr) {
+      setQrError(
+        "The membership was assigned, but issuing a QR credential needs the Card Access permission — ask someone with that permission to issue it from Card Access.",
+      );
+      return;
+    }
     if (!relay.relayUrl || !relay.online) {
       setQrError(
         "BioStar relay is offline — the membership was assigned, but no QR was issued. Issue one later from Card Access once the relay is back online.",
