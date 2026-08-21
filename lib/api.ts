@@ -264,6 +264,8 @@ export const api = {
       apiFetch<any>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     delete: (id: string) => apiFetch<any>(`/users/${id}`, { method: "DELETE" }),
     sendLogin: (id: string) => apiFetch<any>(`/users/${id}/send-login`, { method: "POST" }),
+    /** Lightweight staff picker (id/name/role) — any authenticated staff, no users:view needed. */
+    directory: (search?: string) => apiFetch<any[]>(`/users/directory${qs(search ? { search } : undefined)}`),
   },
 
   reports: {

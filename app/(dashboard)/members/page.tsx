@@ -472,11 +472,16 @@ export default function MembersPage() {
     return () => clearTimeout(t);
   }, [query, page, statusFilter, typeFilter, trainerFilter, load]);
 
-  // Coach pool for the trainer filter — loaded once.
+  // Coach pool for the trainer filter — loaded once. Uses the low-privilege
+  // staff directory (not the admin-gated /users list) so any staff member can
+  // populate this filter, not just users:view holders.
   useEffect(() => {
     api.users
-      .list({ role: "COACH", limit: 100 })
-      .then((res: any) => setCoaches(Array.isArray(res) ? res : res?.data || []))
+      .directory()
+      .then((res: any) => {
+        const rows = Array.isArray(res) ? res : res?.data || [];
+        setCoaches(rows.filter((u: any) => u.role === "COACH"));
+      })
       .catch(() => setCoaches([]));
   }, []);
 
@@ -3370,6 +3375,10 @@ function AssignMembershipDialog({
   // Optional assigned PT trainer — picked from the COACH pool, sent as trainerId.
   const [trainerId, setTrainerId] = useState("");
   const [coaches, setCoaches] = useState<any[]>([]);
+  // Optional sales rep credited with the sale — any staff member, sent as
+  // salesUserId (drives the salesperson report + Zoho salesperson_name mirror).
+  const [salesUserId, setSalesUserId] = useState("");
+  const [staff, setStaff] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -3387,13 +3396,21 @@ function AssignMembershipDialog({
     })();
   }, []);
 
-  // Load the coach pool once when the dialog opens — these are the PT trainers
-  // selectable as the assigned trainer.
+  // Load the staff pool once when the dialog opens — the low-privilege
+  // directory (any authenticated staff can call it, unlike the admin-gated
+  // /users list) so ordinary staff can search for a trainer or sales rep.
   useEffect(() => {
     api.users
-      .list({ role: "COACH", limit: 100 })
-      .then((res: any) => setCoaches(Array.isArray(res) ? res : res?.data || []))
-      .catch(() => setCoaches([]));
+      .directory()
+      .then((res: any) => {
+        const rows = Array.isArray(res) ? res : res?.data || [];
+        setStaff(rows);
+        setCoaches(rows.filter((u: any) => u.role === "COACH"));
+      })
+      .catch(() => {
+        setStaff([]);
+        setCoaches([]);
+      });
   }, []);
 
   // Which BNPL gateways are configured — Tabby/Tamara options are disabled
@@ -3731,6 +3748,7 @@ function AssignMembershipDialog({
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
           trainerId: trainerId || undefined,
+          salesUserId: salesUserId || undefined,
           ...billingFields,
         });
         qrSubject = { subjectKind: "ATHLETE", subjectId: athlete.id };
@@ -3762,6 +3780,7 @@ function AssignMembershipDialog({
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
           trainerId: trainerId || undefined,
+          salesUserId: salesUserId || undefined,
           ...billingFields,
         });
         qrSubject = { subjectKind: "ATHLETE", subjectId: linkedAthleteId };
@@ -3792,6 +3811,7 @@ function AssignMembershipDialog({
           notes: notes?.trim() || undefined,
           autoRenew: !!autoRenew,
           trainerId: trainerId || undefined,
+          salesUserId: salesUserId || undefined,
           ...billingFields,
         });
         qrSubject = { subjectKind: "CRM_CONTACT", subjectId: subject.id };
@@ -3836,6 +3856,11 @@ function AssignMembershipDialog({
   const trainerOptions = [
     { value: "", label: "— none —" },
     ...coaches.map((c) => ({ value: c.id, label: c.name || c.email || "(unnamed)" })),
+  ];
+  // Any staff member as combobox options — sales rep credited with the sale.
+  const staffOptions = [
+    { value: "", label: "— none —" },
+    ...staff.map((u) => ({ value: u.id, label: u.name || u.email || "(unnamed)" })),
   ];
 
   return (
@@ -4053,6 +4078,15 @@ function AssignMembershipDialog({
                   onChange={setTrainerId}
                   options={trainerOptions}
                   placeholder="Select trainer…"
+                />
+              </Field>
+
+              <Field label="Sales person">
+                <ComboField
+                  value={salesUserId}
+                  onChange={setSalesUserId}
+                  options={staffOptions}
+                  placeholder="Search staff…"
                 />
               </Field>
 
