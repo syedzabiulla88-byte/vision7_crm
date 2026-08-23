@@ -363,7 +363,7 @@ export default function MembersPage() {
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [typeFilter, setTypeFilter] = useState<"ALL" | "ACADEMY" | "LEISURE">("ALL");
   const [trainerFilter, setTrainerFilter] = useState<string>("");
-  const [sortFilter, setSortFilter] = useState<string>("default");
+  const [sortFilter, setSortFilter] = useState<string>("newest");
   const [coaches, setCoaches] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
