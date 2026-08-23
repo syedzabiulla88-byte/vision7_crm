@@ -4245,34 +4245,32 @@ function AssignMembershipDialog({
                             }}
                             placeholder="0"
                           />
-                          {(() => {
-                            const pct = Math.min(100, Math.max(0, Number(discountPercent) || 0));
-                            if (pct <= 0) return null;
-                            const discountAmount = Math.round(price * pct) / 100;
-                            const netPrice = price - discountAmount;
-                            const regFee = Number(sp?.registrationFee) || 0;
-                            return (
-                              <div className="mt-2 space-y-0.5 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
-                                <div className="flex justify-between">
-                                  <span>Membership price</span>
-                                  <span>{formatSAR(price)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span>Discount ({pct}%)</span>
-                                  <span>− {formatSAR(discountAmount)}</span>
-                                </div>
-                                <div className="flex justify-between font-medium text-foreground">
-                                  <span>Net membership price</span>
-                                  <span>{formatSAR(netPrice)}</span>
-                                </div>
-                                {regFee > 0 && (
-                                  <p className="pt-1">
-                                    Registration/kit fee {formatSAR(regFee)} is not discounted.
-                                  </p>
-                                )}
+                          {discountPct > 0 && (
+                            <div className="mt-2 space-y-0.5 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                              <div className="flex justify-between">
+                                <span>Membership price</span>
+                                <span>{formatSAR(price)}</span>
                               </div>
-                            );
-                          })()}
+                              <div className="flex justify-between">
+                                <span>Discount ({discountPct}%, on VAT-exclusive price)</span>
+                                <span>− {formatSAR(discountAmt)}</span>
+                              </div>
+                              {registrationFee > 0 && (
+                                <div className="flex justify-between">
+                                  <span>Registration/kit fee (not discounted)</span>
+                                  <span>{formatSAR(registrationFee)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between">
+                                <span>VAT (15%)</span>
+                                <span>{formatSAR(taxAmount)}</span>
+                              </div>
+                              <div className="flex justify-between font-medium text-foreground">
+                                <span>Amount to invoice</span>
+                                <span>{formatSAR(total)}</span>
+                              </div>
+                            </div>
+                          )}
                         </Field>
                         {billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
