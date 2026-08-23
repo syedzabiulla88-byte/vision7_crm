@@ -4175,6 +4175,23 @@ function AssignMembershipDialog({
                         </div>
                       );
                     }
+                    const registrationFee = Number(sp?.registrationFee) || 0;
+                    // Mirrors computeInvoiceTotals() in invoices.service.ts exactly: catalog
+                    // prices are VAT-inclusive; the discount is a % of the plan price's
+                    // VAT-exclusive net (the registration/kit fee is never discounted); VAT
+                    // is added back on the discounted taxable base. Deposit quick-picks below
+                    // use this real total, not the raw sticker price — otherwise a discounted
+                    // or fee-bearing plan produces a deposit that doesn't match what actually
+                    // gets invoiced.
+                    const VAT_RATE = 15;
+                    const discountPct = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+                    const grossLines = price + registrationFee;
+                    const netBeforeDiscount = Math.round(((grossLines * 100) / (100 + VAT_RATE)) * 100) / 100;
+                    const priceNet = Math.round(((price * 100) / (100 + VAT_RATE)) * 100) / 100;
+                    const discountAmt = Math.round(((priceNet * discountPct) / 100) * 100) / 100;
+                    const subtotal = Math.round((netBeforeDiscount - discountAmt) * 100) / 100;
+                    const taxAmount = Math.round(((subtotal * VAT_RATE) / 100) * 100) / 100;
+                    const total = Math.round((subtotal + taxAmount) * 100) / 100;
                     const tabbyEnabled = providers.find((p) => p.provider === "tabby")?.enabled ?? false;
                     const tamaraEnabled = providers.find((p) => p.provider === "tamara")?.enabled ?? false;
                     const bnplDisabled: Record<string, boolean> = { tabby: !tabbyEnabled, tamara: !tamaraEnabled };
@@ -4263,11 +4280,11 @@ function AssignMembershipDialog({
                               id="assign-deposit"
                               type="number"
                               min={0}
-                              max={price}
+                              max={total}
                               step="0.01"
                               value={depositAmount}
                               onChange={(e) => setDepositAmount(e.target.value)}
-                              placeholder={`0 – ${formatSAR(price)}`}
+                              placeholder={`0 – ${formatSAR(total)}`}
                             />
                             <div className="mt-2 flex gap-2">
                               {[0.25, 0.5, 0.75].map((pct) => (
@@ -4277,7 +4294,7 @@ function AssignMembershipDialog({
                                   size="sm"
                                   variant="outline"
                                   onClick={() =>
-                                    setDepositAmount(String(Math.round(price * pct * 100) / 100))
+                                    setDepositAmount(String(Math.round(total * pct * 100) / 100))
                                   }
                                 >
                                   {pct * 100}%
@@ -4288,7 +4305,7 @@ function AssignMembershipDialog({
                                   value=""
                                   onChange={(v) => {
                                     const n = Number(v);
-                                    if (n > 0) setDepositAmount(String(Math.round((price / n) * 100) / 100));
+                                    if (n > 0) setDepositAmount(String(Math.round((total / n) * 100) / 100));
                                   }}
                                   placeholder="Split into…"
                                   options={[2, 3, 4, 5, 6].map((n) => ({
@@ -4299,8 +4316,9 @@ function AssignMembershipDialog({
                               </div>
                             </div>
                             <p className="mt-2 text-xs text-muted-foreground">
-                              The deposit is recorded as a partial payment. The balance stays owed and
-                              the member remains <strong>pending</strong> until paid in full.
+                              The deposit is recorded as a partial payment against the total billed
+                              amount ({formatSAR(total)}, after discount and VAT). The balance stays
+                              owed and the member remains <strong>pending</strong> until paid in full.
                             </p>
                           </Field>
                         )}
