@@ -4283,6 +4283,20 @@ function AssignMembershipDialog({
                                   {pct * 100}%
                                 </Button>
                               ))}
+                              <div className="w-36">
+                                <SelectField
+                                  value=""
+                                  onChange={(v) => {
+                                    const n = Number(v);
+                                    if (n > 0) setDepositAmount(String(Math.round((price / n) * 100) / 100));
+                                  }}
+                                  placeholder="Split into…"
+                                  options={[2, 3, 4, 5, 6].map((n) => ({
+                                    value: String(n),
+                                    label: `${n} payments`,
+                                  }))}
+                                />
+                              </div>
                             </div>
                             <p className="mt-2 text-xs text-muted-foreground">
                               The deposit is recorded as a partial payment. The balance stays owed and
