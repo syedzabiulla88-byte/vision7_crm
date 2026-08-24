@@ -3354,6 +3354,10 @@ function AssignMembershipDialog({
 
   const [plans, setPlans] = useState<any[]>([]);
   const [planId, setPlanId] = useState("");
+  // Extra plans billed together with the primary on one invoice (backend
+  // accepts planIds[]; the primary plan alone drives duration/athlete
+  // requirement/access groups/QR issuance — extras only add to price).
+  const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
   const [startDate, setStartDate] = useState(toDateInput(new Date()));
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -3797,7 +3801,7 @@ function AssignMembershipDialog({
         });
         res = await api.memberships.assign({
           athleteId: athlete.id,
-          planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3829,7 +3833,7 @@ function AssignMembershipDialog({
         }
         res = await api.memberships.assign({
           athleteId: linkedAthleteId,
-          planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -3860,7 +3864,7 @@ function AssignMembershipDialog({
         }
         res = await api.memberships.assign({
           crmContactId: subject.id,
-          planId,
+          planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes?.trim() || undefined,
@@ -4059,6 +4063,45 @@ function AssignMembershipDialog({
                   placeholder="Select plan…"
                 />
               </Field>
+              {extraPlanIds.map((id, i) => {
+                const extraPlan = plans.find((p) => p.id === id);
+                return (
+                  <div key={id} className="mt-2 flex items-center gap-2">
+                    <div className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                      {extraPlan
+                        ? `${extraPlan.name}${extraPlan.price != null ? ` — ${formatSAR(extraPlan.price)}` : ""}`
+                        : id}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setExtraPlanIds((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                );
+              })}
+              {planId && (
+                <div className="mt-2">
+                  <SelectField
+                    value=""
+                    onChange={(v) => {
+                      if (v && v !== planId && !extraPlanIds.includes(v)) {
+                        setExtraPlanIds((prev) => [...prev, v]);
+                      }
+                    }}
+                    options={planOptions.filter(
+                      (o) => o.value !== planId && !extraPlanIds.includes(o.value),
+                    )}
+                    placeholder="+ Add another plan (optional)"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Extra plans are billed together with the primary plan on one invoice.
+                  </p>
+                </div>
+              )}
               </div>
 
               {/* ID note spans full width; the four ID Fields below sit
@@ -4167,7 +4210,13 @@ function AssignMembershipDialog({
               {planId
                 ? (() => {
                     const sp = plans.find((p) => p.id === planId);
-                    const price = Number(sp?.price) || 0;
+                    // price/registrationFee sum across the primary plan + any extras — mirrors
+                    // plansOrdered.reduce(...) in invoices.service.ts's assignMembership, which
+                    // already combines every selected plan's price into one discount/VAT base.
+                    const selectedPlans = [sp, ...extraPlanIds.map((id) => plans.find((p) => p.id === id))].filter(
+                      (p): p is NonNullable<typeof p> => !!p,
+                    );
+                    const price = selectedPlans.reduce((sum, p) => sum + (Number(p.price) || 0), 0);
                     if (price <= 0) {
                       return (
                         <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
@@ -4175,7 +4224,7 @@ function AssignMembershipDialog({
                         </div>
                       );
                     }
-                    const registrationFee = Number(sp?.registrationFee) || 0;
+                    const registrationFee = selectedPlans.reduce((sum, p) => sum + (Number(p.registrationFee) || 0), 0);
                     // Mirrors computeInvoiceTotals() in invoices.service.ts exactly: catalog
                     // prices are VAT-inclusive; the discount is a % of the plan price's
                     // VAT-exclusive net (the registration/kit fee is never discounted); VAT
