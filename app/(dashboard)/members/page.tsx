@@ -4065,12 +4065,12 @@ function AssignMembershipDialog({
               </Field>
               {extraPlanIds.map((id, i) => {
                 const extraPlan = plans.find((p) => p.id === id);
+                if (!extraPlan) return null;
                 return (
                   <div key={id} className="mt-2 flex items-center gap-2">
                     <div className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                      {extraPlan
-                        ? `${extraPlan.name}${extraPlan.price != null ? ` — ${formatSAR(extraPlan.price)}` : ""}`
-                        : id}
+                      {extraPlan.name}
+                      {extraPlan.price != null ? ` — ${formatSAR(extraPlan.price)}` : ""}
                     </div>
                     <Button
                       type="button"
@@ -4088,7 +4088,17 @@ function AssignMembershipDialog({
                   <SelectField
                     value=""
                     onChange={(v) => {
-                      if (v && v !== planId && !extraPlanIds.includes(v)) {
+                      // The underlying Select can call back with null/undefined
+                      // (e.g. once the just-picked plan drops out of its own
+                      // options list) — SelectField stringifies that to the
+                      // literal "null"/"undefined", so only accept ids that are
+                      // real, distinct plans.
+                      if (
+                        v &&
+                        v !== planId &&
+                        !extraPlanIds.includes(v) &&
+                        plans.some((p) => p.id === v)
+                      ) {
                         setExtraPlanIds((prev) => [...prev, v]);
                       }
                     }}
