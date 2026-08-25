@@ -11,8 +11,15 @@ const TOKEN_COOKIE = "vision7_crm_token";
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Public: the login page itself.
-  if (pathname === "/login" || pathname.startsWith("/login/")) {
+  // Public: the login page itself, and the member-facing document links
+  // (Membership Agreement, PAR-Q, Handbook, Etiquette) — these are opened by
+  // members from an email/push CTA via a token in the URL, not a CRM login,
+  // so they must never be redirected to /login.
+  if (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname.startsWith("/member-documents/")
+  ) {
     return NextResponse.next();
   }
 
