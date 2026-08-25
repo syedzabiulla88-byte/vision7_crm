@@ -142,6 +142,22 @@ export const api = {
       }),
     profile: () => apiFetch<ProfileResult>("/auth/profile"),
   },
+  memberDocuments: {
+    send: (dto: { athleteId?: string; crmContactId?: string; type: string }) =>
+      apiFetch<any>("/member-documents/send", { method: "POST", body: JSON.stringify(dto) }),
+    resendMany: (dto: { subjects: { athleteId?: string; crmContactId?: string }[]; types: string[] }) =>
+      apiFetch<any>("/member-documents/resend-many", { method: "POST", body: JSON.stringify(dto) }),
+    listForMember: (params: { athleteId?: string; crmContactId?: string }) =>
+      apiFetch<any>(`/member-documents${qs(params)}`),
+    pendingReview: () => apiFetch<any>("/member-documents/pending-review"),
+    review: (id: string, dto: { clearanceDecision: string; clearanceNotes?: string }) =>
+      apiFetch<any>(`/member-documents/${id}/review`, { method: "POST", body: JSON.stringify(dto) }),
+    // Public, no-login (member-facing web link) — apiFetch tolerates the
+    // absence of a token, so no separate unauthenticated helper is needed.
+    getPublic: (token: string) => apiFetch<any>(`/public/member-documents/${token}`),
+    submitPublic: (token: string, payload: any) =>
+      apiFetch<any>(`/public/member-documents/${token}/submit`, { method: "POST", body: JSON.stringify(payload) }),
+  },
 
   plans: {
     list: (params?: Params) => apiFetch<any>(`/membership-plans${qs(params)}`),
