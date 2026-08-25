@@ -208,6 +208,10 @@ export const api = {
     pushZoho: (id: string) =>
       apiFetch<{ zohoInvoiceId: string }>(`/invoices/${id}/zoho`, { method: "POST" }),
     cancel: (id: string) => apiFetch<any>(`/invoices/${id}/cancel`, { method: "POST" }),
+    // Edit the invoice number to match an external record — renamed in Zoho
+    // first if mirrored there; refuses (no local change) if Zoho rejects it.
+    setNumber: (id: string, number: string) =>
+      apiFetch<any>(`/invoices/${id}/number`, { method: "PATCH", body: JSON.stringify({ number }) }),
     // Guided status change: SENT (issue, no email) / DRAFT (reopen) / CANCELLED.
     setStatus: (id: string, status: string) =>
       apiFetch<any>(`/invoices/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),

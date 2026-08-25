@@ -72,6 +72,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [pushingZoho, setPushingZoho] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
+  const [editingNumber, setEditingNumber] = useState(false);
+  const [newNumber, setNewNumber] = useState("");
+  const [savingNumber, setSavingNumber] = useState(false);
 
   // Confirmation dialogs
   const [confirm, setConfirm] = useState<
@@ -121,6 +124,21 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       toast.error(err instanceof Error ? err.message : "Failed to push to Zoho Books");
     } finally {
       setPushingZoho(false);
+    }
+  };
+
+  const handleSetNumber = async () => {
+    if (!invoice || savingNumber) return;
+    setSavingNumber(true);
+    try {
+      await api.invoices.setNumber(id, newNumber);
+      toast.success("Invoice number updated");
+      setEditingNumber(false);
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update invoice number");
+    } finally {
+      setSavingNumber(false);
     }
   };
 
@@ -296,6 +314,18 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           >
             <CloseCircle className="h-4 w-4" />
             Cancel Invoice
+          </Button>
+        )}
+        {canEdit && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setNewNumber(invoice.number || "");
+              setEditingNumber(true);
+            }}
+          >
+            <Pencil className="h-4 w-4" />
+            Edit number
           </Button>
         )}
         {canEdit && (
@@ -600,6 +630,37 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           load();
         }}
       />
+
+      {/* Edit invoice number */}
+      <Dialog open={editingNumber} onOpenChange={setEditingNumber}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit invoice number</DialogTitle>
+            <DialogDescription>
+              Match this invoice to an external record. Format must stay INV-YYYY-NNNN. If this
+              invoice is mirrored to Zoho Books, it's renamed there first — if Zoho refuses (e.g.
+              the number is already taken), nothing changes here either.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="edit-invoice-number">Invoice number</Label>
+            <Input
+              id="edit-invoice-number"
+              value={newNumber}
+              onChange={(e) => setNewNumber(e.target.value)}
+              placeholder="INV-2026-0058"
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditingNumber(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleSetNumber} disabled={savingNumber}>
+              {savingNumber ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Send / Resend / Cancel / Delete confirmations */}
       <ConfirmDialog
