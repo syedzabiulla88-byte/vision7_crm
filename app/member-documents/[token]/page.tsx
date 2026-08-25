@@ -9,6 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { NATIONALITY_OPTIONS } from "@/lib/nationalities";
 
 type StaticSection = { heading: string; items: string[] };
 type StaticContent = { title: string; subtitle: string; intro: string; sections: StaticSection[] };
@@ -390,7 +392,18 @@ function ContractView(props: {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label htmlFor="nationality">Nationality</Label>
-            <Input id="nationality" value={nationality} onChange={(e) => setNationality(e.target.value)} />
+            <Select items={NATIONALITY_OPTIONS} value={nationality} onValueChange={(v) => setNationality(v ?? "")}>
+              <SelectTrigger id="nationality" className="w-full">
+                <SelectValue placeholder="Select nationality…" />
+              </SelectTrigger>
+              <SelectContent>
+                {NATIONALITY_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div />
           <div className="space-y-1">

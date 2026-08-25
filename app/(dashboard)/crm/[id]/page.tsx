@@ -368,6 +368,9 @@ interface EditForm {
   workInfo: string;
   preferredLanguage: string;
   clientGoal: string;
+  nationality: string;
+  emergencyName: string;
+  emergencyPhone: string;
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -428,6 +431,9 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         workInfo: c.workInfo || "",
         preferredLanguage: c.preferredLanguage || "",
         clientGoal: c.clientGoal || "",
+        nationality: c.nationality || "",
+        emergencyName: c.emergencyName || "",
+        emergencyPhone: c.emergencyPhone || "",
       });
       setError("");
     } catch (err) {
@@ -498,6 +504,9 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         workInfo: form.workInfo.trim() || null,
         preferredLanguage: form.preferredLanguage || null,
         clientGoal: form.clientGoal || null,
+        nationality: form.nationality.trim() || null,
+        emergencyName: form.emergencyName.trim() || null,
+        emergencyPhone: form.emergencyPhone.trim() || null,
       });
       await load();
       setEditing(false);
@@ -687,6 +696,11 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                       {contact.address}
                     </DetailRow>
                   )}
+                  {(contact.emergencyName || contact.emergencyPhone) && (
+                    <DetailRow icon={<Phone className="h-4 w-4" />} label="Emergency contact">
+                      {[contact.emergencyName, contact.emergencyPhone].filter(Boolean).join(" · ") || "—"}
+                    </DetailRow>
+                  )}
                 </>
               ) : (
                 form && (
@@ -699,6 +713,17 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                     </p>
                     <TextField label="Phone" type="tel" value={form.phone} onChange={(v) => upd("phone", v)} />
                     <TextField label="Address" value={form.address} onChange={(v) => upd("address", v)} />
+                    <TextField
+                      label="Emergency contact name"
+                      value={form.emergencyName}
+                      onChange={(v) => upd("emergencyName", v)}
+                    />
+                    <TextField
+                      label="Emergency contact number"
+                      type="tel"
+                      value={form.emergencyPhone}
+                      onChange={(v) => upd("emergencyPhone", v)}
+                    />
                   </div>
                 )
               )}
@@ -768,6 +793,12 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 form && (
                   <div className="space-y-3">
                     <SelectField label="Gender" value={form.gender} onChange={(v) => upd("gender", v)} options={GENDERS} />
+                    <SelectField
+                      label="Nationality"
+                      value={form.nationality}
+                      onChange={(v) => upd("nationality", v)}
+                      options={NATIONALITY_OPTIONS}
+                    />
                     <div className="space-y-1.5">
                       <Label className="text-xs text-muted-foreground">Date of birth</Label>
                       <Input type="date" value={form.dob} onChange={(e) => upd("dob", e.target.value)} />
@@ -1288,6 +1319,7 @@ function DemographicsView({ contact }: { contact: any }) {
   const hasChildren = contact.childrenCount !== null && contact.childrenCount !== undefined;
   const any =
     gender ||
+    contact.nationality ||
     idType ||
     marital ||
     work ||
@@ -1307,6 +1339,11 @@ function DemographicsView({ contact }: { contact: any }) {
   return (
     <div className="space-y-3 text-sm">
       {gender && <DetailRow icon={<User className="h-4 w-4" />} label="Gender">{gender}</DetailRow>}
+      {contact.nationality && (
+        <DetailRow icon={<User className="h-4 w-4" />} label="Nationality">
+          {contact.nationality}
+        </DetailRow>
+      )}
       {contact.dob && (
         <DetailRow icon={<Calendar className="h-4 w-4" />} label="Date of birth">
           {formatDate(contact.dob)}
