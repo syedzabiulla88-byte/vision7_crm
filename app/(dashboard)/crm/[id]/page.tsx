@@ -393,6 +393,9 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -437,6 +440,33 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     load();
   }, [load]);
+
+  // Member Documents (Contract/PAR-Q/Handbook/Etiquette) — a row can be filed under
+  // crmContactId or, for a dual leisure+academy person, under their linked athleteId.
+  // A MemberDocument only ever has one of the two set, so these are fetched as two
+  // separate queries and merged rather than one combined filter.
+  useEffect(() => {
+    if (!contact?.id) return;
+    let cancelled = false;
+    setDocumentsLoading(true);
+    Promise.all([
+      api.memberDocuments.listForMember({ crmContactId: contact.id }).catch(() => []),
+      contact.linkedAthleteId
+        ? api.memberDocuments.listForMember({ athleteId: contact.linkedAthleteId }).catch(() => [])
+        : Promise.resolve([]),
+    ])
+      .then(([byContact, byAthlete]) => {
+        if (cancelled) return;
+        const rows = [...(byContact || []), ...(byAthlete || [])].sort(
+          (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+        setDocuments(rows);
+      })
+      .finally(() => !cancelled && setDocumentsLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [contact?.id, contact?.linkedAthleteId]);
 
   const upd = <K extends keyof EditForm>(k: K, v: EditForm[K]) =>
     setForm((f) => (f ? { ...f, [k]: v } : f));
@@ -1039,6 +1069,59 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                             >
                               <ArrowRight className="h-4 w-4" />
                             </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Member Documents — Contract / PAR-Q / Handbook / Etiquette */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-4 w-4" /> Member Documents
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">
+                {documentsLoading ? "Loading…" : `${documents.length} total`}
+              </span>
+            </CardHeader>
+            <CardContent>
+              {!documentsLoading && documents.length === 0 ? (
+                <p className="py-2 text-sm text-muted-foreground">
+                  No documents sent yet — Contract, PAR-Q, Handbook and Etiquette are sent
+                  automatically when a membership is assigned.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Document</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Sent</TableHead>
+                        <TableHead>Submitted</TableHead>
+                        <TableHead>Clearance</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {documents.map((d: any) => (
+                        <TableRow key={d.id}>
+                          <TableCell className="font-medium">{d.type}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={statusBadgeClass(d.status)}>
+                              {d.status.replaceAll("_", " ")}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{formatDate(d.sentAt)}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {d.submittedAt ? formatDate(d.submittedAt) : "—"}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {d.clearanceDecision ? d.clearanceDecision.replaceAll("_", " ") : "—"}
                           </TableCell>
                         </TableRow>
                       ))}
