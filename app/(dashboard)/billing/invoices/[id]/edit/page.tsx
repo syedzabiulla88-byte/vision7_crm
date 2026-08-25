@@ -61,8 +61,12 @@ export default function EditInvoicePage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  // Only DRAFT invoices may be edited; anything else is sent/locked.
-  if (String(invoice.status || "").toUpperCase() !== "DRAFT") {
+  // Editable while nothing has been collected (DRAFT / SENT / OVERDUE with
+  // no payments). After money lands, content is locked (backend enforces the
+  // same rule; only due date and notes remain editable via the API).
+  const editableStatus = ["DRAFT", "SENT", "OVERDUE"].includes(String(invoice.status || "").toUpperCase());
+  const nothingCollected = Number(invoice.amountPaid ?? invoice.paidAmount ?? 0) === 0;
+  if (!editableStatus || !nothingCollected) {
     return (
       <div className="space-y-4">
         <Button variant="ghost" render={<Link href={`/billing/invoices/${id}`} />}>
@@ -72,7 +76,7 @@ export default function EditInvoicePage({ params }: { params: Promise<{ id: stri
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-6 text-sm">
           <p className="font-medium">This invoice can no longer be edited.</p>
           <p className="mt-1 text-muted-foreground">
-            Only draft invoices can be edited. Invoice{" "}
+            Invoices are editable until a payment is recorded. Invoice{" "}
             {invoiceNo(invoice)} has status{" "}
             <span className="font-medium">{String(invoice.status).toUpperCase()}</span>.
           </p>

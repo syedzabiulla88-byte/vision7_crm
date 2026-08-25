@@ -37,7 +37,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Warning, Plus, Search, ArrowLeft } from "@/lib/icons";
+import { Warning, Plus, Search, ArrowLeft, Download } from "@/lib/icons";
+import { downloadCsv } from "@/lib/csv";
 import {
   formatSAR,
   formatDateTime,
@@ -107,6 +108,7 @@ export default function PaymentsLedgerPage() {
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
   const [recordOpen, setRecordOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -147,6 +149,50 @@ export default function PaymentsLedgerPage() {
     setPage(1);
   };
 
+  // Export EVERY payment matching the current filters — walks the
+  // pagination server-side, capped at 5000 rows.
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const all: PaymentRow[] = [];
+      for (let p = 1; p <= 25; p++) {
+        const params: Record<string, unknown> = { page: p, limit: 200 };
+        if (methodFilter !== "ALL") params.method = methodFilter;
+        if (typeFilter === "PAYMENTS") params.isRefund = false;
+        if (typeFilter === "REFUNDS") params.isRefund = true;
+        if (fromDate) params.from = fromDate;
+        if (toDate) params.to = toDate;
+        const result = await api.payments.list(params);
+        const batch: PaymentRow[] = Array.isArray(result) ? result : result?.data || [];
+        all.push(...batch);
+        const totalPages = Array.isArray(result) ? 1 : Number(result?.meta?.totalPages) || 1;
+        if (p >= totalPages || batch.length === 0) break;
+      }
+      if (!all.length) {
+        toast.info("Nothing to export");
+        return;
+      }
+      downloadCsv(
+        `payments-${new Date().toISOString().slice(0, 10)}.csv`,
+        all.map((p) => ({
+          date: String(p.paidAt || "").slice(0, 10),
+          type: p.isRefund ? "Refund" : "Payment",
+          method: methodLabel(p.method),
+          amount: Number(p.amount) || 0,
+          currency: p.currency || "SAR",
+          invoice: paymentInvoiceNumber(p),
+          customer: p.customerName || "",
+          reference: p.reference || "",
+        })),
+      );
+      toast.success(`Exported ${all.length} payment${all.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <PermissionGate
       permission="payments:view"
@@ -163,10 +209,16 @@ export default function PaymentsLedgerPage() {
           description="Every payment and refund across all invoices."
           onRefresh={load}
           actions={
-            <Button onClick={() => setRecordOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Record payment
-            </Button>
+            <>
+              <Button variant="outline" onClick={handleExportCsv} disabled={exporting || loading}>
+                <Download className="h-4 w-4" />
+                {exporting ? "Exporting…" : "Export CSV"}
+              </Button>
+              <Button onClick={() => setRecordOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Record payment
+              </Button>
+            </>
           }
         />
 

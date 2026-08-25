@@ -86,19 +86,17 @@ export function useBiostarRelay(): BiostarRelay {
 // ─── Relay URL (from app settings) ────────────────────────────────────────────────
 
 /**
- * Read the configured relay URL from `integrations.biostar.relay_url` via
- * GET /settings/relay-url (any authenticated staff). Returns "" when unset.
- * The trailing slash is trimmed so callers can safely append `/api/...`.
+ * Read the configured relay URL via the scoped `/settings/relay-url` endpoint.
+ * The old approach fetched the FULL settings list, which needs settings:manage:
+ * no operator role has that, so staff silently got "" here and card access did
+ * nothing for them (plus a 403 in the backend log on every visit). The scoped
+ * endpoint is open to any signed-in staff member. Returns "" when unset; the
+ * trailing slash is trimmed so callers can safely append `/api/...`.
  */
 export async function getRelayUrl(): Promise<string> {
   try {
-    // /settings/relay-url — readable by ANY authenticated staff member (unlike
-    // the general settings list, which needs settings:manage and 403s for
-    // non-admin roles). Using the gated list here previously meant Card Access
-    // silently did nothing for every non-admin operator — their fetch threw,
-    // was swallowed by this catch, and the page read as "relay not configured".
-    const res = await api.settings.relayUrl();
-    return (res?.url || "").trim().replace(/\/+$/, "");
+    const { url } = await api.settings.relayUrl();
+    return (url || "").trim().replace(/\/+$/, "");
   } catch {
     return "";
   }
@@ -272,6 +270,8 @@ export interface BiostarUserState {
   /** Access-group ids + names the user currently belongs to. */
   accessGroupIds: string[];
   accessGroupNames: string[];
+  /** Face credentials on the user: template faces and/or visual faces. */
+  faces: { id: string; kind: "face" | "visual_face" }[];
   expiry?: string;
 }
 
@@ -286,6 +286,13 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
         name?: string;
         cards?: Array<{ id?: string; card_id?: string; display_card_id?: string }>;
         access_groups?: Array<{ id?: string; name?: string }>;
+        faces?: Array<{ id?: string | number }>;
+        visual_faces?: Array<{ id?: string | number }>;
+        visualFaces?: Array<{ id?: string | number }>;
+        credentials?: {
+          faces?: Array<{ id?: string | number }>;
+          visualFaces?: Array<{ id?: string | number }>;
+        };
         expiry_datetime?: string;
       };
     }>(relayUrl, `/api/users/${encodeURIComponent(userId)}`);
@@ -298,12 +305,21 @@ export async function getBiostarUser(relayUrl: string, userId: string): Promise<
         .filter((c) => c.number),
       accessGroupIds: (u.access_groups || []).map((g) => String(g.id ?? "")).filter(Boolean),
       accessGroupNames: (u.access_groups || []).map((g) => String(g.name ?? g.id ?? "")).filter(Boolean),
+      // Official builds report faces under User.credentials.*; some report them
+      // top-level. A build that omits them entirely just shows "not enrolled".
+      faces: [
+        ...((u.credentials?.faces || u.faces) || []).map((f) => ({ id: String(f.id ?? ""), kind: "face" as const })),
+        ...((u.credentials?.visualFaces || u.visual_faces || u.visualFaces) || []).map((f) => ({
+          id: String(f.id ?? ""),
+          kind: "visual_face" as const,
+        })),
+      ],
       expiry: u.expiry_datetime,
     };
   } catch (err) {
     const e = err as RelayError;
     if (e.status === 400 || e.status === 404) {
-      return { exists: false, cards: [], accessGroupIds: [], accessGroupNames: [] };
+      return { exists: false, cards: [], accessGroupIds: [], accessGroupNames: [], faces: [] };
     }
     throw err;
   }
@@ -488,6 +504,183 @@ export async function scanCard(
     res;
   const raw = card?.card_id ?? card?.display_card_id;
   return { cardId: raw != null && raw !== "" ? String(raw) : undefined, cardType: card?.card_type, raw: res };
+}
+
+// ─── Face credentials (FaceStation / BioStation face-recognition devices) ─────────
+
+/** A face captured at a device, ready to be written onto a user. */
+export interface ScannedFace {
+  /** Which BioStar credential family the device produced. */
+  kind: "visual_face" | "face";
+  /** The scan response's credential object, passed back to BioStar verbatim. */
+  payload: Record<string, unknown>;
+  raw?: unknown;
+}
+
+/**
+ * Capture a face at a face-recognition device.
+ *
+ * OFFICIAL route (Suprema article 24000072992, "Add Visual Face Credential by
+ * Scanning Face on a Device", stated for BioStar <= 2.9.0):
+ *
+ *   GET /api/devices/{id}/credentials/face?pose_sensitivity=<0-9>
+ *   -> { credentials: { faces: [ { template_ex_normalized_image, templates: [...] } ] } }
+ *
+ * The returned face object is then attached to the user verbatim under
+ * User.credentials.visualFaces (see enrollFaceToUser). Newer/older BioStar
+ * builds have shipped device-scan variants, so when the official route is
+ * rejected we fall back to POST scan_visual_face, then POST scan_face (the
+ * legacy IR-template family used by FaceStation 2 / FaceLite).
+ */
+export async function scanFace(relayUrl: string, deviceId: string): Promise<ScannedFace> {
+  const dev = encodeURIComponent(deviceId);
+
+  const unwrap = (res: Record<string, any>): Record<string, unknown> | null => {
+    const obj =
+      res?.credentials?.faces?.[0] ??            // official shape
+      res?.Credentials?.faces?.[0] ??
+      res?.VisualFace ??
+      res?.visual_face ??
+      res?.Face ??
+      res?.face ??
+      res?.VisualFaceCollection?.rows?.[0] ??
+      res?.FaceCollection?.rows?.[0] ??
+      null;
+    if (obj && typeof obj === "object" && Object.keys(obj).length > 0) return obj;
+    // Some builds answer with the credential at top level.
+    if (res && typeof res === "object" && ("template_ex_normalized_image" in res || "templates" in res)) {
+      return res as Record<string, unknown>;
+    }
+    return null;
+  };
+
+  const rejected = (e: RelayError) => !!e.status && [400, 404, 405].includes(e.status);
+
+  // 1) Official: GET credentials/face (pose_sensitivity is a required param; 8 of 0-9
+  //    accepts slightly imperfect poses, matching BioStar's own UI default region).
+  try {
+    const res = await relayFetch<Record<string, any>>(
+      relayUrl,
+      `/api/devices/${dev}/credentials/face?pose_sensitivity=8`,
+    );
+    const payload = unwrap(res);
+    if (payload) return { kind: "visual_face", payload, raw: res };
+    throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
+  } catch (err) {
+    if (!rejected(err as RelayError)) throw err;
+  }
+
+  // 2) Variant seen on some builds.
+  try {
+    const res = await relayFetch<Record<string, any>>(relayUrl, `/api/devices/${dev}/scan_visual_face`, {
+      method: "POST",
+    });
+    const payload = unwrap(res);
+    if (payload) return { kind: "visual_face", payload, raw: res };
+    throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
+  } catch (err) {
+    if (!rejected(err as RelayError)) throw err;
+  }
+
+  // 3) Legacy IR-template devices.
+  const res = await relayFetch<Record<string, any>>(relayUrl, `/api/devices/${dev}/scan_face`, {
+    method: "POST",
+  });
+  const payload = unwrap(res);
+  if (!payload) {
+    throw makeError("Device returned no face data. Ask the member to face the device and retry.", undefined, res);
+  }
+  return { kind: "face", payload, raw: res };
+}
+
+/**
+ * PUT /api/users/{id} — write a captured face onto the user. Official nesting
+ * (same Suprema article): User.credentials.visualFaces for visual faces;
+ * the legacy IR family attaches as User.credentials.faces. Replace semantics,
+ * deliberately: re-scanning a member overwrites their previous face.
+ */
+export async function enrollFaceToUser(
+  relayUrl: string,
+  userId: string,
+  scanned: ScannedFace,
+): Promise<void> {
+  const key = scanned.kind === "visual_face" ? "visualFaces" : "faces";
+  const body = { User: { credentials: { [key]: [scanned.payload] } } };
+  await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
+}
+
+/** PUT /api/users/{id} with empty credential arrays — remove ALL face data from the user. */
+export async function revokeUserFaces(relayUrl: string, userId: string): Promise<void> {
+  const body = { User: { credentials: { visualFaces: [], faces: [] } } };
+  await relayFetch(relayUrl, `/api/users/${encodeURIComponent(userId)}`, { method: "PUT", body });
+}
+
+export interface FaceAssignArgs {
+  relayUrl: string;
+  name: string;
+  userId: string;
+  /** The face captured by scanFace(). */
+  scanned: ScannedFace;
+  /** The DESIRED final set of access-group ids (used only when applyGroups). */
+  accessGroupIds: string[];
+  /** Default true; false = leave door groups untouched (managed elsewhere). */
+  applyGroups?: boolean;
+  /** Membership validUntil (any date string) or undefined → DEFAULT_EXPIRY. */
+  expiry?: string | null;
+}
+
+/**
+ * The face twin of assignCardAndAccess: same user + groups steps, with the
+ * card step swapped for writing the captured face onto the user.
+ */
+export async function assignFaceAndAccess(args: FaceAssignArgs): Promise<StepResult[]> {
+  const { relayUrl, name, userId, scanned, accessGroupIds, expiry } = args;
+  const applyGroups = args.applyGroups !== false;
+  const steps: StepResult[] = [];
+
+  try {
+    const exists = await findUser(relayUrl, userId);
+    if (exists) {
+      await updateUser(relayUrl, { name, userId, expiry: expiry || undefined });
+      steps.push({ label: "User", ok: true, message: `Updated ${name} (#${userId})` });
+    } else {
+      await createUser(relayUrl, { name, userId, expiry: expiry || undefined });
+      steps.push({ label: "User", ok: true, message: `Created ${name} (#${userId})` });
+    }
+  } catch (err) {
+    steps.push({ label: "User", ok: false, message: errMsg(err) });
+    return steps;
+  }
+
+  try {
+    await enrollFaceToUser(relayUrl, userId, scanned);
+    steps.push({
+      label: "Enroll face",
+      ok: true,
+      message: scanned.kind === "visual_face" ? "Visual face enrolled" : "Face template enrolled",
+    });
+  } catch (err) {
+    steps.push({ label: "Enroll face", ok: false, message: errMsg(err) });
+    return steps;
+  }
+
+  if (applyGroups) {
+    try {
+      await grantAccessGroups(relayUrl, userId, accessGroupIds);
+      steps.push({
+        label: "Access groups",
+        ok: true,
+        message:
+          accessGroupIds.length === 0
+            ? "Cleared all door groups"
+            : `Set ${accessGroupIds.length} door group${accessGroupIds.length === 1 ? "" : "s"}`,
+      });
+    } catch (err) {
+      steps.push({ label: "Access groups", ok: false, message: errMsg(err) });
+    }
+  }
+
+  return steps;
 }
 
 // ─── Orchestrated assign (user → card → assign → access groups) ───────────────────

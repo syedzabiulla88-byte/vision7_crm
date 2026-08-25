@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { formatVcn } from "@/lib/utils";
 import { idExpiryStatus } from "@/lib/id-expiry";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
@@ -106,6 +107,8 @@ function initials(first?: string, last?: string): string {
 
 interface CrmContact {
   id: string;
+  /** Sequential customer reference; rendered as VCN-00042. */
+  crn?: number | null;
   firstName?: string;
   lastName?: string | null;
   email: string;
@@ -222,7 +225,7 @@ export default function CrmContactsPage() {
                   setQ(e.target.value);
                   setPage(1);
                 }}
-                placeholder="Name, email, phone, ID number…"
+                placeholder="Name, email, phone, ID number, VCN…"
                 className="pl-9"
                 aria-label="Search contacts"
               />
@@ -371,6 +374,11 @@ export default function CrmContactsPage() {
                                 <p className="font-medium">
                                   {c.firstName} {c.lastName || ""}
                                 </p>
+                                {c.crn != null && (
+                                  <span className="font-mono text-[10px] text-muted-foreground">
+                                    {formatVcn(c.crn)}
+                                  </span>
+                                )}
                                 {enquiries > 0 && (
                                   <Badge
                                     variant="outline"

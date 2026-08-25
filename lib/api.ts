@@ -295,6 +295,8 @@ export const api = {
     facilities: (params?: Params) => apiFetch<any>(`/reports/facilities${qs(params)}`),
     // Per-customer AR aging / statements
     statements: (params?: Params) => apiFetch<any>(`/reports/statements${qs(params)}`),
+    // Salesperson-wise sales — invoices / billed / collected per rep
+    sales: (params?: Params) => apiFetch<any>(`/reports/sales${qs(params)}`),
     // §control-plane — cross-app KPI bundle for the dashboard / single pane of glass
     overview: () => apiFetch<any>(`/reports/overview`),
   },
@@ -500,8 +502,8 @@ export const api = {
   settings: {
     public: () => apiFetch<Record<string, string>>(`/settings/public`),
     list: () => apiFetch<Record<string, string>>(`/settings`),
-    // Any authenticated staff (not gated on settings:manage, unlike list()) —
-    // the BioStar relay URL specifically, so Card Access works for non-admin roles.
+    // BioStar relay URL only — readable by any signed-in staff. The full list
+    // needs settings:manage, which operator roles don't (and shouldn't) have.
     relayUrl: () => apiFetch<{ url: string }>(`/settings/relay-url`),
     // §control-plane — typed settings catalog (namespaced keys + metadata)
     catalog: () =>

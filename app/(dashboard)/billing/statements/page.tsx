@@ -20,7 +20,8 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { FileText, Warning } from "@/lib/icons";
+import { FileText, Warning, Download } from "@/lib/icons";
+import { downloadCsv } from "@/lib/csv";
 import { formatSAR } from "../invoices/_shared";
 
 // ─── Types (API payload is loose `any`) ────────────────────────────────────────
@@ -126,6 +127,37 @@ export default function StatementsPage() {
           onRefresh={() => {
             load();
           }}
+          actions={
+            <Button
+              variant="outline"
+              disabled={loading || !rows.length}
+              onClick={() =>
+                downloadCsv(`statements-${new Date().toISOString().slice(0, 10)}.csv`, [
+                  ...rows.map((r) => ({
+                    customer: r.customer,
+                    total: r.total,
+                    current: r.current,
+                    days_1_30: r.d30,
+                    days_31_60: r.d60,
+                    days_61_90: r.d90,
+                    days_90_plus: r.d90plus,
+                  })),
+                  {
+                    customer: "TOTAL",
+                    total: totals.total,
+                    current: totals.current,
+                    days_1_30: totals.d30,
+                    days_31_60: totals.d60,
+                    days_61_90: totals.d90,
+                    days_90_plus: totals.d90plus,
+                  },
+                ])
+              }
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+          }
         />
 
         {/* KPI cards */}

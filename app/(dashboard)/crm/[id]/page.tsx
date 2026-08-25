@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { provisionAthleteForContact } from "@/lib/athlete-provision";
+import { formatVcn } from "@/lib/utils";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -607,6 +609,11 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 {contact.firstName} {contact.lastName || ""}
               </h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
+                {contact.crn != null && (
+                  <Badge variant="outline" className="font-mono text-[11px]">
+                    {formatVcn(contact.crn)}
+                  </Badge>
+                )}
                 <StageQuickPicker contact={contact} onChanged={load} />
                 <Badge variant="outline" className={typeBadgeClass(contact.type)}>
                   {contact.type}
@@ -901,6 +908,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
           <MembershipsBlock memberships={contact.memberships || []} />
 
           <FamilyMembersBlock familyMembers={contact.familyMembers || []} />
+          <FamilyOfBlock familyOf={contact.familyOf || []} />
 
           <GuardianBlock contact={contact} onChanged={load} />
 
@@ -1599,10 +1607,19 @@ function FamilyMembersBlock({ familyMembers }: { familyMembers: any[] }) {
       </CardHeader>
       <CardContent className="space-y-2">
         {rows.map((f: any) => {
-          const name = [f.firstName, f.lastName].filter(Boolean).join(" ") || f.name || "—";
+          // Prefer the dependent's own linked contact (the blob name fields are
+          // only used for legacy rows that never got a contact of their own).
+          const linked = f.memberContact || null;
+          const first = linked?.firstName ?? f.firstName;
+          const last = linked?.lastName ?? f.lastName;
+          const name = [first, last].filter(Boolean).join(" ") || f.name || "—";
           const age = ageFromDob(f.dob);
           const meta = [
             f.relation || f.relationship,
+            linked?.crn != null ? formatVcn(linked.crn) : null,
+            f.membership?.plan?.name
+              ? `${f.membership.plan.name} (${String(f.membership.status || "").toLowerCase()})`
+              : null,
             f.dob
               ? `${formatDate(f.dob)}${age !== null ? ` · ${age}y` : ""}`
               : age !== null
@@ -1611,18 +1628,67 @@ function FamilyMembersBlock({ familyMembers }: { familyMembers: any[] }) {
           ]
             .filter(Boolean)
             .join(" · ");
-          return (
-            <div key={f.id} className="flex items-center gap-3 rounded-md border p-3">
+          const row = (
+            <div className="flex items-center gap-3 rounded-md border p-3 transition-colors hover:bg-muted/40">
               <Avatar className="h-8 w-8 shrink-0">
                 <AvatarFallback className="text-[10px] font-semibold">
-                  {initials(f.firstName || f.name, f.lastName)}
+                  {initials(first || f.name, last)}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{name}</p>
                 <p className="text-xs text-muted-foreground">{meta || "—"}</p>
               </div>
+              {linked && <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
             </div>
+          );
+          return linked ? (
+            <Link key={f.id} href={`/crm/${linked.id}`} className="block">
+              {row}
+            </Link>
+          ) : (
+            <div key={f.id}>{row}</div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The families THIS contact belongs to — the reverse of FamilyMembersBlock. */
+function FamilyOfBlock({ familyOf }: { familyOf: any[] }) {
+  const rows = (familyOf || []).filter((f: any) => f.primaryContact);
+  if (rows.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <UsersIcon className="h-4 w-4" /> Family of
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.map((f: any) => {
+          const pc = f.primaryContact;
+          const name = [pc.firstName, pc.lastName].filter(Boolean).join(" ") || "—";
+          return (
+            <Link key={f.id} href={`/crm/${pc.id}`} className="block">
+              <div className="flex items-center gap-3 rounded-md border p-3 transition-colors hover:bg-muted/40">
+                <Avatar className="h-8 w-8 shrink-0">
+                  <AvatarFallback className="text-[10px] font-semibold">
+                    {initials(pc.firstName, pc.lastName)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {[pc.crn != null ? formatVcn(pc.crn) : null, f.relation ? `this contact is their ${String(f.relation).toLowerCase()}` : null]
+                      .filter(Boolean)
+                      .join(" · ") || "primary member"}
+                  </p>
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </div>
+            </Link>
           );
         })}
       </CardContent>
@@ -2148,6 +2214,17 @@ function AssignPlanDialog({
   const [plans, setPlans] = useState<any[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [planId, setPlanId] = useState("");
+  // Extra plans billed on the SAME invoice (multi-plan assignment).
+  const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
+  // Sales rep credited with the sale (lands on the invoice; drives the report).
+  const [salesUserId, setSalesUserId] = useState("");
+  const [staff, setStaff] = useState<any[]>([]);
+  useEffect(() => {
+    api.users
+      .list({ limit: 200 })
+      .then((res: any) => setStaff(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setStaff([]));
+  }, []);
   const [startDate, setStartDate] = useState(() => toDateInput(new Date().toISOString()));
   const [endDate, setEndDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -2159,7 +2236,7 @@ function AssignPlanDialog({
   //  "tabby" / "tamara" → BNPL pay-link: backend creates the link + emails it
   //  "manual"  → record an externally-taken BNPL payment by reference
   const [billingMode, setBillingMode] = useState<
-    "now" | "deposit" | "later" | "tabby" | "tamara" | "manual"
+    "now" | "deposit" | "later" | "invoice" | "tabby" | "tamara" | "manual"
   >("now");
   const [depositAmount, setDepositAmount] = useState("");
   // Discount % off the membership plan price (0–100); default empty = no discount.
@@ -2181,6 +2258,8 @@ function AssignPlanDialog({
 
   // Athlete provisioning fields (only used for academy plans without a linked athlete).
   const [athleteDob, setAthleteDob] = useState("");
+  // Email for the athlete login when the contact has none on file.
+  const [athleteEmail, setAthleteEmail] = useState("");
   const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
   const [athleteJersey, setAthleteJersey] = useState("");
   const [athleteNationality, setAthleteNationality] = useState("");
@@ -2305,12 +2384,21 @@ function AssignPlanDialog({
         toast.error("Pick a playing position for the athlete.");
         return;
       }
+      if (!contact.email && !athleteEmail.trim()) {
+        toast.error("An email is required for the athlete profile (it becomes their app login).");
+        return;
+      }
     }
     if (existingActive.length && !confirmDup) {
       toast.error("This person already has an active/pending membership — tick the box to add another.");
       return;
     }
-    const planPrice = Number(selectedPlan?.price) || 0;
+    const primaryPlanPrice = Number(selectedPlan?.price) || 0;
+    const extrasPrice = extraPlanIds.reduce(
+      (sum, id) => sum + (Number(plans.find((p) => p.id === id)?.price) || 0),
+      0,
+    );
+    const planPrice = primaryPlanPrice + extrasPrice; // combined invoice total
     // Deposit mode: validate 0 < amount < plan price before we hit the API.
     const depositValue = Number(depositAmount);
     if (planPrice > 0 && billingMode === "deposit") {
@@ -2378,24 +2466,36 @@ function AssignPlanDialog({
       let res: any;
       if (needsAthleteDetails) {
         // 1. Provision the athlete (creates a user login + auto-links a CRM contact).
-        const athlete = await api.athletes.create({
-          firstName: contact.firstName,
-          lastName: contact.lastName,
-          email: contact.email,
-          phone: contact.phone,
-          dob: athleteDob,
-          position: athletePosition,
-          jerseyNumber: Number(athleteJersey) || 0,
-          nationality: athleteNationality.trim() || undefined,
-          gender: contact.gender || undefined,
-          idType,
-          idNumber: idNumber.trim() || undefined,
-          idExpiry: idExpiry || null,
+        const prov = await provisionAthleteForContact({
+          contact,
+          email: athleteEmail,
+          payload: {
+            firstName: contact.firstName,
+            lastName: contact.lastName,
+            phone: contact.phone,
+            dob: athleteDob,
+            position: athletePosition,
+            jerseyNumber: Number(athleteJersey) || 0,
+            nationality: athleteNationality.trim() || undefined,
+            gender: contact.gender || undefined,
+            idType,
+            idNumber: idNumber.trim() || undefined,
+            idExpiry: idExpiry || null,
+          },
         });
-        // 2. Bill for the plan, tied to the freshly created athlete.
+        if (prov.reused) {
+          toast.info(
+            prov.linkedElsewhereId
+              ? "An athlete profile already existed for this email (linked to another contact record) — reused it. Merge the duplicate contacts when convenient."
+              : "An athlete profile already existed for this email — reused it and linked the contact.",
+          );
+        }
+        // 2. Bill for the plan, tied to the athlete.
         res = await api.memberships.assign({
-          athleteId: athlete.id,
+          athleteId: prov.athleteId,
           planId,
+          planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2421,6 +2521,8 @@ function AssignPlanDialog({
         res = await api.memberships.assign({
           athleteId: linkedAthleteId,
           planId,
+          planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2439,6 +2541,8 @@ function AssignPlanDialog({
         res = await api.memberships.assign({
           crmContactId: contact.id,
           planId,
+          planIds: [planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           notes: notes.trim() || undefined,
@@ -2518,6 +2622,76 @@ function AssignPlanDialog({
                 ))}
               </SelectContent>
             </Select>
+            {planId && (
+              <div className="mt-2 space-y-1.5">
+                <Label>Additional plans (optional)</Label>
+                <Select
+                  items={planOptions.filter((o) => o.value !== planId && !extraPlanIds.includes(o.value))}
+                  value=""
+                  onValueChange={(v) => {
+                    if (v && v !== planId && !extraPlanIds.includes(v)) setExtraPlanIds((prev) => [...prev, v]);
+                  }}
+                >
+                  <SelectTrigger className="w-full" aria-label="Additional plans">
+                    <SelectValue placeholder="Add another plan…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {planOptions
+                      .filter((o) => o.value !== planId && !extraPlanIds.includes(o.value))
+                      .map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {extraPlanIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {extraPlanIds.map((id) => {
+                      const pl = plans.find((p) => p.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+                          {pl?.name || id}
+                          <button
+                            type="button"
+                            aria-label="Remove plan"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setExtraPlanIds((prev) => prev.filter((x) => x !== id))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            {staff.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                <Label>Sales person (optional)</Label>
+                <Select
+                  items={[
+                    { value: "none", label: "None" },
+                    ...staff.map((u: any) => ({ value: u.id, label: u.name || u.email || "(unnamed)" })),
+                  ]}
+                  value={salesUserId || "none"}
+                  onValueChange={(v) => setSalesUserId(v === "none" ? "" : (v ?? ""))}
+                >
+                  <SelectTrigger className="w-full" aria-label="Sales person">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {staff.map((u: any) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name || u.email || "(unnamed)"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             {!loadingPlans && plans.length === 0 && (
               <p className="text-xs text-muted-foreground">
                 No plans available.{" "}
@@ -2626,6 +2800,13 @@ function AssignPlanDialog({
                         className={`rounded-md border px-3 py-2 text-sm ${billingMode === "later" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
                       >
                         Invoice + card pay-link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBillingMode("invoice")}
+                        className={`rounded-md border px-3 py-2 text-sm ${billingMode === "invoice" ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/50"}`}
+                      >
+                        Invoice only (pay later)
                       </button>
                       <button
                         type="button"
@@ -2827,6 +3008,18 @@ function AssignPlanDialog({
                   login) and tie the membership to it — all in one click.
                 </p>
               </div>
+              {!contact.email && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="athlete-email">Email * (becomes the athlete&apos;s app login)</Label>
+                  <Input
+                    id="athlete-email"
+                    type="email"
+                    value={athleteEmail}
+                    onChange={(e) => setAthleteEmail(e.target.value)}
+                    placeholder="name@example.com"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="athlete-dob">Date of birth</Label>

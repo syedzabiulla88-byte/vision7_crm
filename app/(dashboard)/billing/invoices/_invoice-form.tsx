@@ -83,20 +83,26 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
     editing?.discount != null ? String(editing.discount) : "0",
   );
   const [notes, setNotes] = useState(editing?.notes || "");
+  // Sales rep credited with the sale (drives the salesperson report).
+  const [salesUserId, setSalesUserId] = useState(editing?.salesUserId || "");
+  const [staff, setStaff] = useState<any[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [aRes, mRes, pRes] = await Promise.all([
+        const [aRes, mRes, pRes, uRes] = await Promise.all([
           api.athletes.list({ limit: 1000 }),
           api.memberships.list({ limit: 1000 }).catch(() => ({ data: [] })),
           api.plans.list({ limit: 1000 }).catch(() => ({ data: [] })),
+          // Sales-person pool — non-fatal when the caller lacks users:view.
+          api.users.list({ limit: 200 }).catch(() => ({ data: [] })),
         ]);
         if (cancelled) return;
         setAthletes(Array.isArray(aRes) ? aRes : aRes?.data || []);
         setMemberships(Array.isArray(mRes) ? mRes : mRes?.data || []);
         setPlans(Array.isArray(pRes) ? pRes : pRes?.data || []);
+        setStaff(Array.isArray(uRes) ? uRes : (uRes as any)?.data || []);
       } catch (err) {
         if (!cancelled) toast.error(err instanceof Error ? err.message : "Failed to load");
       } finally {
@@ -226,6 +232,7 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
       taxRate: Number(taxRate) || 0,
       discount: Number(discount) || 0,
       notes: notes.trim() || undefined,
+      salesUserId: salesUserId || null,
     };
     if (recipientType === "walkin") {
       return {
@@ -462,6 +469,28 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
                   />
                 </div>
               </div>
+
+              {staff.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Sales person (optional)</Label>
+                  <Select
+                    value={salesUserId || "none"}
+                    onValueChange={(v) => setSalesUserId(v === "none" ? "" : (v as string))}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {staff.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.name || u.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </CardContent>
           </Card>
 

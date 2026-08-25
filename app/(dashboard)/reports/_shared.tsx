@@ -284,27 +284,4 @@ export function ChartCard({ children, className }: { children: ReactNode; classN
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
 
-export function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
-  if (!rows || !rows.length) return;
-  const headers = Object.keys(rows[0]);
-  const lines = [headers.join(",")];
-  for (const r of rows) {
-    lines.push(
-      headers
-        .map((h) => {
-          const v = r[h];
-          if (v === null || v === undefined) return "";
-          const s = String(v).replace(/"/g, '""');
-          return /[",\n]/.test(s) ? `"${s}"` : s;
-        })
-        .join(","),
-    );
-  }
-  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
+export { downloadCsv } from "@/lib/csv";

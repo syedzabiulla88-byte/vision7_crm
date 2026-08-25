@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { api, uploadFile } from "@/lib/api";
+import { provisionAthleteForContact } from "@/lib/athlete-provision";
 import { cn } from "@/lib/utils";
 import { idExpiryStatus, toDateInputValue } from "@/lib/id-expiry";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
@@ -1193,7 +1194,7 @@ interface NewMemberForm {
   planId: string;
   startDate: string;
   endDate: string;
-  billingMode: "now" | "deposit" | "later" | "tabby" | "tamara" | "manual";
+  billingMode: "now" | "deposit" | "later" | "invoice" | "tabby" | "tamara" | "manual";
   depositAmount: string;
   discountPercent: string;
   paymentMethod: string;
@@ -1251,6 +1252,18 @@ function NewMemberDialog({
   >([]);
   // Pay-link returned by assign for tabby/tamara — shown with a Copy button.
   const [payLink, setPayLink] = useState<{ url: string; provider: string } | null>(null);
+  // Extra plans billed on the SAME invoice (multi-plan assignment). The primary
+  // plan stays form.planId; each extra becomes its own membership server-side.
+  const [extraPlanIds, setExtraPlanIds] = useState<string[]>([]);
+  // Sales rep credited with the sale (lands on the invoice; drives the report).
+  const [salesUserId, setSalesUserId] = useState("");
+  const [staff, setStaff] = useState<any[]>([]);
+  useEffect(() => {
+    api.users
+      .list({ limit: 200 })
+      .then((res: any) => setStaff(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setStaff([]));
+  }, []);
 
   const set = <K extends keyof NewMemberForm>(k: K, v: NewMemberForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -1367,7 +1380,14 @@ function NewMemberDialog({
       return;
     }
 
-    const planPrice = Number(plans.find((p) => p.id === form.planId)?.price) || 0;
+    const primaryPlanPrice = Number(plans.find((p) => p.id === form.planId)?.price) || 0;
+    const extrasPrice = extraPlanIds.reduce(
+      (sum, id) => sum + (Number(plans.find((p) => p.id === id)?.price) || 0),
+      0,
+    );
+    // Combined across every selected plan: all the checks below (deposit bound,
+    // free-plan detection, gateway gating) care about the invoice total.
+    const planPrice = primaryPlanPrice + extrasPrice;
 
     // Validate the deposit before any network call: must be > 0 and < the plan total.
     const depositNum = Number(form.depositAmount);
@@ -1462,6 +1482,8 @@ function NewMemberDialog({
         const res = await api.memberships.assign({
           athleteId: athlete.id,
           planId: form.planId,
+          planIds: [form.planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
           ...billingFields,
@@ -1495,6 +1517,8 @@ function NewMemberDialog({
         const res = await api.memberships.assign({
           crmContactId: contact.id,
           planId: form.planId,
+          planIds: [form.planId, ...extraPlanIds],
+          salesUserId: salesUserId || undefined,
           startDate: form.startDate || undefined,
           endDate: form.endDate || undefined,
           ...billingFields,
@@ -1815,6 +1839,56 @@ function NewMemberDialog({
                   placeholder={plansLoading ? "Loading plans…" : "Select plan…"}
                 />
               </Field>
+              <Field label="Additional plans (optional)">
+                <SelectField
+                  value=""
+                  onChange={(v) => {
+                    if (v && v !== form.planId && !extraPlanIds.includes(v)) {
+                      setExtraPlanIds((prev) => [...prev, v]);
+                    }
+                  }}
+                  options={planOptions.filter((o) => o.value !== form.planId && !extraPlanIds.includes(o.value))}
+                  placeholder="Add another plan…"
+                />
+                {extraPlanIds.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {extraPlanIds.map((id) => {
+                      const pl = plans.find((p) => p.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+                          {pl?.name || id}
+                          <button
+                            type="button"
+                            aria-label="Remove plan"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setExtraPlanIds((prev) => prev.filter((x) => x !== id))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {extraPlanIds.length > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    One invoice, one membership per plan. All plans activate together when it&rsquo;s paid.
+                  </p>
+                )}
+              </Field>
+              {staff.length > 0 && (
+                <Field label="Sales person (optional)">
+                  <SelectField
+                    value={salesUserId}
+                    onChange={setSalesUserId}
+                    options={[
+                      { value: "", label: "— none —" },
+                      ...staff.map((u: any) => ({ value: u.id, label: u.name || u.email || "(unnamed)" })),
+                    ]}
+                    placeholder="Select sales person…"
+                  />
+                </Field>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Start date" htmlFor="nm-start">
                   <Input
@@ -1858,6 +1932,7 @@ function NewMemberDialog({
                               { v: "now", label: "Pay in full now" },
                               { v: "deposit", label: "Take a deposit" },
                               { v: "later", label: "Invoice + card pay-link" },
+                              { v: "invoice", label: "Invoice only (pay later)" },
                               { v: "tabby", label: "Tabby (pay-link)" },
                               { v: "tamara", label: "Tamara (pay-link)" },
                               { v: "manual", label: "Manual BNPL reference" },
@@ -3366,7 +3441,7 @@ function AssignMembershipDialog({
   // (partial payment, balance owed), issue an open invoice to pay later, send a
   // Tabby/Tamara BNPL pay-link, or record an external BNPL payment by reference.
   const [billingMode, setBillingMode] = useState<
-    "now" | "deposit" | "later" | "tabby" | "tamara" | "manual"
+    "now" | "deposit" | "later" | "invoice" | "tabby" | "tamara" | "manual"
   >("now");
   const [depositAmount, setDepositAmount] = useState("");
   // Discount % off the membership plan price (0–100); default empty = no discount.
@@ -3412,6 +3487,9 @@ function AssignMembershipDialog({
   const [athletePosition, setAthletePosition] = useState("MIDFIELDER");
   const [athleteJersey, setAthleteJersey] = useState("");
   const [athleteNationality, setAthleteNationality] = useState("");
+  // Email for the athlete login when the contact has none on file (saved onto
+  // the contact before the athlete is provisioned).
+  const [athleteEmail, setAthleteEmail] = useState("");
   // Optional assigned PT trainer — picked from the COACH pool, sent as trainerId.
   const [trainerId, setTrainerId] = useState("");
   const [coaches, setCoaches] = useState<any[]>([]);
@@ -3451,6 +3529,14 @@ function AssignMembershipDialog({
         setStaff([]);
         setCoaches([]);
       });
+  }, []);
+
+  // Sales-person pool — every staff user, non-fatal when users:view is missing.
+  useEffect(() => {
+    api.users
+      .list({ limit: 200 })
+      .then((res: any) => setStaff(Array.isArray(res) ? res : res?.data || []))
+      .catch(() => setStaff([]));
   }, []);
 
   // Which BNPL gateways are configured — Tabby/Tamara options are disabled
@@ -3703,6 +3789,10 @@ function AssignMembershipDialog({
         toast.error("Pick a playing position for the athlete.");
         return;
       }
+      if (!subject?.email && !athleteEmail.trim()) {
+        toast.error("An email is required for the athlete profile (it becomes their app login).");
+        return;
+      }
     }
     // ID is mandatory when the member has none on file yet.
     if (needsId && (!idNumber.trim() || !idDocumentUrl)) {
@@ -3717,7 +3807,12 @@ function AssignMembershipDialog({
       toast.error(`${subject.name} already has an active/pending membership — tick the box to add another.`);
       return;
     }
-    const price = Number(selectedPlan?.price) || 0;
+    const primaryPrice = Number(selectedPlan?.price) || 0;
+    const extrasPrice = extraPlanIds.reduce(
+      (sum, id) => sum + (Number(plans.find((p) => p.id === id)?.price) || 0),
+      0,
+    );
+    const price = primaryPrice + extrasPrice; // combined: every check below is about the invoice total
 
     // Validate the deposit before any network call: must be > 0 and < the plan total.
     const depositNum = Number(depositAmount);
@@ -3785,22 +3880,33 @@ function AssignMembershipDialog({
       if (needsAthleteDetails) {
         // Academy plan + contact has no athlete: provision the athlete (creates a
         // user login + auto-links the CRM contact), then bill via athleteId.
-        const athlete = await api.athletes.create({
-          firstName: subject.firstName,
-          lastName: subject.lastName,
-          email: subject.email,
-          phone: subject.phone,
-          dob: new Date(athleteDob).toISOString(),
-          position: athletePosition,
-          jerseyNumber: Number(athleteJersey) || 0,
-          nationality: athleteNationality.trim() || undefined,
-          idType: idNumber.trim() ? idType : undefined,
-          idNumber: idNumber.trim() || undefined,
-          idExpiry: idExpiry || null,
-          idDocumentUrl: idDocumentUrl || undefined,
+        const prov = await provisionAthleteForContact({
+          contact: subject,
+          email: athleteEmail,
+          payload: {
+            firstName: subject.firstName,
+            lastName: subject.lastName,
+            phone: subject.phone,
+            dob: new Date(athleteDob).toISOString(),
+            position: athletePosition,
+            jerseyNumber: Number(athleteJersey) || 0,
+            nationality: athleteNationality.trim() || undefined,
+            idType: idNumber.trim() ? idType : undefined,
+            idNumber: idNumber.trim() || undefined,
+            idExpiry: idExpiry || null,
+            idDocumentUrl: idDocumentUrl || undefined,
+          },
         });
+        if (prov.reused) {
+          toast.info(
+            prov.linkedElsewhereId
+              ? "An athlete profile already existed for this email (linked to another contact record) — reused it. Merge the duplicate contacts when convenient."
+              : "An athlete profile already existed for this email — reused it and linked the contact.",
+          );
+        }
         res = await api.memberships.assign({
-          athleteId: athlete.id,
+          athleteId: prov.athleteId,
+          planId,
           planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
@@ -3810,7 +3916,7 @@ function AssignMembershipDialog({
           salesUserId: salesUserId || undefined,
           ...billingFields,
         });
-        qrSubject = { subjectKind: "ATHLETE", subjectId: athlete.id };
+        qrSubject = { subjectKind: "ATHLETE", subjectId: prov.athleteId };
         const memStatus = res?.membership?.status;
         if (isPayLinkMode) {
           /* pay-link toast handled below */
@@ -3833,6 +3939,7 @@ function AssignMembershipDialog({
         }
         res = await api.memberships.assign({
           athleteId: linkedAthleteId,
+          planId,
           planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
@@ -3864,6 +3971,7 @@ function AssignMembershipDialog({
         }
         res = await api.memberships.assign({
           crmContactId: subject.id,
+          planId,
           planIds: [planId, ...extraPlanIds],
           startDate: startDate || undefined,
           endDate: endDate || undefined,
@@ -3917,7 +4025,7 @@ function AssignMembershipDialog({
     ...coaches.map((c) => ({ value: c.id, label: c.name || c.email || "(unnamed)" })),
   ];
   // Any staff member as combobox options — sales rep credited with the sale.
-  const staffOptions = [
+  const salesOptions = [
     { value: "", label: "— none —" },
     ...staff.map((u) => ({ value: u.id, label: u.name || u.email || "(unnamed)" })),
   ];
@@ -4063,55 +4171,36 @@ function AssignMembershipDialog({
                   placeholder="Select plan…"
                 />
               </Field>
-              {extraPlanIds.map((id, i) => {
-                const extraPlan = plans.find((p) => p.id === id);
-                if (!extraPlan) return null;
-                return (
-                  <div key={id} className="mt-2 flex items-center gap-2">
-                    <div className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                      {extraPlan.name}
-                      {extraPlan.price != null ? ` — ${formatSAR(extraPlan.price)}` : ""}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setExtraPlanIds((prev) => prev.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </Button>
+              <Field label="Additional plans (optional)">
+                <SelectField
+                  value=""
+                  onChange={(v) => {
+                    if (v && v !== planId && !extraPlanIds.includes(v)) setExtraPlanIds((prev) => [...prev, v]);
+                  }}
+                  options={planOptions.filter((o) => o.value !== planId && !extraPlanIds.includes(o.value))}
+                  placeholder="Add another plan…"
+                />
+                {extraPlanIds.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {extraPlanIds.map((id) => {
+                      const pl = plans.find((p) => p.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs">
+                          {pl?.name || id}
+                          <button
+                            type="button"
+                            aria-label="Remove plan"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setExtraPlanIds((prev) => prev.filter((x) => x !== id))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
                   </div>
-                );
-              })}
-              {planId && (
-                <div className="mt-2">
-                  <SelectField
-                    value=""
-                    onChange={(v) => {
-                      // The underlying Select can call back with null/undefined
-                      // (e.g. once the just-picked plan drops out of its own
-                      // options list) — SelectField stringifies that to the
-                      // literal "null"/"undefined", so only accept ids that are
-                      // real, distinct plans.
-                      if (
-                        v &&
-                        v !== planId &&
-                        !extraPlanIds.includes(v) &&
-                        plans.some((p) => p.id === v)
-                      ) {
-                        setExtraPlanIds((prev) => [...prev, v]);
-                      }
-                    }}
-                    options={planOptions.filter(
-                      (o) => o.value !== planId && !extraPlanIds.includes(o.value),
-                    )}
-                    placeholder="+ Add another plan (optional)"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Extra plans are billed together with the primary plan on one invoice.
-                  </p>
-                </div>
-              )}
+                )}
+              </Field>
               </div>
 
               {/* ID note spans full width; the four ID Fields below sit
@@ -4189,12 +4278,12 @@ function AssignMembershipDialog({
                 />
               </Field>
 
-              <Field label="Sales person">
+              <Field label="Sales person (optional)">
                 <ComboField
                   value={salesUserId}
                   onChange={setSalesUserId}
-                  options={staffOptions}
-                  placeholder="Search staff…"
+                  options={salesOptions}
+                  placeholder="Select sales person…"
                 />
               </Field>
 
@@ -4263,6 +4352,7 @@ function AssignMembershipDialog({
                               { v: "now", label: "Pay in full now" },
                               { v: "deposit", label: "Take a deposit" },
                               { v: "later", label: "Invoice + card pay-link" },
+                              { v: "invoice", label: "Invoice only (pay later)" },
                               { v: "tabby", label: "Tabby (pay-link)" },
                               { v: "tamara", label: "Tamara (pay-link)" },
                               { v: "manual", label: "Manual BNPL reference" },
@@ -4483,6 +4573,17 @@ function AssignMembershipDialog({
                       login) and tie the membership to it — all in one click.
                     </p>
                   </div>
+                  {!subject?.email && (
+                    <Field label="Email * (becomes the athlete's app login)" htmlFor="am-athlete-email">
+                      <Input
+                        id="am-athlete-email"
+                        type="email"
+                        value={athleteEmail}
+                        onChange={(e) => setAthleteEmail(e.target.value)}
+                        placeholder="name@example.com"
+                      />
+                    </Field>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Date of birth *" htmlFor="am-athlete-dob">
                       <Input

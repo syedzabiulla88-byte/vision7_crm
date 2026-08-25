@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
+import { formatVcn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -61,6 +62,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const { can } = usePermissions();
   const canEdit = can("invoices:edit");
+  const [numberDialogOpen, setNumberDialogOpen] = useState(false);
   const canDelete = can("invoices:delete");
   const canRecordPayment = can("payments:create");
   const canManageRefund = can("refunds:manage");
@@ -247,16 +249,18 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       {/* Actions bar */}
       <div className="flex flex-wrap gap-2 print:hidden">
         {isDraft && canEdit && (
-          <>
-            <Button onClick={() => setConfirm("send")}>
-              <Send className="h-4 w-4" />
-              Send
-            </Button>
-            <Button variant="outline" render={<Link href={`/billing/invoices/${id}/edit`} />}>
-              <Pencil className="h-4 w-4" />
-              Edit
-            </Button>
-          </>
+          <Button onClick={() => setConfirm("send")}>
+            <Send className="h-4 w-4" />
+            Send
+          </Button>
+        )}
+        {/* Editable while nothing has been collected: totals can still change
+            freely. Once a payment lands, content is locked (backend enforces). */}
+        {canEdit && paid === 0 && ["DRAFT", "SENT", "OVERDUE"].includes(status) && (
+          <Button variant="outline" render={<Link href={`/billing/invoices/${id}/edit`} />}>
+            <Pencil className="h-4 w-4" />
+            Edit
+          </Button>
         )}
         {canDelete && (
           <Button
@@ -306,7 +310,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             Reopen
           </Button>
         )}
-        {!isPaid && !isCancelled && canDelete && (
+        {!isPaid && !isCancelled && canEdit && (
           <Button
             variant="outline"
             onClick={() => setConfirm("cancel")}
@@ -363,8 +367,20 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         <div className="flex flex-col gap-5 border-b pb-6 md:flex-row md:items-start md:justify-between print:border-black">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">Invoice</p>
-            <h1 className="mt-1 text-3xl font-bold tracking-tight md:text-4xl">
+            <h1 className="mt-1 flex items-center gap-2 text-3xl font-bold tracking-tight md:text-4xl">
               {invoiceNo(invoice)}
+              {canEdit && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="print:hidden"
+                  title="Edit invoice number"
+                  onClick={() => setNumberDialogOpen(true)}
+                >
+                  Edit no.
+                </Button>
+              )}
             </h1>
           </div>
           <div className="text-left md:text-right">
@@ -388,6 +404,12 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                   {invoice.createdBy?.name || invoice.createdBy?.email}
                 </p>
               )}
+              {(invoice.salesUser?.name || invoice.salesUser?.email) && (
+                <p className="text-muted-foreground print:text-black">
+                  <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Sales person</span>{" "}
+                  {invoice.salesUser?.name || invoice.salesUser?.email}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -404,6 +426,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
               Billed to
+              {invoice.customerCrn != null && (
+                <span className="ml-2 font-mono text-[11px] normal-case tracking-normal text-muted-foreground print:text-black">
+                  {formatVcn(invoice.customerCrn)}
+                </span>
+              )}
             </p>
             {invoice.athlete ? (
               <>
@@ -663,6 +690,14 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       </Dialog>
 
       {/* Send / Resend / Cancel / Delete confirmations */}
+
+      <EditNumberDialog
+        open={numberDialogOpen}
+        onOpenChange={setNumberDialogOpen}
+        invoiceId={invoice.id}
+        current={invoiceNo(invoice)}
+        onSaved={load}
+      />
       <ConfirmDialog
         open={confirm === "send"}
         onOpenChange={(o) => !o && setConfirm(null)}
@@ -1010,6 +1045,78 @@ function RefundDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Edit the invoice number. The backend validates the INV-YYYY-NNNN format and
+ * uniqueness, renames the Zoho Books mirror FIRST (refusing to change anything
+ * if Zoho declines), and raises the numbering sequence when the new number is
+ * beyond it so future invoices can never collide.
+ */
+function EditNumberDialog({
+  open,
+  onOpenChange,
+  invoiceId,
+  current,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  invoiceId: string;
+  current: string;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(current);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (open) setValue(current);
+  }, [open, current]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.invoices.setNumber(invoiceId, value.trim());
+      toast.success("Invoice number updated");
+      onOpenChange(false);
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update number");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit invoice number</DialogTitle>
+          <DialogDescription>
+            Format INV-YYYY-NNNN. The Zoho Books mirror is renamed along with it;
+            if Zoho refuses, nothing is changed on either side.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="inv-number-edit">Number</Label>
+          <Input
+            id="inv-number-edit"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="INV-2026-0031"
+            className="font-mono"
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={save} disabled={saving || !value.trim()}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

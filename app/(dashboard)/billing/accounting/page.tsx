@@ -33,7 +33,10 @@ import {
   Calendar,
   Trophy,
   ArrowRight,
+  Download,
 } from "@/lib/icons";
+import { Button } from "@/components/ui/button";
+import { downloadCsv } from "@/lib/csv";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -249,7 +252,23 @@ export default function AccountingPage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>Revenue by Month — {year}</CardTitle>
-            <p className="text-xs text-muted-foreground">Peak: {formatSAR(peakRevenue)}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-muted-foreground">Peak: {formatSAR(peakRevenue)}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={loading}
+                onClick={() =>
+                  downloadCsv(
+                    `revenue-${year}.csv`,
+                    normalizedMonths.map((m) => ({ month: m.label, revenue: m.revenue })),
+                  )
+                }
+              >
+                <Download className="h-3.5 w-3.5" />
+                CSV
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -298,9 +317,25 @@ export default function AccountingPage() {
         {/* Top plans */}
         <Card>
           <CardHeader>
-            <div className="flex items-center gap-2">
-              <Trophy className="h-4 w-4 text-[#FFCF01]" />
-              <CardTitle>Top Plans by Revenue</CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-[#FFCF01]" />
+                <CardTitle>Top Plans by Revenue</CardTitle>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={loading || !planRows.length}
+                onClick={() =>
+                  downloadCsv(
+                    "top-plans.csv",
+                    planRows.map((p) => ({ plan: p.name, revenue: p.revenue, members: p.members })),
+                  )
+                }
+              >
+                <Download className="h-3.5 w-3.5" />
+                CSV
+              </Button>
             </div>
           </CardHeader>
           <CardContent>
@@ -369,13 +404,39 @@ export default function AccountingPage() {
                 <Calendar className="h-4 w-4 text-[#FFCF01]" />
                 <CardTitle>Expiring in 60 Days</CardTitle>
               </div>
-              <Link
-                href="/members"
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
-              >
-                View all
-                <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={loading || !expirations.length}
+                  onClick={() =>
+                    downloadCsv(
+                      "expiring-60-days.csv",
+                      expirations.map((m: any) => {
+                        const owner = m.athlete ?? m.crmContact ?? null;
+                        const name = owner
+                          ? `${owner.firstName ?? ""} ${owner.lastName ?? ""}`.trim()
+                          : (m.user?.name ?? "").trim();
+                        return {
+                          member: name || "-",
+                          plan: m.plan?.name || "-",
+                          ends: String(m.endDate || "").slice(0, 10),
+                        };
+                      }),
+                    )
+                  }
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  CSV
+                </Button>
+                <Link
+                  href="/members"
+                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+                >
+                  View all
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
