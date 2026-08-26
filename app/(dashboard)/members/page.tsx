@@ -3531,14 +3531,6 @@ function AssignMembershipDialog({
       });
   }, []);
 
-  // Sales-person pool — every staff user, non-fatal when users:view is missing.
-  useEffect(() => {
-    api.users
-      .list({ limit: 200 })
-      .then((res: any) => setStaff(Array.isArray(res) ? res : res?.data || []))
-      .catch(() => setStaff([]));
-  }, []);
-
   // Which BNPL gateways are configured — Tabby/Tamara options are disabled
   // (hint: add keys in Settings) when their provider is not enabled.
   useEffect(() => {
