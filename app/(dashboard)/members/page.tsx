@@ -1964,7 +1964,7 @@ function NewMemberDialog({
                             type="number"
                             min={0}
                             max={100}
-                            step={1}
+                            step={0.1}
                             value={form.discountPercent}
                             onChange={(e) => {
                               const raw = e.target.value;
@@ -4376,7 +4376,7 @@ function AssignMembershipDialog({
                             type="number"
                             min={0}
                             max={100}
-                            step={1}
+                            step={0.1}
                             value={discountPercent}
                             onChange={(e) => {
                               const raw = e.target.value;
