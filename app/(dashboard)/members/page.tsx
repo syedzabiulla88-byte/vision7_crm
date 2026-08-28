@@ -4447,7 +4447,7 @@ function AssignMembershipDialog({
                                     if (n > 0) setDepositAmount(String(Math.round((total / n) * 100) / 100));
                                   }}
                                   placeholder="Split into…"
-                                  options={[2, 3, 4, 5, 6].map((n) => ({
+                                  options={[2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
                                     value: String(n),
                                     label: `${n} payments`,
                                   }))}
