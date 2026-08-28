@@ -3,7 +3,10 @@
 
 export function formatSAR(n: unknown): string {
   const num = Number(n ?? 0) || 0;
-  return `SAR ${num.toLocaleString(undefined, {
+  // Pinned to en-US rather than the viewer's browser locale — otherwise a
+  // browser set to e.g. en-IN renders Indian-style digit grouping
+  // (3,15,692.13) instead of the international format (315,692.13).
+  return `SAR ${num.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

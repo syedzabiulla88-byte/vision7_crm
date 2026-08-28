@@ -26,10 +26,13 @@ import {
   LayoutGrid,
 } from "@/lib/icons";
 
+// Pinned to en-US rather than the viewer's browser locale — otherwise a
+// browser set to e.g. en-IN renders Indian-style digit grouping
+// (3,15,692) instead of the international format (315,692).
 const SAR = (n: number | undefined | null): string =>
-  `SAR ${Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  `SAR ${Number(n ?? 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
-const num = (n: number | undefined | null): string => Number(n ?? 0).toLocaleString();
+const num = (n: number | undefined | null): string => Number(n ?? 0).toLocaleString('en-US');
 
 function formatTime(iso?: string): string {
   if (!iso) return "";

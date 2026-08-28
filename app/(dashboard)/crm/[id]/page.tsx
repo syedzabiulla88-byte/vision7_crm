@@ -249,7 +249,10 @@ function formatSAR(amount?: number | string | null): string {
   if (amount === null || amount === undefined || amount === "") return "—";
   const n = Number(amount);
   if (Number.isNaN(n)) return "—";
-  return new Intl.NumberFormat(undefined, {
+  // Pinned to en-US rather than the viewer's browser locale — otherwise a
+  // browser set to e.g. en-IN renders Indian-style digit grouping instead
+  // of the international format these financial figures should always use.
+  return new Intl.NumberFormat('en-US', {
     style: "currency",
     currency: "SAR",
     maximumFractionDigits: 2,

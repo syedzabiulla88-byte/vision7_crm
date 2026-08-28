@@ -97,7 +97,10 @@ export interface Plan {
 
 export function formatSAR(n: number | string | null | undefined): string {
   const num = Number(n || 0);
-  return `SAR ${num.toLocaleString(undefined, {
+  // Pinned to en-US rather than the viewer's browser locale — otherwise a
+  // browser set to e.g. en-IN renders Indian-style digit grouping instead
+  // of the international format these financial figures should always use.
+  return `SAR ${num.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

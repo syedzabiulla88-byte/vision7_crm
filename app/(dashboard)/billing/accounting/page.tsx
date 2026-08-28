@@ -48,7 +48,10 @@ const MONTHS = [
 function formatSAR(value?: number | string | null): string {
   const n = Number(value ?? 0);
   const safe = Number.isFinite(n) ? n : 0;
-  return `SAR ${safe.toLocaleString(undefined, {
+  // Pinned to en-US rather than the viewer's browser locale — otherwise a
+  // browser set to e.g. en-IN renders Indian-style digit grouping
+  // (3,15,692) instead of the international format (315,692).
+  return `SAR ${safe.toLocaleString('en-US', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   })}`;
