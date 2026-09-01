@@ -56,6 +56,7 @@ import {
   type InvoiceLine,
   type Payment,
 } from "../_shared";
+import { GATEWAY_LABEL, type PayLinkGateway } from "@/lib/pay-links";
 
 export default function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -229,6 +230,16 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const balance = Math.max(total - paid, 0);
   // Refund is available once money has been collected (PAID/PARTIAL/OVERDUE).
   const canRefund = paid > 0 && !isDraft && !isCancelled;
+  // Set as soon as a hosted-checkout pay-link is minted (createTelrCheckout/
+  // createTabbyCheckout/createTamaraCheckout). "Card" alone reads ambiguous
+  // on an invoice, so Telr is spelled out explicitly.
+  const payLinkProviderLabel =
+    invoice.paymentProvider === "telr"
+      ? "Card (Telr)"
+      : invoice.paymentProvider
+        ? GATEWAY_LABEL[invoice.paymentProvider as PayLinkGateway] || invoice.paymentProvider
+        : null;
+  const payLinkPending = Boolean(invoice.paymentProvider) && payments.length === 0 && balance > 0;
   const subtotal = Number(
     invoice.subtotal ?? lineItems.reduce((s, li) => s + lineItemTotal(li), 0),
   );
@@ -587,8 +598,36 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         <p className="mb-4 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
           Payments
         </p>
+        {payLinkPending && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm dark:border-amber-400/30 dark:bg-amber-400/10">
+            <div>
+              <p className="font-semibold text-amber-800 dark:text-amber-300">
+                {payLinkProviderLabel} pay-link sent
+              </p>
+              <p className="text-xs text-amber-700/80 dark:text-amber-300/70">
+                {invoice.paymentLinkAt
+                  ? `Sent ${formatDateTime(invoice.paymentLinkAt)} — awaiting payment`
+                  : "Awaiting payment"}
+              </p>
+            </div>
+            {invoice.paymentCheckoutUrl && (
+              <a
+                href={invoice.paymentCheckoutUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold uppercase tracking-widest text-amber-800 underline underline-offset-2 dark:text-amber-300"
+              >
+                Open pay-link
+              </a>
+            )}
+          </div>
+        )}
         {payments.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">No payments recorded.</p>
+          <p className="py-4 text-center text-sm text-muted-foreground">
+            {payLinkPending
+              ? "No payments recorded yet — pay-link above hasn't been completed."
+              : "No payments recorded."}
+          </p>
         ) : (
           <div className="divide-y">
             {payments.map((p) => {

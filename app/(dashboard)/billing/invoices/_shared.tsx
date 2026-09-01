@@ -124,6 +124,17 @@ export interface Invoice {
    * linked contact otherwise. Null when the customer has no CRM contact.
    */
   customerCrn?: number | null;
+  /**
+   * Set by the backend the moment a hosted-checkout pay-link is minted
+   * (createTelrCheckout/createTabbyCheckout/createTamaraCheckout in
+   * payments.service.ts) — "telr" | "tabby" | "tamara". Stays populated even
+   * after the invoice is settled, so it doubles as "how this got paid" once
+   * a payment lands.
+   */
+  paymentProvider?: string | null;
+  paymentCheckoutUrl?: string | null;
+  paymentSessionId?: string | null;
+  paymentLinkAt?: string | null;
   lineItems?: InvoiceLine[];
   items?: InvoiceLine[];
   payments?: Payment[];
