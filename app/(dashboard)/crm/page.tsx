@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { formatVcn } from "@/lib/utils";
 import { idExpiryStatus } from "@/lib/id-expiry";
+import { downloadCsv } from "@/lib/csv";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { PermissionGate } from "@/components/shared/permission-gate";
@@ -39,6 +40,7 @@ import {
   ArrowRight,
   Chat,
   Users as UsersIcon,
+  Download,
 } from "@/lib/icons";
 
 // ─── Static option lists (ported from site/src/app/admin/crm/page.js) ───────────
@@ -150,6 +152,7 @@ export default function CrmContactsPage() {
     limit: number;
     totalPages: number;
   } | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,6 +190,51 @@ export default function CrmContactsPage() {
     [q, type, stage, source],
   );
 
+  // Export EVERY contact matching the current filters (not just the visible
+  // page) — walks the pagination server-side, capped at 5000 rows, same
+  // pattern as the Invoices CSV export.
+  const handleExportCsv = useCallback(async () => {
+    setExporting(true);
+    try {
+      const all: CrmContact[] = [];
+      for (let p = 1; p <= 25; p++) {
+        const result = await api.crm.export({
+          q: q || undefined,
+          type: type === "ALL" ? undefined : type,
+          stage: stage === "ALL" ? undefined : stage,
+          source: source === "ALL" ? undefined : source,
+          sort,
+          page: p,
+          limit: 200,
+        });
+        const batch: CrmContact[] = Array.isArray(result) ? result : result?.data || [];
+        all.push(...batch);
+        const totalPages = Array.isArray(result) ? 1 : Number(result?.meta?.totalPages) || 1;
+        if (p >= totalPages || batch.length === 0) break;
+      }
+      if (!all.length) {
+        toast.info("Nothing to export");
+        return;
+      }
+      downloadCsv(
+        `contacts-${new Date().toISOString().slice(0, 10)}.csv`,
+        all.map((c) => ({
+          vcn: c.crn != null ? formatVcn(c.crn) : "",
+          name: `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim(),
+          phone: c.phone || "",
+          email: c.email || "",
+          type: c.type || "",
+          stage: c.stage || "",
+        })),
+      );
+      toast.success(`Exported ${all.length} contact${all.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to export contacts");
+    } finally {
+      setExporting(false);
+    }
+  }, [q, type, stage, source, sort]);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -194,12 +242,20 @@ export default function CrmContactsPage() {
         description="Every person who has interacted with Vision7 — website bookings, walk-ins, invoiced customers, academy families."
         onRefresh={load}
         actions={
-          <PermissionGate permission="crm:create">
-            <Button render={<Link href="/crm/new" />}>
-              <UserAdd className="h-4 w-4" />
-              New Contact
-            </Button>
-          </PermissionGate>
+          <>
+            <PermissionGate permission="crm:export">
+              <Button variant="outline" onClick={handleExportCsv} disabled={exporting || loading}>
+                <Download className="h-4 w-4" />
+                {exporting ? "Exporting…" : "Export CSV"}
+              </Button>
+            </PermissionGate>
+            <PermissionGate permission="crm:create">
+              <Button render={<Link href="/crm/new" />}>
+                <UserAdd className="h-4 w-4" />
+                New Contact
+              </Button>
+            </PermissionGate>
+          </>
         }
       />
 

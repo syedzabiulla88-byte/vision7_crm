@@ -359,6 +359,8 @@ export const api = {
   crm: {
     overview: () => apiFetch<any>(`/crm/overview`),
     list: (params?: Params) => apiFetch<any>(`/crm/contacts${qs(params)}`),
+    // Same shape as `list`, gated behind the separate `crm:export` permission.
+    export: (params?: Params) => apiFetch<any>(`/crm/contacts/export${qs(params)}`),
     get: (id: string) => apiFetch<any>(`/crm/contacts/${id}`),
     create: (data: any) =>
       apiFetch<any>(`/crm/contacts`, { method: "POST", body: JSON.stringify(data) }),
