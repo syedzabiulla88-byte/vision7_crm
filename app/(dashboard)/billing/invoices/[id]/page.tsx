@@ -225,6 +225,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
       ? invoice.items
       : [];
   const payments: Payment[] = Array.isArray(invoice.payments) ? invoice.payments : [];
+  // A refund that only corrected an overpayment leaves status at PAID/PARTIAL
+  // (see payments.service.ts refund()) — surface it as a second tag so it's
+  // visible without opening the payments list below. Skip when status is
+  // already REFUNDED itself, to avoid labelling it twice.
+  const hasRefund = status !== "REFUNDED" && payments.some((p) => p.isRefund);
   const total = getTotal(invoice);
   const paid = getPaid(invoice);
   const balance = Math.max(total - paid, 0);
@@ -398,6 +403,11 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             <Badge variant="outline" className={statusBadgeClass(status)}>
               {status}
             </Badge>
+            {hasRefund && (
+              <Badge variant="outline" className={`ml-2 ${statusBadgeClass("REFUNDED")}`}>
+                Refunded
+              </Badge>
+            )}
             <div className="mt-4 space-y-1 text-sm">
               <p className="text-muted-foreground print:text-black">
                 <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Issued</span>{" "}

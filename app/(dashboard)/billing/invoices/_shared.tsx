@@ -48,6 +48,7 @@ export const INVOICE_STATUSES = [
   "PARTIAL",
   "OVERDUE",
   "CANCELLED",
+  "REFUNDED",
 ] as const;
 
 export const PAYMENT_METHODS = [
@@ -72,6 +73,8 @@ export function statusBadgeClass(status?: string): string {
       return "bg-red-500/10 text-red-700 border-red-500/30 dark:text-red-400";
     case "DRAFT":
       return "bg-muted/50 text-foreground border-border";
+    case "REFUNDED":
+      return "bg-purple-500/10 text-purple-700 border-purple-500/30 dark:text-purple-400";
     case "CANCELLED":
     default:
       return "bg-gray-500/10 text-gray-600 border-gray-500/30 dark:text-gray-400";
