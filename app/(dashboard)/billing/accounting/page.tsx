@@ -34,6 +34,7 @@ import {
   Trophy,
   ArrowRight,
   Download,
+  RotateCcw,
 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { downloadCsv } from "@/lib/csv";
@@ -77,6 +78,9 @@ interface AccountingOverview {
   outstandingAmount?: number;
   unpaidCount?: number;
   overdueCount?: number;
+  totalRefunds?: number;
+  monthRefunds?: number;
+  yearRefunds?: number;
 }
 
 interface MonthBucket {
@@ -205,9 +209,9 @@ export default function AccountingPage() {
       />
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => (
+          Array.from({ length: 5 }).map((_, i) => (
             <Card key={i}>
               <CardContent className="p-5">
                 <Skeleton className="h-4 w-20" />
@@ -245,6 +249,13 @@ export default function AccountingPage() {
               hint={`${overview?.unpaidCount ?? 0} unpaid · ${overview?.overdueCount ?? 0} overdue`}
               hue="rose"
               icon={<Warning className="h-5 w-5" />}
+            />
+            <StatCard
+              label="Total Refunds"
+              value={formatSAR(overview?.totalRefunds)}
+              hint={`${formatSAR(overview?.monthRefunds)} this month · ${formatSAR(overview?.yearRefunds)} this year`}
+              hue="amber"
+              icon={<RotateCcw className="h-5 w-5" />}
             />
           </>
         )}
