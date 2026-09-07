@@ -431,6 +431,12 @@ export default function InvoicesPage() {
                     const status = String(inv.status || "").toUpperCase();
                     const isDraft = status === "DRAFT";
                     const rec = recipientName(inv);
+                    // A refund that only corrected an overpayment leaves status
+                    // at PAID/PARTIAL — flag it here too, same as the detail page.
+                    const hasRefund =
+                      status !== "REFUNDED" &&
+                      Array.isArray(inv.payments) &&
+                      inv.payments.some((p) => p.isRefund);
                     return (
                       <TableRow key={inv.id}>
                         <TableCell>
@@ -467,6 +473,11 @@ export default function InvoicesPage() {
                           <Badge variant="outline" className={statusBadgeClass(status)}>
                             {status || "—"}
                           </Badge>
+                          {hasRefund && (
+                            <Badge variant="outline" className={`ml-1 ${statusBadgeClass("REFUNDED")}`}>
+                              Refunded
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="flex justify-end">
