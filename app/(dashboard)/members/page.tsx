@@ -4328,6 +4328,9 @@ function AssignMembershipDialog({
                     const grossLines = price + registrationFee;
                     const netBeforeDiscount = Math.round(((grossLines * 100) / (100 + VAT_RATE)) * 100) / 100;
                     const priceNet = Math.round(((price * 100) / (100 + VAT_RATE)) * 100) / 100;
+                    // Derived as the remainder (not its own independent rounding of registrationFee)
+                    // so priceNet + registrationFeeNet reconciles exactly with netBeforeDiscount for display.
+                    const registrationFeeNet = Math.round((netBeforeDiscount - priceNet) * 100) / 100;
                     const discountAmt = Math.round(((priceNet * discountPct) / 100) * 100) / 100;
                     const subtotal = Math.round((netBeforeDiscount - discountAmt) * 100) / 100;
                     const taxAmount = Math.round(((subtotal * VAT_RATE) / 100) * 100) / 100;
@@ -4389,8 +4392,8 @@ function AssignMembershipDialog({
                           {discountPct > 0 && (
                             <div className="mt-2 space-y-0.5 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
                               <div className="flex justify-between">
-                                <span>Membership price</span>
-                                <span>{formatSAR(price)}</span>
+                                <span>Membership price (excl. VAT)</span>
+                                <span>{formatSAR(priceNet)}</span>
                               </div>
                               <div className="flex justify-between">
                                 <span>Discount ({discountPct}%, on VAT-exclusive price)</span>
@@ -4399,7 +4402,7 @@ function AssignMembershipDialog({
                               {registrationFee > 0 && (
                                 <div className="flex justify-between">
                                   <span>Registration/kit fee (not discounted)</span>
-                                  <span>{formatSAR(registrationFee)}</span>
+                                  <span>{formatSAR(registrationFeeNet)}</span>
                                 </div>
                               )}
                               <div className="flex justify-between">
