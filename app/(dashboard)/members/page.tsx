@@ -4389,32 +4389,32 @@ function AssignMembershipDialog({
                             }}
                             placeholder="0"
                           />
-                          {discountPct > 0 && (
-                            <div className="mt-2 space-y-0.5 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
-                              <div className="flex justify-between">
-                                <span>Membership price (excl. VAT)</span>
-                                <span>{formatSAR(priceNet)}</span>
-                              </div>
+                          <div className="mt-2 space-y-0.5 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+                            <div className="flex justify-between">
+                              <span>Membership price (excl. VAT)</span>
+                              <span>{formatSAR(priceNet)}</span>
+                            </div>
+                            {discountPct > 0 && (
                               <div className="flex justify-between">
                                 <span>Discount ({discountPct}%, on VAT-exclusive price)</span>
                                 <span>− {formatSAR(discountAmt)}</span>
                               </div>
-                              {registrationFee > 0 && (
-                                <div className="flex justify-between">
-                                  <span>Registration/kit fee (not discounted, excl. VAT)</span>
-                                  <span>{formatSAR(registrationFeeNet)}</span>
-                                </div>
-                              )}
+                            )}
+                            {registrationFee > 0 && (
                               <div className="flex justify-between">
-                                <span>VAT (15%)</span>
-                                <span>{formatSAR(taxAmount)}</span>
+                                <span>Registration/kit fee (not discounted, excl. VAT)</span>
+                                <span>{formatSAR(registrationFeeNet)}</span>
                               </div>
-                              <div className="flex justify-between font-medium text-foreground">
-                                <span>Amount to invoice</span>
-                                <span>{formatSAR(total)}</span>
-                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span>VAT (15%)</span>
+                              <span>{formatSAR(taxAmount)}</span>
                             </div>
-                          )}
+                            <div className="flex justify-between font-medium text-foreground">
+                              <span>Amount to invoice</span>
+                              <span>{formatSAR(total)}</span>
+                            </div>
+                          </div>
                         </Field>
                         {billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
