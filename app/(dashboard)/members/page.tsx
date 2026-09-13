@@ -4401,7 +4401,7 @@ function AssignMembershipDialog({
                               </div>
                               {registrationFee > 0 && (
                                 <div className="flex justify-between">
-                                  <span>Registration/kit fee (not discounted)</span>
+                                  <span>Registration/kit fee (not discounted, excl. VAT)</span>
                                   <span>{formatSAR(registrationFeeNet)}</span>
                                 </div>
                               )}
