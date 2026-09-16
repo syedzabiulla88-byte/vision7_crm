@@ -89,6 +89,10 @@ import {
   Warning,
   Copy,
 } from "@/lib/icons";
+import {
+  InstallmentScheduleEditor,
+  type InstallmentRow,
+} from "../billing/invoices/_installment-schedule";
 
 // ─── Domain constants (ported from site/src/app/admin/members/page.js) ──────────
 
@@ -3455,6 +3459,7 @@ function AssignMembershipDialog({
   // agreementSignedAt stays null).
   const [invoiceDueDate, setInvoiceDueDate] = useState("");
   const [agreementSignedAt, setAgreementSignedAt] = useState("");
+  const [installmentSchedule, setInstallmentSchedule] = useState<InstallmentRow[]>([]);
   // Gateway availability — disables Tabby/Tamara when keys aren't configured.
   const [providers, setProviders] = useState<
     Array<{ provider: "tabby" | "tamara" | "telr"; enabled: boolean }>
@@ -3820,6 +3825,22 @@ function AssignMembershipDialog({
         return;
       }
     }
+    // Instalment schedule rows: every row must be fully filled in (a half-typed
+    // row would silently vanish server-side otherwise) — validated up front so
+    // the error is immediate rather than a failed network round-trip.
+    const scheduleForSubmit = installmentSchedule
+      .filter((r) => r.description.trim() || r.amount.trim() || r.dueDate.trim())
+      .map((r) => ({
+        description: r.description.trim(),
+        amount: Number(r.amount),
+        dueDate: r.dueDate,
+      }));
+    for (const row of scheduleForSubmit) {
+      if (!row.description || !Number.isFinite(row.amount) || row.amount <= 0 || !row.dueDate) {
+        toast.error("Every instalment schedule row needs a description, amount, and due date — remove any incomplete rows.");
+        return;
+      }
+    }
     // Pay-link modes need their gateway configured (keys in Settings).
     const payLinkGateway = payLinkGatewayFor(billingMode);
     if (price > 0 && payLinkGateway) {
@@ -3876,6 +3897,7 @@ function AssignMembershipDialog({
     // no agreement date) is unchanged.
     if (invoiceDueDate) billingFields.dueDate = invoiceDueDate;
     if (agreementSignedAt) billingFields.agreementSignedAt = agreementSignedAt;
+    if (scheduleForSubmit.length) billingFields.installmentSchedule = scheduleForSubmit;
     const isPayLinkMode = !!payLinkGateway;
     const payLinkLabel = payLinkGateway ? GATEWAY_LABEL[payLinkGateway] : "Pay";
     try {
@@ -4454,6 +4476,7 @@ function AssignMembershipDialog({
                           days, no agreement date recorded). Both stay editable afterward from the
                           invoice page.
                         </p>
+                        <InstallmentScheduleEditor rows={installmentSchedule} onChange={setInstallmentSchedule} />
                         {billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
                             <Input

@@ -57,6 +57,11 @@ import {
   type Payment,
 } from "../_shared";
 import { GATEWAY_LABEL, type PayLinkGateway } from "@/lib/pay-links";
+import {
+  InstallmentScheduleEditor,
+  InstallmentScheduleTable,
+  type InstallmentRow,
+} from "../_installment-schedule";
 
 export default function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -434,7 +439,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                   className="print:hidden"
                   onClick={() => setDatesDialogOpen(true)}
                 >
-                  Edit dates
+                  Edit instalment plan
                 </Button>
               )}
               {/* Who raised it. Hidden rather than shown blank when the creating
@@ -611,6 +616,12 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
 
+        {invoice.installmentSchedule && invoice.installmentSchedule.length > 0 && (
+          <div className="mt-6 border-t pt-6 print:border-black">
+            <InstallmentScheduleTable schedule={invoice.installmentSchedule} currency={invoice.currency || "SAR"} />
+          </div>
+        )}
+
         {invoice.notes && (
           <div className="mt-6 border-t pt-6 print:border-black">
             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">
@@ -773,6 +784,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         invoiceId={invoice.id}
         currentDueDate={invoice.dueDate}
         currentAgreementSignedAt={invoice.agreementSignedAt}
+        currentSchedule={invoice.installmentSchedule}
         onSaved={load}
       />
       <ConfirmDialog
@@ -1227,6 +1239,7 @@ function EditDatesDialog({
   invoiceId,
   currentDueDate,
   currentAgreementSignedAt,
+  currentSchedule,
   onSaved,
 }: {
   open: boolean;
@@ -1234,31 +1247,50 @@ function EditDatesDialog({
   invoiceId: string;
   currentDueDate?: string | null;
   currentAgreementSignedAt?: string | null;
+  currentSchedule?: { description: string; amount: number; dueDate: string }[] | null;
   onSaved: () => void;
 }) {
   const [dueDate, setDueDate] = useState("");
   const [agreementSignedAt, setAgreementSignedAt] = useState("");
+  const [schedule, setSchedule] = useState<InstallmentRow[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
       setDueDate(currentDueDate ? toDateInput(new Date(currentDueDate)) : "");
       setAgreementSignedAt(currentAgreementSignedAt ? toDateInput(new Date(currentAgreementSignedAt)) : "");
+      setSchedule(
+        (currentSchedule || []).map((r) => ({
+          description: r.description,
+          amount: String(r.amount),
+          dueDate: r.dueDate ? toDateInput(new Date(r.dueDate)) : "",
+        })),
+      );
     }
-  }, [open, currentDueDate, currentAgreementSignedAt]);
+  }, [open, currentDueDate, currentAgreementSignedAt, currentSchedule]);
 
   const save = async () => {
+    const rows = schedule
+      .filter((r) => r.description.trim() || r.amount.trim() || r.dueDate.trim())
+      .map((r) => ({ description: r.description.trim(), amount: Number(r.amount), dueDate: r.dueDate }));
+    for (const row of rows) {
+      if (!row.description || !Number.isFinite(row.amount) || row.amount <= 0 || !row.dueDate) {
+        toast.error("Every instalment schedule row needs a description, amount, and due date — remove any incomplete rows.");
+        return;
+      }
+    }
     setSaving(true);
     try {
       await api.invoices.update(invoiceId, {
         dueDate: dueDate || null,
         agreementSignedAt: agreementSignedAt || null,
+        installmentSchedule: rows.length ? rows : null,
       });
-      toast.success("Dates updated");
+      toast.success("Instalment plan updated");
       onOpenChange(false);
       onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update dates");
+      toast.error(err instanceof Error ? err.message : "Failed to update instalment plan");
     } finally {
       setSaving(false);
     }
@@ -1266,34 +1298,37 @@ function EditDatesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Edit dates</DialogTitle>
+          <DialogTitle>Edit instalment plan</DialogTitle>
           <DialogDescription>
-            Set these to match the customer&apos;s signed instalment agreement. Both remain
+            Set these to match the customer&apos;s signed instalment agreement. All of this stays
             editable at any time, including after payments have been recorded against this
             invoice.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="inv-due-date-edit">Due date</Label>
-            <Input
-              id="inv-due-date-edit"
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-            />
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="inv-due-date-edit">Due date</Label>
+              <Input
+                id="inv-due-date-edit"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="inv-agreement-date-edit">Agreement signed date</Label>
+              <Input
+                id="inv-agreement-date-edit"
+                type="date"
+                value={agreementSignedAt}
+                onChange={(e) => setAgreementSignedAt(e.target.value)}
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="inv-agreement-date-edit">Agreement signed date</Label>
-            <Input
-              id="inv-agreement-date-edit"
-              type="date"
-              value={agreementSignedAt}
-              onChange={(e) => setAgreementSignedAt(e.target.value)}
-            />
-          </div>
+          <InstallmentScheduleEditor rows={schedule} onChange={setSchedule} />
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
