@@ -91,6 +91,10 @@ export interface Invoice {
   // Date the customer's signed instalment/membership agreement was executed —
   // distinct from issueDate/dueDate, manually entered/edited only.
   agreementSignedAt?: string | null;
+  // Full instalment payment plan (not just the next due instalment) — printed
+  // on the invoice PDF as its own table. Independent of amountPaid/balance,
+  // which recordPayment() alone still drives.
+  installmentSchedule?: { description: string; amount: number; dueDate: string }[] | null;
   total?: number;
   grandTotal?: number;
   subtotal?: number;
@@ -144,6 +148,7 @@ export interface Invoice {
   lineItems?: InvoiceLine[];
   items?: InvoiceLine[];
   payments?: Payment[];
+  currency?: string;
 }
 
 export interface InvoiceLine {
