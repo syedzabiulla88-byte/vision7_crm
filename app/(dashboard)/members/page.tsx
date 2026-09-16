@@ -91,6 +91,7 @@ import {
 } from "@/lib/icons";
 import {
   InstallmentScheduleEditor,
+  addIntervalStr,
   type InstallmentRow,
 } from "../billing/invoices/_installment-schedule";
 
@@ -3442,10 +3443,11 @@ function AssignMembershipDialog({
   const [notes, setNotes] = useState("");
   const [autoRenew, setAutoRenew] = useState(false);
   // Billing — every paid membership is invoiced; pay in full now, take a deposit
-  // (partial payment, balance owed), issue an open invoice to pay later, send a
-  // Tabby/Tamara BNPL pay-link, or record an external BNPL payment by reference.
+  // (partial payment, balance owed), set up a full instalment plan (auto-computed
+  // schedule), issue an open invoice to pay later, send a Tabby/Tamara BNPL
+  // pay-link, or record an external BNPL payment by reference.
   const [billingMode, setBillingMode] = useState<
-    "now" | "deposit" | "later" | "invoice" | "tabby" | "tamara" | "manual"
+    "now" | "deposit" | "instalment" | "later" | "invoice" | "tabby" | "tamara" | "manual"
   >("now");
   const [depositAmount, setDepositAmount] = useState("");
   // Discount % off the membership plan price (0–100); default empty = no discount.
@@ -3460,6 +3462,76 @@ function AssignMembershipDialog({
   const [invoiceDueDate, setInvoiceDueDate] = useState("");
   const [agreementSignedAt, setAgreementSignedAt] = useState("");
   const [installmentSchedule, setInstallmentSchedule] = useState<InstallmentRow[]>([]);
+  // "Instalment" billing mode: staff enter these three, and the full schedule
+  // (all rows, amounts, dates) is computed automatically — no manual row entry
+  // needed. depositAmount doubles as the first instalment's amount here.
+  const [instalmentCount, setInstalmentCount] = useState("");
+  const [instalmentStartDate, setInstalmentStartDate] = useState("");
+  // true once the schedule has been touched by hand after auto-generation, so
+  // further edits to count/start-date/first-amount don't clobber a manual tweak.
+  const [scheduleManuallyEdited, setScheduleManuallyEdited] = useState(false);
+
+  // Mirrors the billing-total computation in the render block below exactly
+  // (computeInvoiceTotals() in invoices.service.ts) — lifted to a memo so the
+  // instalment auto-generator effect further down can depend on it.
+  const invoiceTotal = useMemo(() => {
+    const sp = plans.find((p) => p.id === planId);
+    const selectedPlans = [sp, ...extraPlanIds.map((id) => plans.find((p) => p.id === id))].filter(
+      (p): p is NonNullable<typeof p> => !!p,
+    );
+    const price = selectedPlans.reduce((sum, p) => sum + (Number(p.price) || 0), 0);
+    const registrationFee = selectedPlans.reduce((sum, p) => sum + (Number(p.registrationFee) || 0), 0);
+    if (price <= 0) return 0;
+    const VAT_RATE = 15;
+    const discountPct = Math.min(100, Math.max(0, Number(discountPercent) || 0));
+    const grossLines = price + registrationFee;
+    const netBeforeDiscount = Math.round(((grossLines * 100) / (100 + VAT_RATE)) * 100) / 100;
+    const priceNet = Math.round(((price * 100) / (100 + VAT_RATE)) * 100) / 100;
+    const discountAmt = Math.round(((priceNet * discountPct) / 100) * 100) / 100;
+    const subtotal = Math.round((netBeforeDiscount - discountAmt) * 100) / 100;
+    const taxAmount = Math.round(((subtotal * VAT_RATE) / 100) * 100) / 100;
+    return Math.round((subtotal + taxAmount) * 100) / 100;
+  }, [plans, planId, extraPlanIds, discountPercent]);
+
+  // Auto-generate the full instalment schedule whenever the three driving
+  // inputs change, while in "instalment" mode and untouched by hand since.
+  // Instalment 1 = the agreement start date, at the entered first amount;
+  // instalments 2..N fall one calendar month apart, splitting whatever's left
+  // evenly (the last row absorbs any rounding remainder so it sums exactly).
+  useEffect(() => {
+    if (billingMode !== "instalment" || scheduleManuallyEdited) return;
+    const count = Math.round(Number(instalmentCount) || 0);
+    const first = Number(depositAmount);
+    if (count < 2 || !Number.isFinite(first) || first <= 0 || !instalmentStartDate || invoiceTotal <= 0) {
+      setInstallmentSchedule([]);
+      return;
+    }
+    const remaining = Math.round((invoiceTotal - first) * 100) / 100;
+    const remainingCount = count - 1;
+    if (remaining <= 0 || remainingCount <= 0) {
+      setInstallmentSchedule([{ description: "Instalment 1", amount: String(first), dueDate: instalmentStartDate }]);
+      return;
+    }
+    const perInstalment = Math.floor((remaining / remainingCount) * 100) / 100;
+    const rows: InstallmentRow[] = [{ description: "Instalment 1", amount: String(first), dueDate: instalmentStartDate }];
+    let allocated = 0;
+    for (let i = 1; i < count; i++) {
+      const isLast = i === count - 1;
+      const amount = isLast ? Math.round((remaining - allocated) * 100) / 100 : perInstalment;
+      allocated = Math.round((allocated + amount) * 100) / 100;
+      rows.push({
+        description: `Instalment ${i + 1}`,
+        amount: String(amount),
+        dueDate: addIntervalStr(instalmentStartDate, "month", i),
+      });
+    }
+    setInstallmentSchedule(rows);
+    // Fill the (separate, still-editable) invoice due date + agreement date
+    // fields from the schedule too — only when empty, so a manual override
+    // there is never clobbered. Due date = the NEXT payment after this one.
+    setAgreementSignedAt((cur) => cur || instalmentStartDate);
+    setInvoiceDueDate((cur) => cur || (rows[1]?.dueDate ?? instalmentStartDate));
+  }, [billingMode, instalmentCount, instalmentStartDate, depositAmount, invoiceTotal, scheduleManuallyEdited]);
   // Gateway availability — disables Tabby/Tamara when keys aren't configured.
   const [providers, setProviders] = useState<
     Array<{ provider: "tabby" | "tamara" | "telr"; enabled: boolean }>
@@ -3817,11 +3889,24 @@ function AssignMembershipDialog({
     );
     const price = primaryPrice + extrasPrice; // combined: every check below is about the invoice total
 
-    // Validate the deposit before any network call: must be > 0 and < the plan total.
+    // Validate the deposit/first-instalment before any network call: must be
+    // > 0 and < the real invoice total (kit fee + VAT included) — validating
+    // against the raw plan `price` instead would wrongly reject a legitimate
+    // amount that exceeds the plan price but is still less than the total.
     const depositNum = Number(depositAmount);
-    if (price > 0 && billingMode === "deposit") {
-      if (!Number.isFinite(depositNum) || depositNum <= 0 || depositNum >= price) {
-        toast.error(`Deposit must be greater than 0 and less than ${formatSAR(price)}`);
+    if (price > 0 && (billingMode === "deposit" || billingMode === "instalment")) {
+      if (!Number.isFinite(depositNum) || depositNum <= 0 || depositNum >= invoiceTotal) {
+        toast.error(`Amount must be greater than 0 and less than ${formatSAR(invoiceTotal)}`);
+        return;
+      }
+    }
+    if (price > 0 && billingMode === "instalment") {
+      if (Math.round(Number(instalmentCount) || 0) < 2) {
+        toast.error("Enter at least 2 instalments.");
+        return;
+      }
+      if (!instalmentStartDate) {
+        toast.error("Enter the agreement start date.");
         return;
       }
     }
@@ -3868,7 +3953,7 @@ function AssignMembershipDialog({
     const billingFields: Record<string, unknown> =
       price <= 0
         ? { payNow: true, paymentMethod, discountPercent: discountPct }
-        : billingMode === "deposit"
+        : billingMode === "deposit" || billingMode === "instalment"
           ? {
               payNow: false,
               depositAmount: depositNum,
@@ -3951,6 +4036,8 @@ function AssignMembershipDialog({
           toast.success("Athlete profile created — BNPL reference recorded");
         else if (billingMode === "deposit")
           toast.success("Athlete profile created — deposit recorded, balance owed, membership pending");
+        else if (billingMode === "instalment")
+          toast.success("Athlete profile created — instalment plan set up, first payment recorded");
         else if (memStatus === "ACTIVE")
           toast.success("Athlete profile created + membership active — they can log into the platform");
         else toast.success("Athlete profile created — invoice raised, membership pending until paid");
@@ -3984,6 +4071,8 @@ function AssignMembershipDialog({
           toast.success("BNPL reference recorded — invoice raised against the membership");
         else if (billingMode === "deposit")
           toast.success("Deposit recorded — balance owed, membership pending until paid in full");
+        else if (billingMode === "instalment")
+          toast.success("Instalment plan set up — first payment recorded, balance owed until paid in full");
         else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
         else toast.success("Invoice raised — membership pending until paid");
       } else {
@@ -4016,6 +4105,8 @@ function AssignMembershipDialog({
           toast.success("BNPL reference recorded — invoice raised against the membership");
         else if (billingMode === "deposit")
           toast.success("Deposit recorded — balance owed, membership pending until paid in full");
+        else if (billingMode === "instalment")
+          toast.success("Instalment plan set up — first payment recorded, balance owed until paid in full");
         else if (memStatus === "ACTIVE") toast.success("Payment recorded — membership activated");
         else toast.success("Invoice raised — membership pending until paid");
       }
@@ -4380,6 +4471,7 @@ function AssignMembershipDialog({
                             [
                               { v: "now", label: "Pay in full now" },
                               { v: "deposit", label: "Take a deposit" },
+                              { v: "instalment", label: "Instalment plan" },
                               { v: "later", label: "Invoice + card pay-link" },
                               { v: "invoice", label: "Invoice only (pay later)" },
                               { v: "tabby", label: "Tabby (pay-link)" },
@@ -4476,7 +4568,68 @@ function AssignMembershipDialog({
                           days, no agreement date recorded). Both stay editable afterward from the
                           invoice page.
                         </p>
-                        <InstallmentScheduleEditor rows={installmentSchedule} onChange={setInstallmentSchedule} />
+                        {billingMode === "instalment" && (
+                          <div className="space-y-3 rounded-md border p-3">
+                            <span className="text-sm font-medium">Instalment plan</span>
+                            <div className="grid grid-cols-3 gap-3">
+                              <Field label="Number of instalments" htmlFor="assign-instalment-count">
+                                <Input
+                                  id="assign-instalment-count"
+                                  type="number"
+                                  min={2}
+                                  step={1}
+                                  value={instalmentCount}
+                                  onChange={(e) => {
+                                    setInstalmentCount(e.target.value);
+                                    setScheduleManuallyEdited(false);
+                                  }}
+                                  placeholder="e.g. 9"
+                                />
+                              </Field>
+                              <Field label="Agreement start date" htmlFor="assign-instalment-start">
+                                <Input
+                                  id="assign-instalment-start"
+                                  type="date"
+                                  value={instalmentStartDate}
+                                  onChange={(e) => {
+                                    setInstalmentStartDate(e.target.value);
+                                    setScheduleManuallyEdited(false);
+                                  }}
+                                />
+                              </Field>
+                              <Field label="First instalment amount (SAR)" htmlFor="assign-instalment-first">
+                                <Input
+                                  id="assign-instalment-first"
+                                  type="number"
+                                  min={0}
+                                  max={total}
+                                  step="0.01"
+                                  value={depositAmount}
+                                  onChange={(e) => {
+                                    setDepositAmount(e.target.value);
+                                    setScheduleManuallyEdited(false);
+                                  }}
+                                  placeholder={`0 – ${formatSAR(total)}`}
+                                />
+                              </Field>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              The remaining {formatSAR(Math.max(0, total - (Number(depositAmount) || 0)))} splits
+                              evenly across the rest, one calendar month apart starting from the agreement start
+                              date — computed automatically into the schedule below. Edit any row directly to
+                              override a specific amount or date (e.g. if an instalment isn&apos;t an even split);
+                              further edits above then stop overwriting your changes until you clear a field
+                              again.
+                            </p>
+                          </div>
+                        )}
+                        <InstallmentScheduleEditor
+                          rows={installmentSchedule}
+                          onChange={(rows) => {
+                            setScheduleManuallyEdited(true);
+                            setInstallmentSchedule(rows);
+                          }}
+                        />
                         {billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
                             <Input
@@ -4525,7 +4678,7 @@ function AssignMembershipDialog({
                             </p>
                           </Field>
                         )}
-                        {billingMode === "now" || billingMode === "deposit" ? (
+                        {billingMode === "now" || billingMode === "deposit" || billingMode === "instalment" ? (
                           <>
                             <Field label="Payment method">
                               <SelectField

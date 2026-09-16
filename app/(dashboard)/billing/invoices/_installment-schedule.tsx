@@ -13,16 +13,46 @@ import { formatSAR, formatDate } from "./_shared";
 
 export type InstallmentRow = { description: string; amount: string; dueDate: string };
 
-function addInterval(date: Date, unit: "month" | "week" | "day", n: number): Date {
-  const d = new Date(date);
-  if (unit === "month") d.setMonth(d.getMonth() + n);
-  else if (unit === "week") d.setDate(d.getDate() + n * 7);
-  else d.setDate(d.getDate() + n);
-  return d;
+/** Parses a plain "YYYY-MM-DD" (e.g. straight from a date <Input>) into a
+ *  LOCAL-midnight Date. `new Date(str)` instead parses date-only strings as
+ *  UTC midnight, which then reads back as the PREVIOUS day via the local
+ *  getDate()/getMonth() in any timezone behind UTC — this avoids that. */
+function parseDateOnly(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
 }
 
-function toDateInputStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
+/** Formats a Date back to "YYYY-MM-DD" from its LOCAL components — the
+ *  counterpart to parseDateOnly; never round-trips through UTC/toISOString,
+ *  which would reintroduce the same timezone shift on the way back out. */
+function formatDateOnly(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Adds n months, clamping to the target month's last day rather than letting
+ *  it overflow (native Date.setMonth on e.g. Jan 31 + 1 month rolls into
+ *  March, not Feb 28 — this fixes that for month-end start dates). */
+function addMonthsClamped(date: Date, n: number): Date {
+  const day = date.getDate();
+  const target = new Date(date.getFullYear(), date.getMonth() + n, 1);
+  const daysInTargetMonth = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, daysInTargetMonth));
+  return target;
+}
+
+/** Adds n months/weeks/days to a "YYYY-MM-DD" string, returning another
+ *  "YYYY-MM-DD" — parsing and formatting stay local throughout so no
+ *  timezone can shift the date by a day in either direction. */
+export function addIntervalStr(dateStr: string, unit: "month" | "week" | "day", n: number): string {
+  const date = parseDateOnly(dateStr);
+  const d =
+    unit === "month"
+      ? addMonthsClamped(date, n)
+      : new Date(date.getFullYear(), date.getMonth(), date.getDate() + (unit === "week" ? n * 7 : n));
+  return formatDateOnly(d);
 }
 
 /** Row-based editor: add/edit/remove rows manually, plus a quick generator
@@ -57,12 +87,11 @@ export function InstallmentScheduleEditor({
       return;
     }
     const interval = Math.max(1, Math.round(Number(genInterval) || 1));
-    const start = new Date(genStart);
     const startIdx = rows.length;
     const generated: InstallmentRow[] = Array.from({ length: count }, (_, i) => ({
       description: `${genLabel.trim() || "Instalment"} ${startIdx + i + 1}`,
       amount: String(amount),
-      dueDate: toDateInputStr(addInterval(start, genUnit, i * interval)),
+      dueDate: addIntervalStr(genStart, genUnit, i * interval),
     }));
     onChange([...rows, ...generated]);
     setGenCount("");
