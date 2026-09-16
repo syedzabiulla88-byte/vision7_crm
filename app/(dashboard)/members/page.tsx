@@ -3449,6 +3449,12 @@ function AssignMembershipDialog({
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [paymentReference, setPaymentReference] = useState("");
   const [bnplProvider, setBnplProvider] = useState<"tabby" | "tamara">("tabby");
+  // Instalment-plan agreements: when set, these override the backend's default
+  // +7-day due date and record when the signed agreement was executed. Both
+  // optional — left blank, behavior is unchanged (dueDate defaults to +7 days,
+  // agreementSignedAt stays null).
+  const [invoiceDueDate, setInvoiceDueDate] = useState("");
+  const [agreementSignedAt, setAgreementSignedAt] = useState("");
   // Gateway availability — disables Tabby/Tamara when keys aren't configured.
   const [providers, setProviders] = useState<
     Array<{ provider: "tabby" | "tamara" | "telr"; enabled: boolean }>
@@ -3864,6 +3870,12 @@ function AssignMembershipDialog({
                   paymentReference: paymentReference.trim() || undefined,
                   discountPercent: discountPct,
                 };
+    // Instalment-agreement overrides — apply on every billing mode, not just
+    // deposit: a "pay later" invoice can equally be tied to a signed agreement
+    // with its own due date. Left blank, the backend's default (+7 days,
+    // no agreement date) is unchanged.
+    if (invoiceDueDate) billingFields.dueDate = invoiceDueDate;
+    if (agreementSignedAt) billingFields.agreementSignedAt = agreementSignedAt;
     const isPayLinkMode = !!payLinkGateway;
     const payLinkLabel = payLinkGateway ? GATEWAY_LABEL[payLinkGateway] : "Pay";
     try {
@@ -4416,6 +4428,32 @@ function AssignMembershipDialog({
                             </div>
                           </div>
                         </Field>
+                        {/* Instalment agreement overrides — optional on every billing mode.
+                            Left blank: due date defaults to +7 days, no agreement date is stored. */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <Field label="Invoice due date (optional)" htmlFor="assign-due-date">
+                            <Input
+                              id="assign-due-date"
+                              type="date"
+                              value={invoiceDueDate}
+                              onChange={(e) => setInvoiceDueDate(e.target.value)}
+                            />
+                          </Field>
+                          <Field label="Agreement signed date (optional)" htmlFor="assign-agreement-date">
+                            <Input
+                              id="assign-agreement-date"
+                              type="date"
+                              value={agreementSignedAt}
+                              onChange={(e) => setAgreementSignedAt(e.target.value)}
+                            />
+                          </Field>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Set these to match the customer&apos;s signed instalment agreement — e.g. the
+                          first instalment&apos;s due date. Leave blank for a standard invoice (due in 7
+                          days, no agreement date recorded). Both stay editable afterward from the
+                          invoice page.
+                        </p>
                         {billingMode === "deposit" && (
                           <Field label="Deposit amount (SAR)" htmlFor="assign-deposit">
                             <Input
