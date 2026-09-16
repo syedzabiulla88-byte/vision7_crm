@@ -88,6 +88,9 @@ export interface Invoice {
   status?: string;
   issueDate?: string | null;
   dueDate?: string | null;
+  // Date the customer's signed instalment/membership agreement was executed —
+  // distinct from issueDate/dueDate, manually entered/edited only.
+  agreementSignedAt?: string | null;
   total?: number;
   grandTotal?: number;
   subtotal?: number;

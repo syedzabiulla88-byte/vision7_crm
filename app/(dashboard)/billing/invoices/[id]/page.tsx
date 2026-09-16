@@ -64,6 +64,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const { can } = usePermissions();
   const canEdit = can("invoices:edit");
   const [numberDialogOpen, setNumberDialogOpen] = useState(false);
+  const [datesDialogOpen, setDatesDialogOpen] = useState(false);
   const canDelete = can("invoices:delete");
   const canRecordPayment = can("payments:create");
   const canManageRefund = can("refunds:manage");
@@ -417,6 +418,25 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                 <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">Due</span>{" "}
                 {formatDate(invoice.dueDate)}
               </p>
+              {invoice.agreementSignedAt && (
+                <p className="text-muted-foreground print:text-black">
+                  <span className="text-xs uppercase tracking-widest text-[#011b2b] dark:text-[#FFCF01]">
+                    Agreement signed
+                  </span>{" "}
+                  {formatDate(invoice.agreementSignedAt)}
+                </p>
+              )}
+              {canEdit && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="print:hidden"
+                  onClick={() => setDatesDialogOpen(true)}
+                >
+                  Edit dates
+                </Button>
+              )}
               {/* Who raised it. Hidden rather than shown blank when the creating
                   user can no longer be resolved. */}
               {(invoice.createdBy?.name || invoice.createdBy?.email) && (
@@ -747,6 +767,14 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         current={invoiceNo(invoice)}
         onSaved={load}
       />
+      <EditDatesDialog
+        open={datesDialogOpen}
+        onOpenChange={setDatesDialogOpen}
+        invoiceId={invoice.id}
+        currentDueDate={invoice.dueDate}
+        currentAgreementSignedAt={invoice.agreementSignedAt}
+        onSaved={load}
+      />
       <ConfirmDialog
         open={confirm === "send"}
         onOpenChange={(o) => !o && setConfirm(null)}
@@ -857,6 +885,7 @@ function PaymentDialog({
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [paidAt, setPaidAt] = useState(toDateInput(new Date()));
+  const [nextDueDate, setNextDueDate] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -866,6 +895,7 @@ function PaymentDialog({
       setReference("");
       setNotes("");
       setPaidAt(toDateInput(new Date()));
+      setNextDueDate("");
     }
   }, [open, balance]);
 
@@ -883,6 +913,7 @@ function PaymentDialog({
         reference: reference.trim() || undefined,
         notes: notes.trim() || undefined,
         paidAt: paidAt || undefined,
+        ...(nextDueDate ? { dueDate: nextDueDate } : {}),
       });
       toast.success("Payment recorded");
       onSaved();
@@ -948,6 +979,20 @@ function PaymentDialog({
               value={paidAt}
               onChange={(e) => setPaidAt(e.target.value)}
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pay-next-due">Next instalment due date (optional)</Label>
+            <Input
+              id="pay-next-due"
+              type="date"
+              value={nextDueDate}
+              onChange={(e) => setNextDueDate(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              If this invoice has further instalments, set this to advance the invoice&apos;s due
+              date to the next payment date per the signed agreement. Leave blank to keep the
+              current due date.
+            </p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="pay-notes">Notes</Label>
@@ -1163,6 +1208,98 @@ function EditNumberDialog({
             Cancel
           </Button>
           <Button type="button" onClick={save} disabled={saving || !value.trim()}>
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Due date + agreement-signed date — both stay editable at any point, including
+// after payments are recorded (the backend allows exactly these two dates plus
+// notes/salesUserId post-payment; everything that would desync the total is
+// locked). Used for the initial instalment as well as correcting/advancing
+// dates on later instalments recorded via "Record Payment".
+function EditDatesDialog({
+  open,
+  onOpenChange,
+  invoiceId,
+  currentDueDate,
+  currentAgreementSignedAt,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  invoiceId: string;
+  currentDueDate?: string | null;
+  currentAgreementSignedAt?: string | null;
+  onSaved: () => void;
+}) {
+  const [dueDate, setDueDate] = useState("");
+  const [agreementSignedAt, setAgreementSignedAt] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setDueDate(currentDueDate ? toDateInput(new Date(currentDueDate)) : "");
+      setAgreementSignedAt(currentAgreementSignedAt ? toDateInput(new Date(currentAgreementSignedAt)) : "");
+    }
+  }, [open, currentDueDate, currentAgreementSignedAt]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.invoices.update(invoiceId, {
+        dueDate: dueDate || null,
+        agreementSignedAt: agreementSignedAt || null,
+      });
+      toast.success("Dates updated");
+      onOpenChange(false);
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update dates");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit dates</DialogTitle>
+          <DialogDescription>
+            Set these to match the customer&apos;s signed instalment agreement. Both remain
+            editable at any time, including after payments have been recorded against this
+            invoice.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="inv-due-date-edit">Due date</Label>
+            <Input
+              id="inv-due-date-edit"
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="inv-agreement-date-edit">Agreement signed date</Label>
+            <Input
+              id="inv-agreement-date-edit"
+              type="date"
+              value={agreementSignedAt}
+              onChange={(e) => setAgreementSignedAt(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={save} disabled={saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>
