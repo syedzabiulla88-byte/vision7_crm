@@ -29,8 +29,17 @@ export const BUSINESS_PERMISSIONS = [
 
 /** Write actions on `mod` that imply `mod:view` (mirrors the backend shim). */
 function writeActions(mod: string): string[] {
-  return [`${mod}:create`, `${mod}:edit`, `${mod}:delete`, `${mod}:manage`, `${mod}:allocate`];
+  return [
+    `${mod}:create`, `${mod}:edit`, `${mod}:delete`, `${mod}:manage`, `${mod}:allocate`,
+    `${mod}:edit_number`, `${mod}:edit_instalment_plan`,
+  ];
 }
+
+/** A coarse `mod:edit` grant also satisfies these narrower actions (mirrors
+ *  EDIT_IMPLIES in the backend's permissions.ts). */
+const EDIT_IMPLIES: Record<string, string[]> = {
+  invoices: ["edit_number", "edit_instalment_plan"],
+};
 
 /**
  * True if `granted` satisfies `key`, mirroring the backend shim
@@ -38,6 +47,8 @@ function writeActions(mod: string): string[] {
  *   - `'*'` grants everything;
  *   - an exact `mod:action` grant matches;
  *   - a `mod:manage` grant satisfies `mod:create` / `mod:edit` / `mod:delete` / `mod:view`;
+ *   - a `mod:edit` grant also satisfies that module's EDIT_IMPLIES actions
+ *     (e.g. `invoices:edit` satisfies `invoices:edit_number`);
  *   - any write grant (create/edit/delete/manage/allocate) on a module implies `mod:view`.
  */
 export function hasPermission(granted: string[] | undefined | null, key?: string | null): boolean {
@@ -49,6 +60,7 @@ export function hasPermission(granted: string[] | undefined | null, key?: string
   const [mod, action] = key.split(":");
   if (!mod || !action) return false;
   if (g.has(`${mod}:manage`) && ["create", "edit", "delete", "view"].includes(action)) return true;
+  if (g.has(`${mod}:edit`) && (EDIT_IMPLIES[mod] ?? []).includes(action)) return true;
   if (action === "view" && writeActions(mod).some((k) => g.has(k))) return true;
   return false;
 }
