@@ -68,6 +68,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const { can } = usePermissions();
   const canEdit = can("invoices:edit");
+  const canEditNumber = can("invoices:edit_number");
+  const canEditInstalmentPlan = can("invoices:edit_instalment_plan");
   const [numberDialogOpen, setNumberDialogOpen] = useState(false);
   const [datesDialogOpen, setDatesDialogOpen] = useState(false);
   const canDelete = can("invoices:delete");
@@ -391,7 +393,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[#011b2b] dark:text-[#FFCF01]">Invoice</p>
             <h1 className="mt-1 flex items-center gap-2 text-3xl font-bold tracking-tight md:text-4xl">
               {invoiceNo(invoice)}
-              {canEdit && (
+              {canEditNumber && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -431,7 +433,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
                   {formatDate(invoice.agreementSignedAt)}
                 </p>
               )}
-              {canEdit && (
+              {canEditInstalmentPlan && (
                 <Button
                   type="button"
                   variant="ghost"
@@ -1281,7 +1283,7 @@ function EditDatesDialog({
     }
     setSaving(true);
     try {
-      await api.invoices.update(invoiceId, {
+      await api.invoices.updateInstalmentPlan(invoiceId, {
         dueDate: dueDate || null,
         agreementSignedAt: agreementSignedAt || null,
         installmentSchedule: rows.length ? rows : null,

@@ -212,6 +212,10 @@ export const api = {
     // first if mirrored there; refuses (no local change) if Zoho rejects it.
     setNumber: (id: string, number: string) =>
       apiFetch<any>(`/invoices/${id}/number`, { method: "PATCH", body: JSON.stringify({ number }) }),
+    // Due date / agreement signed date / instalment schedule only — gated by
+    // invoices:edit_instalment_plan, narrower than the general update() below.
+    updateInstalmentPlan: (id: string, data: any) =>
+      apiFetch<any>(`/invoices/${id}/instalment-plan`, { method: "PATCH", body: JSON.stringify(data) }),
     // Guided status change: SENT (issue, no email) / DRAFT (reopen) / CANCELLED.
     setStatus: (id: string, status: string) =>
       apiFetch<any>(`/invoices/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
