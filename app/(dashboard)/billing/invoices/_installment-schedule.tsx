@@ -74,6 +74,18 @@ export function InstallmentScheduleEditor({
   const [genInterval, setGenInterval] = useState("1");
   const [genLabel, setGenLabel] = useState("Instalment");
 
+  // Suggest the generator's start date from the last row already in the
+  // schedule, one interval on. "Continue this plan monthly" is the common
+  // case, and an empty date input was the single most common reason the
+  // generator silently refused to run — an <input type="date"> reads back as
+  // "" until every segment is complete, which is easy to miss. Derived rather
+  // than stored, so it keeps tracking the schedule until the user types a
+  // date of their own (which then wins).
+  const lastRowDate = rows.length ? rows[rows.length - 1].dueDate : "";
+  const genStep = Math.max(1, Math.round(Number(genInterval) || 1));
+  const effectiveStart =
+    genStart || (lastRowDate ? addIntervalStr(lastRowDate, genUnit, genStep) : "");
+
   const updateRow = (i: number, patch: Partial<InstallmentRow>) => {
     onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   };
@@ -95,18 +107,18 @@ export function InstallmentScheduleEditor({
       toast.error("Enter the amount for each generated instalment.");
       return;
     }
-    if (!genStart) {
+    if (!effectiveStart) {
       toast.error(
         "Enter the first due date — if it looks incomplete, re-enter the day, month and full 4-digit year.",
       );
       return;
     }
-    const interval = Math.max(1, Math.round(Number(genInterval) || 1));
+    const interval = genStep;
     const startIdx = rows.length;
     const generated: InstallmentRow[] = Array.from({ length: count }, (_, i) => ({
       description: `${genLabel.trim() || "Instalment"} ${startIdx + i + 1}`,
       amount: String(amount),
-      dueDate: addIntervalStr(genStart, genUnit, i * interval),
+      dueDate: addIntervalStr(effectiveStart, genUnit, i * interval),
     }));
     onChange([...rows, ...generated]);
     setGenCount("");
@@ -178,7 +190,7 @@ export function InstallmentScheduleEditor({
           </div>
           <div className="space-y-1">
             <Label className="text-xs">First due date</Label>
-            <Input type="date" value={genStart} onChange={(e) => setGenStart(e.target.value)} />
+            <Input type="date" value={effectiveStart} onChange={(e) => setGenStart(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Every</Label>
