@@ -431,6 +431,7 @@ export default function MembersPage() {
   const [deleteTarget, setDeleteTarget] = useState<Membership | null>(null);
   const [freezeTarget, setFreezeTarget] = useState<Membership | null>(null);
   const [unfreezeTarget, setUnfreezeTarget] = useState<Membership | null>(null);
+  const [freezeHistory, setFreezeHistory] = useState<Membership | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
 
   const toggleExpand = (key: string) =>
@@ -573,8 +574,12 @@ export default function MembersPage() {
     if (!unfreezeTarget) return;
     setActionBusy(true);
     try {
-      await api.memberships.unfreeze(unfreezeTarget.id);
-      toast.success(`Unfroze ${memberLabel(unfreezeTarget)}'s membership`);
+      const res = await api.memberships.unfreeze(unfreezeTarget.id);
+      const refunded = Number(res?.refundedDays) || 0;
+      toast.success(
+        `Unfroze ${memberLabel(unfreezeTarget)}'s membership` +
+          (refunded > 0 ? ` — ${refunded} unused day${refunded === 1 ? "" : "s"} refunded` : ""),
+      );
       setUnfreezeTarget(null);
       await reload();
     } catch (err: any) {
@@ -844,6 +849,7 @@ export default function MembersPage() {
                             {primary && (
                               <SessionControl m={primary} onAdjust={adjustSession} busy={sessionBusy === primary.id} />
                             )}
+                            {primary && <FreezeSummary m={primary} onOpen={() => setFreezeHistory(primary)} />}
                           </div>
                         )}
                       </TableCell>
@@ -951,6 +957,7 @@ export default function MembersPage() {
                                   <span className="text-xs text-muted-foreground">PT: {m.trainerName}</span>
                                 )}
                                 <SessionControl m={m} onAdjust={adjustSession} busy={sessionBusy === m.id} />
+                                <FreezeSummary m={m} onOpen={() => setFreezeHistory(m)} />
                               </div>
                             </TableCell>
                             <TableCell className="text-muted-foreground">
@@ -1142,11 +1149,32 @@ export default function MembersPage() {
         onConfirm={confirmDelete}
       />
 
+      {freezeHistory && (
+        <FreezeHistoryDialog
+          membership={freezeHistory}
+          memberName={memberLabel(freezeHistory)}
+          onClose={() => setFreezeHistory(null)}
+        />
+      )}
+
       <ConfirmDialog
         open={!!unfreezeTarget}
         onOpenChange={(o) => !o && setUnfreezeTarget(null)}
         title="Unfreeze membership"
-        description={`Unfreeze ${unfreezeTarget ? memberLabel(unfreezeTarget) : ""}'s membership and reactivate it?`}
+        description={
+          unfreezeTarget
+            ? (() => {
+                const pv = unfreezePreview(unfreezeTarget);
+                return (
+                  `Unfreeze ${memberLabel(unfreezeTarget)}'s membership and reactivate it?` +
+                  (pv.refund > 0
+                    ? ` ${pv.refund} unused freeze day${pv.refund === 1 ? "" : "s"} will be refunded` +
+                      (pv.newEnd ? ` — the end date moves back to ${formatDate(pv.newEnd)}.` : ".")
+                    : " The freeze period has already been used in full, so no days are refunded.")
+                );
+              })()
+            : ""
+        }
         confirmLabel="Unfreeze"
         loading={actionBusy}
         onConfirm={confirmUnfreeze}
@@ -2431,6 +2459,126 @@ function EditMembershipDialog({
   );
 }
 
+// ─── Freeze usage: summary, history, unfreeze preview ───────────────────────────
+
+/** What an unfreeze would do today: unused days of every open freeze are refunded. */
+function unfreezePreview(m: Membership): { refund: number; newEnd: Date | null } {
+  const today = startOfDay(new Date());
+  let refund = 0;
+  for (const f of (m.freezes ?? []).filter((x: any) => !x.endedAt)) {
+    const used = Math.max(
+      0,
+      Math.min(Number(f.days) || 0, differenceInCalendarDays(today, startOfDay(new Date(f.startDate)))),
+    );
+    refund += (Number(f.days) || 0) - used;
+  }
+  const end = m.endDate ? new Date(m.endDate as string) : null;
+  return { refund, newEnd: end && refund ? addDays(end, -refund) : null };
+}
+
+/** Compact "froze N days · ends X (was Y)" line — opens the full history. */
+function FreezeSummary({ m, onOpen }: { m: Membership; onOpen: () => void }) {
+  const freezes: any[] = m.freezes ?? [];
+  const days = Number(m.freezeDays) || 0;
+  if (!freezes.length && !days) return null;
+  const original = m.originalEndDate ? formatDate(m.originalEndDate) : null;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex items-center gap-1 text-left text-xs text-sky-600 hover:underline dark:text-sky-400"
+      title="View freeze history"
+    >
+      <Clock className="h-3 w-3 shrink-0" />
+      <span>
+        {days} day{days === 1 ? "" : "s"} frozen
+        {m.endDate ? ` · ends ${formatDate(m.endDate)}` : ""}
+        {original && original !== formatDate(m.endDate) ? ` (was ${original})` : ""}
+      </span>
+    </button>
+  );
+}
+
+function FreezeHistoryDialog({
+  membership,
+  memberName,
+  onClose,
+}: {
+  membership: Membership;
+  memberName: string;
+  onClose: () => void;
+}) {
+  const freezes: any[] = membership.freezes ?? [];
+  const maxFreezeDays: number | null = membership.plan?.maxFreezeDays ?? null;
+  const used = Number(membership.freezeDays) || 0;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Freeze history</DialogTitle>
+          <DialogDescription>
+            {memberName} · {membership.plan?.name || "Membership"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-1 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Original end date</span>
+            <span>{membership.originalEndDate ? formatDate(membership.originalEndDate) : "—"}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Current end date</span>
+            <span className="font-semibold">{formatDate(membership.endDate)}</span>
+          </div>
+          <div className="flex justify-between gap-4">
+            <span className="text-muted-foreground">Freeze days used</span>
+            <span>
+              {used}
+              {maxFreezeDays != null ? ` of ${maxFreezeDays} (${Math.max(0, maxFreezeDays - used)} left)` : " (no cap)"}
+            </span>
+          </div>
+        </div>
+
+        <div className="max-h-64 space-y-2 overflow-y-auto">
+          {freezes.length === 0 && (
+            <p className="text-sm text-muted-foreground">No freeze windows recorded.</p>
+          )}
+          {freezes.map((f) => {
+            const open = !f.endedAt;
+            const refunded = Number(f.refundedDays) || 0;
+            return (
+              <div key={f.id} className="rounded-lg border border-border p-2.5 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    {formatDate(f.startDate)} → {formatDate(f.endDate)}
+                  </span>
+                  <Badge variant={open ? "secondary" : "outline"}>{open ? "Frozen now" : "Ended"}</Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {open
+                    ? `${f.days} day${f.days === 1 ? "" : "s"} credited`
+                    : `${f.usedDays ?? f.days} day${(f.usedDays ?? f.days) === 1 ? "" : "s"} frozen`}
+                  {refunded > 0 ? ` · ${refunded} unused day${refunded === 1 ? "" : "s"} refunded` : ""}
+                  {f.endDateBefore && f.endDateAfter
+                    ? ` · end date ${formatDate(f.endDateBefore)} → ${formatDate(f.endDateAfter)}`
+                    : ""}
+                  {f.isLegacy ? " · recorded before freeze history existed (dates approximate)" : ""}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Freeze dialog (replaces window.prompt) ──────────────────────────────────────
 
 type FreezeRange = { from?: Date; to?: Date };
@@ -2594,6 +2742,12 @@ function FreezeDialog({
                   : "Select a range"}
               </span>
             </div>
+            {membership.originalEndDate && (
+              <div className="flex justify-between gap-4">
+                <span className="text-muted-foreground">Original expiry</span>
+                <span>{formatDate(membership.originalEndDate)}</span>
+              </div>
+            )}
             <div className="flex justify-between gap-4">
               <span className="text-muted-foreground">Current expiry</span>
               <span>{currentEnd ? formatDate(currentEnd) : "—"}</span>
