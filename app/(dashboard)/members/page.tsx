@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 
 import { api, uploadFile } from "@/lib/api";
+import { useAsync } from "@/components/hooks/use-async";
 import { provisionAthleteForContact } from "@/lib/athlete-provision";
 import { cn } from "@/lib/utils";
 import { idExpiryStatus, toDateInputValue } from "@/lib/id-expiry";
@@ -2506,36 +2507,29 @@ function EsaDialog({
 }) {
   const { can } = usePermissions();
   const canManage = can("memberships:allocate");
-  const [data, setData] = useState<any>(null);
-  const [index, setIndex] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [ver, setVer] = useState(0);
   const [busy, setBusy] = useState(false);
   const [uid, setUid] = useState("");
-  const [credits, setCredits] = useState("");
+  const [creditsEdit, setCreditsEdit] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const d = await api.esa.player(kind, id);
-      setData(d);
-      setCredits(d?.player?.credit != null ? String(d.player.credit) : "");
-      if (d?.player) api.esa.index(kind, id).then(setIndex).catch(() => setIndex(null));
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to load ESA details");
-    } finally {
-      setLoading(false);
-    }
-  }, [kind, id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data, loading, error: loadError } = useAsync<any>(() => api.esa.player(kind, id), `esa:${kind}:${id}:${ver}`, { keepPrevious: true });
+  const hasPlayer = !!data?.player;
+  const { data: index } = useAsync<any>(
+    () => (hasPlayer ? api.esa.index(kind, id).catch(() => null) : Promise.resolve(null)),
+    `esa-idx:${kind}:${id}:${ver}:${hasPlayer}`,
+    { keepPrevious: true },
+  );
+  const initialLoad = loading && !data;
+  const credits = creditsEdit ?? (data?.player?.credit != null ? String(data.player.credit) : "");
+  const setCredits = (v: string) => setCreditsEdit(v);
 
   const run = async (fn: () => Promise<any>, ok: string) => {
     setBusy(true);
     try {
       await fn();
       toast.success(ok);
-      await load();
+      setCreditsEdit(null);
+      setVer((v) => v + 1);
     } catch (err: any) {
       toast.error(err?.message || "ESA request failed");
     } finally {
@@ -2555,10 +2549,11 @@ function EsaDialog({
           <DialogDescription>{name}</DialogDescription>
         </DialogHeader>
 
-        {loading ? (
+        {initialLoad ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1 text-sm">
+            {loadError && <p className="text-xs text-destructive">{loadError}</p>}
             {!ready && (
               <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs">
                 The ESA gateway isn&apos;t enabled/configured yet — set it up in Settings → Integrations.
@@ -2715,7 +2710,7 @@ function EsaDialog({
             <Button
               type="button"
               variant="outline"
-              disabled={busy || loading}
+              disabled={busy || initialLoad}
               onClick={() => run(() => api.esa.sync(kind, id), "Synced with ESA")}
             >
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" />

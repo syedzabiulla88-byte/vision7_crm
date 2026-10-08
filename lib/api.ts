@@ -197,7 +197,21 @@ export const api = {
 
   // ESA (Elite Skills Arena) gateway — `kind` is "contact" or "athlete".
   esa: {
-    status: () => apiFetch<{ enabled: boolean; configured: boolean }>(`/esa/status`),
+    status: () =>
+      apiFetch<{ enabled: boolean; configured: boolean; readOnly: boolean; signedReads: boolean }>(`/esa/status`),
+    // ESA Performance Hub — read-only aggregation of everything the gateway exposes.
+    hub: {
+      status: () =>
+        apiFetch<{ enabled: boolean; configured: boolean; readOnly: boolean; signedReads: boolean }>(`/esa/hub/status`),
+      overview: (params?: Params) => apiFetch<any>(`/esa/hub/overview${qs(params)}`),
+      players: () => apiFetch<any>(`/esa/hub/players`),
+      player: (username: string, params?: Params) =>
+        apiFetch<any>(`/esa/hub/players/${encodeURIComponent(username)}${qs(params)}`),
+      teams: () => apiFetch<any[]>(`/esa/hub/teams`),
+      team: (id: string) => apiFetch<any>(`/esa/hub/teams/${id}`),
+      coachRoster: (params?: Params) => apiFetch<any>(`/esa/hub/coach-roster${qs(params)}`),
+      manager: (kind: string, params?: Params) => apiFetch<any>(`/esa/hub/manager/${kind}${qs(params)}`),
+    },
     player: (kind: string, id: string) => apiFetch<any>(`/esa/players/${kind}/${id}`),
     sync: (kind: string, id: string) => apiFetch<any>(`/esa/players/${kind}/${id}/sync`, { method: "POST" }),
     assignWristband: (kind: string, id: string, uid: string) =>

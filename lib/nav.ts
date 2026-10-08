@@ -69,6 +69,7 @@ export const NAV: NavGroup[] = [
       { label: "Bookings", href: "/reports/bookings", icon: "Calendar", permission: "reports:view" },
       { label: "Facilities", href: "/reports/facilities", icon: "MapPin", permission: "reports:view" },
       { label: "Follow-ups", href: "/reports/followups", icon: "ClipboardCheck", permission: "reports:view" },
+      { label: "ESA Performance Hub", href: "/esa-hub", icon: "Trophy", permission: "reports:view" },
     ],
   },
   {
