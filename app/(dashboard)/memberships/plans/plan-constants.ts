@@ -93,6 +93,8 @@ export interface Plan {
   accessDoorIds?: string[] | null;
   /** Mint a BioStar QR credential automatically when staff assign this plan. */
   issueQrOnAssign?: boolean | null;
+  esaEnabled?: boolean | null;
+  esaPlayCredits?: number | null;
 }
 
 export function formatSAR(n: number | string | null | undefined): string {

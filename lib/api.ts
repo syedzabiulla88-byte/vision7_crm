@@ -195,6 +195,24 @@ export const api = {
       apiFetch<any>(`/memberships/${id}/use-session`, { method: "POST", body: JSON.stringify({ delta }) }),
   },
 
+  // ESA (Elite Skills Arena) gateway — `kind` is "contact" or "athlete".
+  esa: {
+    status: () => apiFetch<{ enabled: boolean; configured: boolean }>(`/esa/status`),
+    player: (kind: string, id: string) => apiFetch<any>(`/esa/players/${kind}/${id}`),
+    sync: (kind: string, id: string) => apiFetch<any>(`/esa/players/${kind}/${id}/sync`, { method: "POST" }),
+    assignWristband: (kind: string, id: string, uid: string) =>
+      apiFetch<any>(`/esa/players/${kind}/${id}/wristband`, { method: "POST", body: JSON.stringify({ uid }) }),
+    removeWristband: (kind: string, id: string) =>
+      apiFetch<any>(`/esa/players/${kind}/${id}/wristband`, { method: "DELETE" }),
+    setCredits: (kind: string, id: string, credits: number) =>
+      apiFetch<any>(`/esa/players/${kind}/${id}/credits`, { method: "POST", body: JSON.stringify({ credits }) }),
+    sessions: (kind: string, id: string, params?: Params) =>
+      apiFetch<any>(`/esa/players/${kind}/${id}/sessions${qs(params)}`),
+    index: (kind: string, id: string) => apiFetch<any>(`/esa/players/${kind}/${id}/index`),
+    venues: () => apiFetch<any>(`/esa/venues`),
+    leaderboard: (params?: Params) => apiFetch<any>(`/esa/leaderboard${qs(params)}`),
+  },
+
   invoices: {
     list: (params?: Params) => apiFetch<any>(`/invoices${qs(params)}`),
     get: (id: string) => apiFetch<any>(`/invoices/${id}`),
