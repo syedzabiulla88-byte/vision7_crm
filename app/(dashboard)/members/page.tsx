@@ -88,6 +88,8 @@ import {
   ChevronRight,
   Warning,
   Copy,
+  Trophy,
+  RefreshCw,
 } from "@/lib/icons";
 import {
   InstallmentScheduleEditor,
@@ -432,6 +434,7 @@ export default function MembersPage() {
   const [freezeTarget, setFreezeTarget] = useState<Membership | null>(null);
   const [unfreezeTarget, setUnfreezeTarget] = useState<Membership | null>(null);
   const [freezeHistory, setFreezeHistory] = useState<Membership | null>(null);
+  const [esaTarget, setEsaTarget] = useState<{ kind: "contact" | "athlete"; id: string; name: string } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
 
   const toggleExpand = (key: string) =>
@@ -871,6 +874,24 @@ export default function MembersPage() {
                               <Share2 />
                             </Button>
                           )}
+                          {(p.contactId || p.athleteId) &&
+                            memberships.some((m: any) => m.plan?.esaEnabled) && (
+                              <Button
+                                variant="outline"
+                                size="icon-sm"
+                                onClick={() =>
+                                  setEsaTarget({
+                                    kind: p.contactId ? "contact" : "athlete",
+                                    id: (p.contactId || p.athleteId) as string,
+                                    name: p.name || "Member",
+                                  })
+                                }
+                                title="ESA arena"
+                                aria-label="ESA arena"
+                              >
+                                <Trophy />
+                              </Button>
+                            )}
                           {hasFamilyPlan(p) && (p.contactId || p.athleteId) && primary && !p.isDependent && (
                             <Button
                               variant="outline"
@@ -1148,6 +1169,15 @@ export default function MembersPage() {
         loading={actionBusy}
         onConfirm={confirmDelete}
       />
+
+      {esaTarget && (
+        <EsaDialog
+          kind={esaTarget.kind}
+          id={esaTarget.id}
+          name={esaTarget.name}
+          onClose={() => setEsaTarget(null)}
+        />
+      )}
 
       {freezeHistory && (
         <FreezeHistoryDialog
@@ -2454,6 +2484,248 @@ function EditMembershipDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── ESA arena: player account, wristband, credits, index ──────────────────────
+
+const ESA_ATTRIBUTES = ["passing", "vision", "finishing", "dribbling", "control", "acceleration", "stamina", "concentration"];
+
+function EsaDialog({
+  kind,
+  id,
+  name,
+  onClose,
+}: {
+  kind: "contact" | "athlete";
+  id: string;
+  name: string;
+  onClose: () => void;
+}) {
+  const { can } = usePermissions();
+  const canManage = can("memberships:allocate");
+  const [data, setData] = useState<any>(null);
+  const [index, setIndex] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [uid, setUid] = useState("");
+  const [credits, setCredits] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api.esa.player(kind, id);
+      setData(d);
+      setCredits(d?.player?.credit != null ? String(d.player.credit) : "");
+      if (d?.player) api.esa.index(kind, id).then(setIndex).catch(() => setIndex(null));
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to load ESA details");
+    } finally {
+      setLoading(false);
+    }
+  }, [kind, id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const run = async (fn: () => Promise<any>, ok: string) => {
+    setBusy(true);
+    try {
+      await fn();
+      toast.success(ok);
+      await load();
+    } catch (err: any) {
+      toast.error(err?.message || "ESA request failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const player = data?.player;
+  const ent = data?.entitlement;
+  const ready = data?.enabled && data?.configured;
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>ESA arena</DialogTitle>
+          <DialogDescription>{name}</DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1 text-sm">
+            {!ready && (
+              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs">
+                The ESA gateway isn&apos;t enabled/configured yet — set it up in Settings → Integrations.
+              </p>
+            )}
+
+            <div className="space-y-1 rounded-lg border border-border bg-muted/30 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Access</span>
+                <Badge variant={ent?.entitled ? "secondary" : "outline"}>
+                  {ent?.entitled ? "Entitled" : "Not entitled"}
+                </Badge>
+              </div>
+              {(ent?.plans ?? []).map((m: any) => (
+                <div key={m.id} className="flex justify-between gap-3 text-xs text-muted-foreground">
+                  <span>{m.plan}</span>
+                  <span>
+                    {m.status}
+                    {m.endDate ? ` · ends ${formatDate(m.endDate)}` : ""}
+                  </span>
+                </div>
+              ))}
+              {!ent?.entitled && (
+                <p className="pt-1 text-xs text-muted-foreground">
+                  Needs an ACTIVE membership on an ESA-enabled plan. Frozen, pending, cancelled or expired memberships don&apos;t grant access.
+                </p>
+              )}
+            </div>
+
+            {player ? (
+              <>
+                <div className="space-y-1 rounded-lg border border-border p-3">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Player</span>
+                    <span className="font-mono">{player.username}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Account</span>
+                    <Badge variant={player.active ? "secondary" : "outline"}>{player.active ? "Active" : "Deactivated"}</Badge>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Last synced</span>
+                    <span>{player.lastSyncedAt ? formatDate(player.lastSyncedAt) : "—"}</span>
+                  </div>
+                  {player.lastError && (
+                    <p className="pt-1 text-xs text-destructive">Last sync error: {player.lastError}</p>
+                  )}
+                </div>
+
+                <div className="space-y-2 rounded-lg border border-border p-3">
+                  <Label htmlFor="esa-credits">Play credits</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="esa-credits"
+                      type="number"
+                      min="0"
+                      value={credits}
+                      onChange={(e) => setCredits(e.target.value)}
+                      disabled={!canManage || busy}
+                    />
+                    {canManage && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={busy || credits === ""}
+                        onClick={() => run(() => api.esa.setCredits(kind, id, Number(credits)), "Credits updated")}
+                      >
+                        Set
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2 rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="esa-uid">NFC wristband</Label>
+                    {player.nfcId && (
+                      <span className="text-xs text-muted-foreground">expires {player.nfcExpiry?.slice(0, 10)}</span>
+                    )}
+                  </div>
+                  {player.nfcId && <p className="font-mono text-xs">{player.nfcId}</p>}
+                  {canManage && (
+                    <div className="flex gap-2">
+                      <Input
+                        id="esa-uid"
+                        value={uid}
+                        onChange={(e) => setUid(e.target.value)}
+                        placeholder="Scan or paste UID, e.g. 04:0C:1C:BA:F8:11:91"
+                        disabled={busy || !ent?.entitled}
+                      />
+                      <Button
+                        type="button"
+                        disabled={busy || !uid.trim() || !ent?.entitled}
+                        onClick={() =>
+                          run(async () => {
+                            await api.esa.assignWristband(kind, id, uid);
+                            setUid("");
+                          }, player.nfcId ? "Wristband replaced" : "Wristband assigned")
+                        }
+                      >
+                        {player.nfcId ? "Replace" : "Assign"}
+                      </Button>
+                      {player.nfcId && (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          disabled={busy}
+                          onClick={() => run(() => api.esa.removeWristband(kind, id), "Wristband removed")}
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    The UID is converted to the gateway&apos;s ISO HEX format automatically. The wristband expiry follows the membership end date.
+                  </p>
+                </div>
+
+                {index?.has_data && (
+                  <div className="space-y-2 rounded-lg border border-border p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">ESA Index</span>
+                      <span>
+                        <span className="text-lg font-semibold">{index.average}</span>
+                        {index.level ? <span className="ml-2 text-xs text-muted-foreground">{index.level}</span> : null}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      {ESA_ATTRIBUTES.map((a) => (
+                        <div key={a} className="flex justify-between capitalize">
+                          <span className="text-muted-foreground">{a}</span>
+                          <span>{index.index?.[a] ?? "—"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {index && index.has_data === false && (
+                  <p className="text-xs text-muted-foreground">No ESA Index data available yet.</p>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No ESA account yet. It is created automatically once the member holds an active membership on an ESA-enabled plan
+                {canManage ? " — or use Sync now to create it immediately." : "."}
+              </p>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          {canManage && ready && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy || loading}
+              onClick={() => run(() => api.esa.sync(kind, id), "Synced with ESA")}
+            >
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              Sync now
+            </Button>
+          )}
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -48,6 +48,8 @@ interface PlanFormState {
   isFamilyPlan: boolean;
   accessDoorIds: string[];
   issueQrOnAssign: boolean;
+  esaEnabled: boolean;
+  esaPlayCredits: string;
 }
 
 function emptyPlan(): PlanFormState {
@@ -71,6 +73,8 @@ function emptyPlan(): PlanFormState {
     isFamilyPlan: false,
     accessDoorIds: [],
     issueQrOnAssign: false,
+    esaEnabled: false,
+    esaPlayCredits: "",
   };
 }
 
@@ -104,6 +108,8 @@ function fromPlan(initial: Plan): PlanFormState {
     isFamilyPlan: !!initial.isFamilyPlan,
     accessDoorIds: Array.isArray(initial.accessDoorIds) ? initial.accessDoorIds.map(String) : [],
     issueQrOnAssign: !!initial.issueQrOnAssign,
+    esaEnabled: !!initial.esaEnabled,
+    esaPlayCredits: initial.esaPlayCredits != null ? String(initial.esaPlayCredits) : "",
   };
 }
 
@@ -206,6 +212,9 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
         isFamilyPlan: form.isFamilyPlan,
         accessDoorIds: form.accessDoorIds,
         issueQrOnAssign: form.issueQrOnAssign,
+        esaEnabled: form.esaEnabled,
+        esaPlayCredits:
+          form.esaPlayCredits === "" ? null : Number(form.esaPlayCredits),
       };
 
       if (editingId) {
@@ -521,6 +530,47 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
                   onCheckedChange={(v) => set("isFamilyPlan", v)}
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>ESA arena</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-0.5">
+                  <Label htmlFor="plan-esa">Includes ESA arena access</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Members on this plan get an ESA player account and NFC
+                    wristband. Access switches off automatically when the
+                    membership is frozen, cancelled or expires, and the wristband
+                    expiry follows the membership end date.
+                  </p>
+                </div>
+                <Switch
+                  id="plan-esa"
+                  checked={form.esaEnabled}
+                  onCheckedChange={(v) => set("esaEnabled", v)}
+                />
+              </div>
+              {form.esaEnabled && (
+                <div className="space-y-2">
+                  <Label htmlFor="plan-esa-credits">Play credits per membership</Label>
+                  <Input
+                    id="plan-esa-credits"
+                    type="number"
+                    min="0"
+                    value={form.esaPlayCredits}
+                    onChange={(e) => set("esaPlayCredits", e.target.value)}
+                    placeholder="None"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Credits added to the player&apos;s ESA balance each time a
+                    membership on this plan activates. Leave empty for none.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
