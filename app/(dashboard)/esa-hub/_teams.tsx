@@ -5,10 +5,10 @@ import { api } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AttributeBars, ErrorNote, Loading, Stat, useAsync } from "./_shared";
+import { AttributeBars, ErrorNote, Loading, Stat, timeAgo, useAsync } from "./_shared";
 
-export function TeamsTab() {
-  const { data: teams, error, loading } = useAsync(() => api.esa.hub.teams(), "teams");
+export function TeamsTab({ rev }: { rev: string }) {
+  const { data: teams, error, loading } = useAsync(() => api.esa.hub.teams(), `teams:${rev}`, { keepPrevious: true });
   const [selected, setSelected] = useState<string | null>(null);
 
   return (
@@ -35,13 +35,13 @@ export function TeamsTab() {
           ))}
         </div>
       )}
-      {selected && <TeamPerformance id={selected} key={selected} />}
+      {selected && <TeamPerformance id={selected} rev={rev} key={selected} />}
     </div>
   );
 }
 
-function TeamPerformance({ id }: { id: string }) {
-  const { data, error, loading } = useAsync(() => api.esa.hub.team(id), `team:${id}`);
+function TeamPerformance({ id, rev }: { id: string; rev: string }) {
+  const { data, error, loading } = useAsync(() => api.esa.hub.team(id), `team:${id}:${rev}`);
   if (loading) return <Loading />;
   if (error) return <ErrorNote message={error} />;
   if (!data) return null;
@@ -51,8 +51,8 @@ function TeamPerformance({ id }: { id: string }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Team ESA Index" value={data.teamAverage ?? "—"} hint={data.team.name} />
         <Stat label="Athletes" value={c.athletes} />
-        <Stat label="On ESA" value={c.linked} />
-        <Stat label="With Index data" value={c.withData} hint="Average counts only these" />
+        <Stat label="On ESA" value={c.linked} hint="Linked to an ESA player" />
+        <Stat label="With Index data" value={c.withData} hint={`${data.totalSessions} sessions in total`} />
       </div>
       <Card>
         <CardHeader>
@@ -70,6 +70,8 @@ function TeamPerformance({ id }: { id: string }) {
               <TableHead>ESA username</TableHead>
               <TableHead>ESA Index</TableHead>
               <TableHead>Level</TableHead>
+              <TableHead>Sessions</TableHead>
+              <TableHead>Last session</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -77,10 +79,10 @@ function TeamPerformance({ id }: { id: string }) {
               <TableRow key={m.athleteId}>
                 <TableCell>{m.name}</TableCell>
                 <TableCell className="font-mono text-xs">{m.username ?? <Badge variant="outline">Not on ESA</Badge>}</TableCell>
-                <TableCell className="font-semibold">
-                  {m.average ?? (m.error ? <span className="text-xs font-normal text-destructive">{m.error}</span> : "—")}
-                </TableCell>
+                <TableCell className="font-semibold">{m.average ?? "—"}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{m.level ?? "—"}</TableCell>
+                <TableCell>{m.username ? m.sessionCount : "—"}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{m.lastSessionAt ? timeAgo(m.lastSessionAt) : "—"}</TableCell>
               </TableRow>
             ))}
           </TableBody>
