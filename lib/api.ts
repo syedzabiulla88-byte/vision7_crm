@@ -202,15 +202,22 @@ export const api = {
     // ESA Performance Hub — read-only aggregation of everything the gateway exposes.
     hub: {
       status: () =>
-        apiFetch<{ enabled: boolean; configured: boolean; readOnly: boolean; signedReads: boolean }>(`/esa/hub/status`),
+        apiFetch<{ enabled: boolean; configured: boolean; readOnly: boolean; signedReads: boolean; sync: any }>(`/esa/hub/status`),
+      // Pull the latest ESA data into the CRM now (runs in the background on the server).
+      sync: () => apiFetch<{ started: boolean; runId: string | null; reason?: string }>(`/esa/hub/sync`, { method: "POST" }),
       overview: (params?: Params) => apiFetch<any>(`/esa/hub/overview${qs(params)}`),
       players: () => apiFetch<any>(`/esa/hub/players`),
-      player: (username: string, params?: Params) =>
-        apiFetch<any>(`/esa/hub/players/${encodeURIComponent(username)}${qs(params)}`),
+      player: (esaUserId: number, params?: Params) => apiFetch<any>(`/esa/hub/players/${esaUserId}${qs(params)}`),
+      sessions: (params?: Params) => apiFetch<any>(`/esa/hub/sessions${qs(params)}`),
       teams: () => apiFetch<any[]>(`/esa/hub/teams`),
       team: (id: string) => apiFetch<any>(`/esa/hub/teams/${id}`),
+      leaderboard: () => apiFetch<any>(`/esa/hub/leaderboard`),
+      manager: (kind: string) => apiFetch<any>(`/esa/hub/manager/${kind}`),
       coachRoster: (params?: Params) => apiFetch<any>(`/esa/hub/coach-roster${qs(params)}`),
-      manager: (kind: string, params?: Params) => apiFetch<any>(`/esa/hub/manager/${kind}${qs(params)}`),
+      linkCandidates: (q: string) => apiFetch<any[]>(`/esa/hub/link-candidates${qs({ q })}`),
+      link: (esaUserId: number, kind: string, id: string) =>
+        apiFetch<any>(`/esa/hub/players/${esaUserId}/link`, { method: "POST", body: JSON.stringify({ kind, id }) }),
+      unlink: (esaUserId: number) => apiFetch<any>(`/esa/hub/players/${esaUserId}/link`, { method: "DELETE" }),
     },
     player: (kind: string, id: string) => apiFetch<any>(`/esa/players/${kind}/${id}`),
     sync: (kind: string, id: string) => apiFetch<any>(`/esa/players/${kind}/${id}/sync`, { method: "POST" }),

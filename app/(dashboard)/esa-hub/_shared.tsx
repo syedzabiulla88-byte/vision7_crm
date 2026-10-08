@@ -58,6 +58,24 @@ export function AttributeBars({ values }: { values: Record<string, number | null
   );
 }
 
+export function timeAgo(value: unknown): string {
+  if (!value) return "never";
+  const t = new Date(value as string).getTime();
+  if (Number.isNaN(t)) return "never";
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+
+export function fmtDateTime(value: unknown): string {
+  if (!value) return "—";
+  const d = new Date(value as string);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 const pretty = (k: string) => k.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
 
 /**

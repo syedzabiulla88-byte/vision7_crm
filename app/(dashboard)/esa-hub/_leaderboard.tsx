@@ -8,15 +8,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ErrorNote, Loading } from "./_shared";
+import { ErrorNote, Loading, timeAgo, useAsync } from "./_shared";
 
 const selectCls =
   "h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-export function LeaderboardTab() {
+/** Stored snapshot by default; a custom filter query goes to ESA live (read-only) and is shown instead. */
+export function LeaderboardTab({ rev }: { rev: string }) {
+  const stored = useAsync(() => api.esa.hub.leaderboard(), `lb-stored:${rev}`, { keepPrevious: true });
   const [venues, setVenues] = useState<any[]>([]);
   const [f, setF] = useState({ from: "", to: "", venue_id: "", opponent_venue_id: "", game_code: "", machine: "", username: "", limit: "10" });
-  const [data, setData] = useState<any>(null);
+  const [live, setLive] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,7 +34,7 @@ export function LeaderboardTab() {
     try {
       const params: Record<string, string> = {};
       for (const [k, v] of Object.entries(f)) if (v) params[k] = v;
-      setData(await api.esa.leaderboard(params));
+      setLive(await api.esa.leaderboard(params));
     } catch (e: any) {
       setError(e?.message || "Failed to load leaderboard");
     } finally {
@@ -40,6 +42,8 @@ export function LeaderboardTab() {
     }
   };
 
+  const data = live ?? stored.data?.data;
+  const source = live ? "live from ESA (custom filters)" : stored.data ? `stored snapshot · pulled ${timeAgo(stored.data.fetchedAt)}` : null;
   const compare = !!data?.scope?.is_comparison;
 
   return (
@@ -90,23 +94,26 @@ export function LeaderboardTab() {
             <Label htmlFor="lb-user">Find player</Label>
             <Input id="lb-user" placeholder="ESA username" value={f.username} onChange={(e) => set("username", e.target.value)} />
           </div>
-          <div className="flex items-end">
-            <Button type="button" onClick={run} disabled={loading} className="w-full">
-              {loading ? "Loading…" : "Load leaderboard"}
+          <div className="flex items-end gap-2">
+            <Button type="button" onClick={run} disabled={loading} className="flex-1">
+              {loading ? "Loading…" : "Run with these filters"}
             </Button>
+            {live && (
+              <Button type="button" variant="outline" onClick={() => setLive(null)}>
+                Reset
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      <ErrorNote message={error} />
-      {loading && <Loading />}
+      <ErrorNote message={error || stored.error} />
+      {(loading || (stored.loading && !stored.data)) && <Loading />}
 
-      {data && !loading && (
+      {data ? (
         <>
           <p className="text-xs text-muted-foreground">
-            {data.scope?.period?.from} → {data.scope?.period?.to} · {data.summary?.sessions_count ?? 0} sessions
-            {data.stale ? " · cached (ESA temporarily unavailable)" : ""}
-            {data.truncated ? " · results truncated" : ""}
+            {data.scope?.period?.from} → {data.scope?.period?.to} · {data.summary?.sessions_count ?? 0} sessions · {source}
           </p>
 
           {data.user_lookup && (
@@ -131,7 +138,7 @@ export function LeaderboardTab() {
             </Card>
           )}
 
-          {(data.leaderboards ?? []).length === 0 && <p className="text-sm text-muted-foreground">No leaderboard rows for these filters.</p>}
+          {(data.leaderboards ?? []).length === 0 && <p className="text-sm text-muted-foreground">No leaderboard rows.</p>}
           {(data.leaderboards ?? []).map((lb: any, i: number) => (
             <Card key={i}>
               <CardHeader>
@@ -191,6 +198,8 @@ export function LeaderboardTab() {
             </Card>
           ))}
         </>
+      ) : (
+        !stored.loading && !loading && <p className="text-sm text-muted-foreground">No leaderboard stored yet — run Sync now, or use the filters above to query ESA directly.</p>
       )}
     </div>
   );

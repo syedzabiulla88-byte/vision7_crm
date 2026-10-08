@@ -5,20 +5,21 @@ import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ErrorNote, Loading, Stat, useAsync } from "./_shared";
+import { ErrorNote, Loading, Stat, timeAgo, useAsync } from "./_shared";
 
-export function OverviewTab() {
+export function OverviewTab({ rev }: { rev: string }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const { data, error, loading } = useAsync(
     () => api.esa.hub.overview({ from: from || undefined, to: to || undefined }),
-    `overview:${from}|${to}`,
+    `overview:${from}|${to}|${rev}`,
+    { keepPrevious: true },
   );
 
-  const summary = data?.summary;
-  const modes: any[] = summary?.game_mode_activity ?? [];
+  const modes: any[] = data?.modes ?? [];
   const maxSessions = Math.max(1, ...modes.map((m) => Number(m.session_count) || 0));
-  const top = summary?.most_played_game_mode?.overall;
+  const top = data?.topMode;
+  const noDates = data && data.sessions.stored > 0 && data.sessions.withoutDate === data.sessions.stored;
 
   return (
     <div className="space-y-4">
@@ -42,20 +43,17 @@ export function OverviewTab() {
       ) : (
         data && (
           <>
+            {noDates && (
+              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+                Sessions are stored but none has a recognisable date yet, so period figures show zero. Open the <strong>Sessions</strong> tab to see ESA&apos;s field names — the date mapping can be adjusted from there.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Stat label="ESA players (org)" value={data.players?.total} />
-              <Stat label="Linked to CRM members" value={data.players?.linkedToCrm} hint={`${data.players?.linkedActive ?? 0} active`} />
-              <Stat label="Sessions in period" value={summary?.sessions_count} />
-              <Stat
-                label="Most played mode"
-                value={top?.game_name ?? "—"}
-                hint={top ? `${top.session_count} sessions · ${top.unique_players} players` : undefined}
-              />
+              <Stat label="ESA players" value={data.players.total} hint={`${data.players.active} active`} />
+              <Stat label="Linked to CRM members" value={data.players.linkedToCrm} hint={`${data.players.withSessions} have sessions stored`} />
+              <Stat label="Sessions in period" value={data.sessions.inPeriod} hint={`${data.sessions.uniquePlayersInPeriod} players · ${data.sessions.stored.toLocaleString()} stored in total`} />
+              <Stat label="Most played mode" value={top?.game_code ?? "—"} hint={top ? `${top.session_count} sessions · ${top.unique_players} players` : undefined} />
             </div>
-
-            {Object.entries(data.errors ?? {}).map(([k, v]) => (
-              <ErrorNote key={k} message={`${k}: ${v}`} />
-            ))}
 
             <Card>
               <CardHeader>
@@ -66,7 +64,7 @@ export function OverviewTab() {
                 {modes.map((m) => (
                   <div key={m.game_code} className="space-y-0.5">
                     <div className="flex justify-between text-sm">
-                      <span>{m.game_name}</span>
+                      <span>{m.game_code}</span>
                       <span className="text-muted-foreground">
                         {m.session_count} sessions · {m.unique_players} players
                       </span>
@@ -84,7 +82,7 @@ export function OverviewTab() {
                 <CardTitle>Venues</CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 text-sm">
-                {(data.venues ?? []).length === 0 && <p className="text-muted-foreground">No venues returned.</p>}
+                {(data.venues ?? []).length === 0 && <p className="text-muted-foreground">No venues stored yet.</p>}
                 {(data.venues ?? []).map((v: any) => (
                   <div key={v.id} className="flex justify-between gap-3">
                     <span>
@@ -96,6 +94,7 @@ export function OverviewTab() {
                     </span>
                   </div>
                 ))}
+                {data.venuesAt && <p className="pt-1 text-xs text-muted-foreground">Pulled {timeAgo(data.venuesAt)}</p>}
               </CardContent>
             </Card>
           </>
