@@ -5,6 +5,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
+import { toLocalISODate } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -134,7 +135,7 @@ const GENDER_WINDOW_HINT: Record<string, string> = {
 // ─── Date helpers ─────────────────────────────────────────────────────────
 
 function fmtISO(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return toLocalISODate(d);
 }
 function addDays(d: Date, n: number): Date {
   const x = new Date(d);
