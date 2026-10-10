@@ -195,6 +195,14 @@ export const api = {
       apiFetch<any>(`/memberships/${id}/use-session`, { method: "POST", body: JSON.stringify({ delta }) }),
   },
 
+  // Outbound email attempts (SENT = accepted by SES; FAILED/SKIPPED include the reason).
+  emailLog: {
+    list: (params?: Params) => apiFetch<any>(`/email-log${qs(params)}`),
+    summary: () => apiFetch<{ SENT: number; FAILED: number; SKIPPED: number }>(`/email-log/summary`),
+    previewReminders: () => apiFetch<any>(`/email-log/reminders/preview`, { method: "POST" }),
+    runReminders: () => apiFetch<any>(`/email-log/reminders/run`, { method: "POST" }),
+  },
+
   // ESA (Elite Skills Arena) gateway — `kind` is "contact" or "athlete".
   esa: {
     status: () =>

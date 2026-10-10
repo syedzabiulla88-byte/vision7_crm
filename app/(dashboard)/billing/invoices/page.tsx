@@ -176,6 +176,10 @@ export default function InvoicesPage() {
         const res = await api.invoices.send(inv.id);
         if (res?.emailed) {
           toast.success(resend ? "Invoice resent" : "Invoice sent");
+        } else if (res?.emailStatus === "failed") {
+          toast.error(
+            `Marked sent, but the email FAILED${res?.emailError ? ` (${res.emailError})` : ""} — share the PDF manually. See Settings → Email log.`,
+          );
         } else {
           toast.warning("Marked sent — no email on file, share the PDF.");
         }
@@ -396,6 +400,7 @@ export default function InvoicesPage() {
                   <TableHead>Recipient</TableHead>
                   <TableHead>Issued</TableHead>
                   <TableHead>Due</TableHead>
+                  <TableHead>Next instalment</TableHead>
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead>Status</TableHead>
@@ -415,7 +420,7 @@ export default function InvoicesPage() {
                   ))
                 ) : filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="h-32 text-center">
+                    <TableCell colSpan={9} className="h-32 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <FileText className="h-6 w-6" />
                         <p>
@@ -462,6 +467,33 @@ export default function InvoicesPage() {
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           {formatDate(inv.dueDate)}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {inv.nextInstalment ? (
+                            <div className="leading-tight">
+                              <span
+                                className={
+                                  inv.nextInstalment.overdue
+                                    ? "font-medium text-red-600 dark:text-red-400"
+                                    : inv.nextInstalment.daysUntil <= 5
+                                      ? "font-medium text-amber-600 dark:text-amber-400"
+                                      : "text-muted-foreground"
+                                }
+                              >
+                                {formatDate(inv.nextInstalment.dueDate)}
+                              </span>
+                              <p className="text-xs text-muted-foreground tabular-nums">
+                                {formatSAR(inv.nextInstalment.amount)}
+                                {inv.nextInstalment.overdue
+                                  ? ` · ${Math.abs(inv.nextInstalment.daysUntil)}d overdue`
+                                  : inv.nextInstalment.daysUntil === 0
+                                    ? " · today"
+                                    : ` · in ${inv.nextInstalment.daysUntil}d`}
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {formatSAR(getTotal(inv))}

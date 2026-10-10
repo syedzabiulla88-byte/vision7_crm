@@ -95,6 +95,14 @@ export interface Invoice {
   // on the invoice PDF as its own table. Independent of amountPaid/balance,
   // which recordPayment() alone still drives.
   installmentSchedule?: { description: string; amount: number; dueDate: string }[] | null;
+  // Computed by the list API: the first instalment not yet covered by payments.
+  nextInstalment?: {
+    description: string;
+    dueDate: string;
+    amount: number;
+    overdue: boolean;
+    daysUntil: number;
+  } | null;
   total?: number;
   grandTotal?: number;
   subtotal?: number;

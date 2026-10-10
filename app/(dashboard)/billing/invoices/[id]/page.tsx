@@ -161,6 +161,10 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         const res = await api.invoices.send(id);
         if (res?.emailed) {
           toast.success("Invoice sent");
+        } else if (res?.emailStatus === "failed") {
+          toast.error(
+            `Marked sent, but the email FAILED${res?.emailError ? ` (${res.emailError})` : ""} — share the PDF manually. See Settings → Email log.`,
+          );
         } else {
           toast.warning("Marked sent — no email on file, share the PDF.");
         }
