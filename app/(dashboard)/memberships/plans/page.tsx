@@ -79,7 +79,7 @@ export default function PlansPage() {
   };
 
   const newPlanAction = (
-    <PermissionGate permission="memberships:create">
+    <PermissionGate permission="plans:edit">
       <Button render={<Link href="/memberships/plans/new" />}>
         <Plus className="h-4 w-4" />
         New Plan
@@ -101,6 +101,16 @@ export default function PlansPage() {
         onRefresh={load}
         actions={newPlanAction}
       />
+      <PermissionGate
+        permission="plans:edit"
+        fallback={
+          <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            You have view-only access to plans. Ask an administrator if you need to change one.
+          </p>
+        }
+      >
+        {null}
+      </PermissionGate>
 
       {loading ? (
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
@@ -115,7 +125,7 @@ export default function PlansPage() {
             title="No plans yet"
             description="Create your first membership plan to start assigning memberships and feeding the public pricing pages."
           />
-          <PermissionGate permission="memberships:create">
+          <PermissionGate permission="plans:edit">
             <div className="flex justify-center pb-16">
               <Button render={<Link href="/memberships/plans/new" />}>
                 <Plus className="h-4 w-4" />
@@ -283,16 +293,18 @@ function PlanCard({ plan, onDelete }: { plan: Plan; onDelete: () => void }) {
         <div className="flex-1" />
 
         <div className="flex gap-2 border-t border-border pt-4">
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            render={<Link href={`/memberships/plans/${plan.id}`} />}
-          >
-            <Pencil className="h-3.5 w-3.5" />
-            Edit
-          </Button>
-          <PermissionGate permission="memberships:edit">
+          <PermissionGate permission="plans:edit">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              render={<Link href={`/memberships/plans/${plan.id}`} />}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Button>
+          </PermissionGate>
+          <PermissionGate permission="plans:edit">
             <Button
               variant="destructive"
               size="icon-sm"
