@@ -17,6 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   Plus,
   Pencil,
+  Eye,
   Trash,
   Tag,
   Check,
@@ -293,7 +294,20 @@ function PlanCard({ plan, onDelete }: { plan: Plan; onDelete: () => void }) {
         <div className="flex-1" />
 
         <div className="flex gap-2 border-t border-border pt-4">
-          <PermissionGate permission="plans:edit">
+          <PermissionGate
+            permission="plans:edit"
+            fallback={
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                render={<Link href={`/memberships/plans/${plan.id}`} />}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                View
+              </Button>
+            }
+          >
             <Button
               variant="outline"
               size="sm"
