@@ -5,13 +5,10 @@ import { use, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { PlanForm } from "../plan-form";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PermissionGate } from "@/components/shared/permission-gate";
 import type { Plan } from "../plan-constants";
 
-export default function EditPlanPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+function EditPlan({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState("");
@@ -62,4 +59,19 @@ export default function EditPlanPage({
   }
 
   return <PlanForm initial={plan} editingId={id} />;
+}
+
+export default function EditPlanPage({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <PermissionGate
+      permission="plans:edit"
+      fallback={
+        <p className="rounded-lg border border-border bg-muted/40 p-6 text-sm text-muted-foreground">
+          You don&apos;t have permission to edit plans.
+        </p>
+      }
+    >
+      <EditPlan params={params} />
+    </PermissionGate>
+  );
 }
