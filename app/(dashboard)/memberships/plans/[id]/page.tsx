@@ -5,11 +5,13 @@ import { use, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { PlanForm } from "../plan-form";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PermissionGate } from "@/components/shared/permission-gate";
+import { usePermissions } from "@/components/hooks/use-permissions";
 import type { Plan } from "../plan-constants";
 
 function EditPlan({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { can } = usePermissions();
+  const canEdit = can("plans:edit");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -58,20 +60,12 @@ function EditPlan({ params }: { params: Promise<{ id: string }> }) {
     );
   }
 
-  return <PlanForm initial={plan} editingId={id} />;
+  // Staff without plans:edit still get the whole plan, just not editable.
+  // GET /membership-plans/:id requires no extra permission, so this is only a
+  // nicer presentation of data they could already read.
+  return <PlanForm initial={plan} editingId={id} readOnly={!canEdit} />;
 }
 
 export default function EditPlanPage({ params }: { params: Promise<{ id: string }> }) {
-  return (
-    <PermissionGate
-      permission="plans:edit"
-      fallback={
-        <p className="rounded-lg border border-border bg-muted/40 p-6 text-sm text-muted-foreground">
-          You don&apos;t have permission to edit plans.
-        </p>
-      }
-    >
-      <EditPlan params={params} />
-    </PermissionGate>
-  );
+  return <EditPlan params={params} />;
 }

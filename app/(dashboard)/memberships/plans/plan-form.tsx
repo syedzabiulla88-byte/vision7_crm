@@ -116,9 +116,13 @@ function fromPlan(initial: Plan): PlanFormState {
 interface PlanFormProps {
   initial?: Plan;
   editingId?: string;
+  /** Show every field, but disabled, with no way to save. Used for staff who
+   *  can see plans but not change them, so they get the whole plan rather than
+   *  the summary on the card. */
+  readOnly?: boolean;
 }
 
-export function PlanForm({ initial, editingId }: PlanFormProps) {
+export function PlanForm({ initial, editingId, readOnly = false }: PlanFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<PlanFormState>(() =>
     initial ? fromPlan(initial) : emptyPlan(),
@@ -184,6 +188,7 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (readOnly) return;
     if (!form.name.trim()) {
       toast.error("Name is required");
       return;
@@ -244,20 +249,30 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
           Back to plans
         </Link>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {editingId ? form.name || "Edit Plan" : "Create Plan"}
-          </h1>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" render={<Link href="/memberships/plans" />}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? "Saving..." : editingId ? "Save Changes" : "Create Plan"}
-            </Button>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {readOnly ? form.name || "Plan" : editingId ? form.name || "Edit Plan" : "Create Plan"}
+            </h1>
+            {readOnly && (
+              <span className="rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                View only
+              </span>
+            )}
           </div>
+          {!readOnly && (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" render={<Link href="/memberships/plans" />}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : editingId ? "Save Changes" : "Create Plan"}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
+      <fieldset disabled={readOnly} className="contents">
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main column */}
         <div className="space-y-6 lg:col-span-2">
@@ -656,6 +671,7 @@ export function PlanForm({ initial, editingId }: PlanFormProps) {
           </Card>
         </div>
       </div>
+      </fieldset>
     </form>
   );
 }
