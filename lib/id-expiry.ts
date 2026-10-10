@@ -16,10 +16,4 @@ export function idExpiryStatus(value?: string | Date | null): IdExpiryStatus {
   return null;
 }
 
-/** Format an ISO/Date value for a native <input type="date"> (YYYY-MM-DD), or "". */
-export function toDateInputValue(value?: string | Date | null): string {
-  if (!value) return "";
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 10);
-}
+export { toDateInputValue } from "@/lib/utils";

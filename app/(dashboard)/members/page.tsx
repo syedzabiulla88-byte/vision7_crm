@@ -180,10 +180,7 @@ function formatDate(value: unknown): string {
 
 /** YYYY-MM-DD for <input type="date">. */
 function toDateInput(value: unknown): string {
-  if (!value) return "";
-  const d = new Date(value as string);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 10);
+  return toDateInputValue(value as string | Date | null | undefined);
 }
 
 // ─── Row helpers ────────────────────────────────────────────────────────────────
