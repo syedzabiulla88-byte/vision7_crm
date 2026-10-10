@@ -269,14 +269,23 @@ export function InvoiceForm({ editing }: InvoiceFormProps) {
         const created = await api.invoices.create(payload);
         invoiceId = created?.id;
       }
+      let sendNote: "sent" | "failed" | "no-recipient" | "error" = "sent";
       if (send && invoiceId) {
         try {
-          await api.invoices.send(invoiceId);
+          const res = await api.invoices.send(invoiceId);
+          sendNote = res?.emailed ? "sent" : res?.emailStatus === "failed" ? "failed" : "no-recipient";
         } catch (err) {
+          sendNote = "error";
           toast.error(`Invoice saved but send failed: ${err instanceof Error ? err.message : err}`);
         }
       }
-      toast.success(editingId ? "Invoice updated" : send ? "Invoice saved & sent" : "Invoice saved");
+      if (send && sendNote === "failed") {
+        toast.error("Invoice saved, but the email FAILED — share the PDF manually. See Settings → Email log.");
+      } else if (send && sendNote === "no-recipient") {
+        toast.warning("Invoice saved and marked sent — no email on file, share the PDF.");
+      } else if (sendNote !== "error") {
+        toast.success(editingId ? "Invoice updated" : send ? "Invoice saved & sent" : "Invoice saved");
+      }
       router.push(`/billing/invoices/${invoiceId || ""}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save invoice");

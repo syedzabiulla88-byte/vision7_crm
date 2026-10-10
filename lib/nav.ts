@@ -78,6 +78,7 @@ export const NAV: NavGroup[] = [
       { label: "Users", href: "/admin/users", icon: "ShieldUser", permission: "users:view" },
       { label: "Roles & Permissions", href: "/admin/roles", icon: "Shield", permission: "roles:manage" },
       { label: "System Settings", href: "/admin/settings", icon: "Settings", permission: "settings:manage" },
+      { label: "Email Log", href: "/admin/email-log", icon: "FileText", permission: "settings:manage" },
       { label: "Connected Apps", href: "/admin/apps", icon: "Layers", permission: "apps:view" },
     ],
   },
