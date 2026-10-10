@@ -6,6 +6,7 @@
 // — independent of amountPaid/balance, which recordPayment() alone still drives.
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -73,6 +74,18 @@ export function InstallmentScheduleEditor({
   const [genInterval, setGenInterval] = useState("1");
   const [genLabel, setGenLabel] = useState("Instalment");
 
+  // Suggest the generator's start date from the last row already in the
+  // schedule, one interval on. "Continue this plan monthly" is the common
+  // case, and an empty date input was the single most common reason the
+  // generator silently refused to run — an <input type="date"> reads back as
+  // "" until every segment is complete, which is easy to miss. Derived rather
+  // than stored, so it keeps tracking the schedule until the user types a
+  // date of their own (which then wins).
+  const lastRowDate = rows.length ? rows[rows.length - 1].dueDate : "";
+  const genStep = Math.max(1, Math.round(Number(genInterval) || 1));
+  const effectiveStart =
+    genStart || (lastRowDate ? addIntervalStr(lastRowDate, genUnit, genStep) : "");
+
   const updateRow = (i: number, patch: Partial<InstallmentRow>) => {
     onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   };
@@ -83,15 +96,29 @@ export function InstallmentScheduleEditor({
   const generate = () => {
     const count = Math.max(0, Math.round(Number(genCount) || 0));
     const amount = Number(genAmount);
-    if (!count || !Number.isFinite(amount) || amount <= 0 || !genStart) {
+    // Say which field is missing rather than returning silently — an
+    // incomplete <input type="date"> reads back as "", so a half-typed year
+    // otherwise made this button look dead.
+    if (!count) {
+      toast.error("Enter how many instalments to generate (Count).");
       return;
     }
-    const interval = Math.max(1, Math.round(Number(genInterval) || 1));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter the amount for each generated instalment.");
+      return;
+    }
+    if (!effectiveStart) {
+      toast.error(
+        "Enter the first due date — if it looks incomplete, re-enter the day, month and full 4-digit year.",
+      );
+      return;
+    }
+    const interval = genStep;
     const startIdx = rows.length;
     const generated: InstallmentRow[] = Array.from({ length: count }, (_, i) => ({
       description: `${genLabel.trim() || "Instalment"} ${startIdx + i + 1}`,
       amount: String(amount),
-      dueDate: addIntervalStr(genStart, genUnit, i * interval),
+      dueDate: addIntervalStr(effectiveStart, genUnit, i * interval),
     }));
     onChange([...rows, ...generated]);
     setGenCount("");
@@ -152,7 +179,7 @@ export function InstallmentScheduleEditor({
           Generate repeating instalments (appends to the list above — e.g. &quot;8 more, SAR 765
           each, monthly from 5 Oct&quot;)
         </p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-[90px_130px_minmax(165px,1fr)_80px_110px_minmax(120px,1fr)]">
           <div className="space-y-1">
             <Label className="text-xs">Count</Label>
             <Input type="number" min={1} value={genCount} onChange={(e) => setGenCount(e.target.value)} />
@@ -163,7 +190,7 @@ export function InstallmentScheduleEditor({
           </div>
           <div className="space-y-1">
             <Label className="text-xs">First due date</Label>
-            <Input type="date" value={genStart} onChange={(e) => setGenStart(e.target.value)} />
+            <Input type="date" value={effectiveStart} onChange={(e) => setGenStart(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Every</Label>

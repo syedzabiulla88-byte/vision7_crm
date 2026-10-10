@@ -511,11 +511,13 @@ function BiostarRelayCard({ relayUrl }: { relayUrl: string }) {
             Download relay
           </Button>
           <p className="text-xs text-muted-foreground">
-            Run it on a premises PC (needs Node 18+): unzip, copy{" "}
-            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">config.env.example</code> →{" "}
-            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">config.env</code> (BioStar host + a login +
-            this CRM&apos;s origin), then run <code className="rounded bg-muted px-1 py-0.5 text-[11px]">start.cmd</code>.
-            Full steps in the README inside.
+            Run it on a premises PC (needs Node 18+): unzip, run{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">setup.bat</code> to enter the BioStar login and
+            write <code className="rounded bg-muted px-1 py-0.5 text-[11px]">config.env</code> on that PC, then run{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">install-autostart.bat</code> so it starts with
+            Windows — or <code className="rounded bg-muted px-1 py-0.5 text-[11px]">start.bat</code> for a one-off test
+            run. Upgrading from an older relay? Copy these files into the existing folder and keep its{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">config.env</code>. Full steps in the README inside.
           </p>
         </div>
       </CardContent>
