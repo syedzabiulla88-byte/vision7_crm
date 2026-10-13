@@ -63,15 +63,25 @@ const STAGE_FILTERS = [
   { value: "LOST", label: "Lost" },
 ];
 
-const SOURCE_FILTERS = [
-  { value: "ALL", label: "All sources" },
-  { value: "walkin", label: "Walk-in" },
-  { value: "website", label: "Website enquiry" },
-  { value: "referral", label: "Referral" },
-  { value: "social", label: "Social media" },
-  { value: "event", label: "Event" },
-  { value: "other", label: "Other" },
-];
+// Friendly labels for the canonical source slugs the API reports. The list of
+// options itself comes from /crm/sources — built from the values actually stored
+// — because a hardcoded list drifted away from them ("website" in the dropdown
+// vs "website-enquiry" in the column) and silently matched nothing.
+const SOURCE_LABELS: Record<string, string> = {
+  walkin: "Walk-in",
+  website: "Website enquiry",
+  referral: "Referral",
+  social: "Social media",
+  event: "Event",
+  email: "Inbound email",
+  app: "App consent",
+  import: "Imported",
+  other: "Other",
+};
+
+function sourceLabel(value: string): string {
+  return SOURCE_LABELS[value] || value.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 const SORT_OPTIONS = [
   { value: "newest", label: "Newest first" },
@@ -144,6 +154,7 @@ export default function CrmContactsPage() {
   const [type, setType] = useState("ALL");
   const [stage, setStage] = useState("ALL");
   const [source, setSource] = useState("ALL");
+  const [sourceOptions, setSourceOptions] = useState<{ value: string; count: number }[]>([]);
   const [sort, setSort] = useState("newest");
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState<{
@@ -151,6 +162,8 @@ export default function CrmContactsPage() {
     page: number;
     limit: number;
     totalPages: number;
+    /** Counts for the ACTIVE filters, so the stat cards match the table. */
+    counts?: { total: number; leads: number; customers: number; members: number };
   } | null>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -184,6 +197,28 @@ export default function CrmContactsPage() {
     const t = setTimeout(load, q ? 250 : 0);
     return () => clearTimeout(t);
   }, [load, q]);
+
+  // Source options are independent of the filters, so fetch them once.
+  useEffect(() => {
+    let cancelled = false;
+    api.crm
+      .sources()
+      .then((r) => !cancelled && setSourceOptions(r?.options ?? []))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Options come from the data, with the count shown so an empty result is
+  // obviously an empty source rather than a broken filter.
+  const sourceItems = useMemo(
+    () => [
+      { value: "ALL", label: "All sources" },
+      ...sourceOptions.map((o) => ({ value: o.value, label: `${sourceLabel(o.value)} (${o.count})` })),
+    ],
+    [sourceOptions],
+  );
 
   const hasFilters = useMemo(
     () => Boolean(q) || type !== "ALL" || stage !== "ALL" || source !== "ALL",
@@ -260,13 +295,36 @@ export default function CrmContactsPage() {
       />
 
       {overview && (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-          <StatCard label="Total" value={overview.total ?? "—"} hue="navy" />
-          <StatCard label="Leads" value={overview.leads ?? "—"} hue="amber" />
-          <StatCard label="Customers" value={overview.customers ?? "—"} hue="emerald" />
-          <StatCard label="Members" value={overview.members ?? "—"} hue="yellow" />
-          <StatCard label="With bookings" value={overview.withBookings ?? "—"} hue="navy" />
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+            <StatCard
+              label={hasFilters ? "Total (filtered)" : "Total"}
+              value={(hasFilters ? meta?.counts?.total : overview.total) ?? "—"}
+              hue="navy"
+            />
+            <StatCard
+              label={hasFilters ? "Leads (filtered)" : "Leads"}
+              value={(hasFilters ? meta?.counts?.leads : overview.leads) ?? "—"}
+              hue="amber"
+            />
+            <StatCard
+              label={hasFilters ? "Customers (filtered)" : "Customers"}
+              value={(hasFilters ? meta?.counts?.customers : overview.customers) ?? "—"}
+              hue="emerald"
+            />
+            <StatCard
+              label={hasFilters ? "Members (filtered)" : "Members"}
+              value={(hasFilters ? meta?.counts?.members : overview.members) ?? "—"}
+              hue="yellow"
+            />
+            <StatCard label="With bookings" value={overview.withBookings ?? "—"} hue="navy" />
+          </div>
+          {hasFilters && (
+            <p className="text-xs text-muted-foreground">
+              Counts reflect the active filters. &quot;With bookings&quot; stays across all contacts.
+            </p>
+          )}
+        </>
       )}
 
       <Card>
@@ -325,7 +383,7 @@ export default function CrmContactsPage() {
               </SelectContent>
             </Select>
             <Select
-              items={SOURCE_FILTERS}
+              items={sourceItems}
               value={source}
               onValueChange={(v) => {
                 setSource(v ?? "ALL");
@@ -336,7 +394,7 @@ export default function CrmContactsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {SOURCE_FILTERS.map((o) => (
+                {sourceItems.map((o) => (
                   <SelectItem key={o.value} value={o.value}>
                     {o.label}
                   </SelectItem>

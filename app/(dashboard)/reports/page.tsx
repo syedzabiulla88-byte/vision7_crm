@@ -48,6 +48,12 @@ const REPORTS = [
     icon: Chart,
   },
   {
+    href: "/reports/trainers",
+    title: "Trainers & Coaches",
+    body: "Per coach (Academy) and personal trainer (Leisure) — sessions delivered, session revenue and members assigned.",
+    icon: Chart,
+  },
+  {
     href: "/reports/followups",
     title: "Sales Follow-ups",
     body: "Per-rep follow-up load — assigned, completed, overdue, completion rate; run reminder digest.",
