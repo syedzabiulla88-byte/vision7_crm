@@ -133,6 +133,50 @@ type Params = Record<string, unknown>;
 
 // ─── Typed API namespaces (surface mirrors admin-api.js) ──────────────────────────
 
+
+// ─── Trainers & coaches report ────────────────────────────────────────────────
+export type TrainerSide = "ACADEMY" | "LEISURE";
+
+export interface TrainerReportRow {
+  trainerId: string;
+  trainerName: string;
+  side: TrainerSide;
+  sessionsDelivered: number;
+  sessionsCancelled: number;
+  sessionRevenue: number;
+  membersAssigned: number;
+  activeMembers: number;
+  sessionsAllocated: number;
+  sessionsRemaining: number;
+}
+
+export interface TrainerReportTotals {
+  trainers: number;
+  sessionsDelivered: number;
+  sessionsCancelled: number;
+  sessionRevenue: number;
+  membersAssigned: number;
+  activeMembers: number;
+  sessionsAllocated: number;
+  sessionsRemaining: number;
+}
+
+export interface TrainerReport {
+  from: string;
+  to: string;
+  rows: TrainerReportRow[];
+  academy: TrainerReportTotals;
+  leisure: TrainerReportTotals;
+  totals: TrainerReportTotals;
+}
+
+export interface CrmSourceOption {
+  value: string;
+  count: number;
+  stored: string[];
+}
+
+
 export const api = {
   auth: {
     login: (email: string, password: string) =>
@@ -348,6 +392,7 @@ export const api = {
     statements: (params?: Params) => apiFetch<any>(`/reports/statements${qs(params)}`),
     // Salesperson-wise sales — invoices / billed / collected per rep
     sales: (params?: Params) => apiFetch<any>(`/reports/sales${qs(params)}`),
+    trainers: (params?: Params) => apiFetch<TrainerReport>(`/reports/trainers${qs(params)}`),
     // §control-plane — cross-app KPI bundle for the dashboard / single pane of glass
     overview: () => apiFetch<any>(`/reports/overview`),
   },
@@ -408,6 +453,9 @@ export const api = {
   },
 
   crm: {
+    // Distinct sources actually stored, with counts — the filter dropdown is
+    // built from this so it can never drift from what the writers store.
+    sources: () => apiFetch<{ options: CrmSourceOption[]; unset: number }>(`/crm/sources`),
     overview: () => apiFetch<any>(`/crm/overview`),
     list: (params?: Params) => apiFetch<any>(`/crm/contacts${qs(params)}`),
     // Same shape as `list`, gated behind the separate `crm:export` permission.
