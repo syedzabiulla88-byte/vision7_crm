@@ -134,6 +134,30 @@ type Params = Record<string, unknown>;
 // ─── Typed API namespaces (surface mirrors admin-api.js) ──────────────────────────
 
 
+// ─── Sales by salesperson report ──────────────────────────────────────────────
+export interface SalesReportRow {
+  salesUserId?: string | null;
+  salesUserName: string;
+  invoices: number;
+  memberships: number;
+  billed: number;
+  collected: number;
+  outstanding: number;
+}
+
+export interface SalesReportTotals {
+  invoices: number;
+  memberships: number;
+  billed: number;
+  collected: number;
+  outstanding: number;
+}
+
+export interface SalesReport {
+  rows: SalesReportRow[];
+  totals: SalesReportTotals;
+}
+
 // ─── Trainers & coaches report ────────────────────────────────────────────────
 export type TrainerSide = "ACADEMY" | "LEISURE";
 
@@ -391,7 +415,7 @@ export const api = {
     // Per-customer AR aging / statements
     statements: (params?: Params) => apiFetch<any>(`/reports/statements${qs(params)}`),
     // Salesperson-wise sales — invoices / billed / collected per rep
-    sales: (params?: Params) => apiFetch<any>(`/reports/sales${qs(params)}`),
+    sales: (params?: Params) => apiFetch<SalesReport>(`/reports/sales${qs(params)}`),
     trainers: (params?: Params) => apiFetch<TrainerReport>(`/reports/trainers${qs(params)}`),
     // §control-plane — cross-app KPI bundle for the dashboard / single pane of glass
     overview: () => apiFetch<any>(`/reports/overview`),

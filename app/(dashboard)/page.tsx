@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SalesByRepCard } from "./_sales-by-rep-card";
 import {
   Users as UsersIcon,
   UsersMultiple,
@@ -327,6 +328,9 @@ export default function DashboardPage() {
               )}
             </div>
           )}
+
+          {/* Sales by salesperson — backed by /reports/sales, so gated on reports:view */}
+          {can("reports:view") && <SalesByRepCard />}
 
           {/* Quick links — only destinations the user is permitted to reach */}
           {jumpTargets.length > 0 && (
