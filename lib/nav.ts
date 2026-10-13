@@ -66,6 +66,7 @@ export const NAV: NavGroup[] = [
       { label: "Reports", href: "/reports", icon: "TrendUp", permission: "reports:view" },
       { label: "Billing report", href: "/reports/billing", icon: "FileText", permission: "reports:view" },
       { label: "Sales by salesperson", href: "/reports/sales", icon: "Award", permission: "reports:view" },
+      { label: "Trainers & Coaches", href: "/reports/trainers", icon: "UsersMultiple", permission: "reports:view" },
       { label: "Customers", href: "/reports/customers", icon: "Users", permission: "reports:view" },
       { label: "Bookings", href: "/reports/bookings", icon: "Calendar", permission: "reports:view" },
       { label: "Facilities", href: "/reports/facilities", icon: "MapPin", permission: "reports:view" },
