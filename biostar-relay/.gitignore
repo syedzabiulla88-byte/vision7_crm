@@ -1,0 +1,6 @@
+config.env
+certs/
+logs/
+*.pfx
+*.cer
+node_modules/

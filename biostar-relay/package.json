@@ -1,0 +1,14 @@
+{
+  "name": "vision7-biostar-relay",
+  "version": "2.0.0",
+  "private": true,
+  "description": "LAN gateway between the Vision7 CRM and BioStar 2. No dependencies.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test --test-force-exit --test-timeout=20000 test/relay.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
