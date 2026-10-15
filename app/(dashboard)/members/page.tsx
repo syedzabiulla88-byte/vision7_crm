@@ -2435,7 +2435,10 @@ function EditMembershipDialog({
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     planId: membership.planId || membership.plan?.id || "",
-    status: membership.status || "PENDING",
+    // The list shows an ended-but-still-ACTIVE membership as EXPIRED (a display
+    // override); edit from the real stored value so extending the end date to renew
+    // doesn't silently save EXPIRED.
+    status: membership.storedStatus || membership.status || "PENDING",
     startDate: toDateInput(membership.startDate),
     endDate: toDateInput(membership.endDate),
     autoRenew: !!membership.autoRenew,
