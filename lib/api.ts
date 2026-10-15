@@ -117,6 +117,10 @@ export interface DashboardOverview {
   memberships?: {
     byStatus: { status: string; count: number }[];
     active: number;
+    /** Past their end date (stored EXPIRED or ended-but-ACTIVE). Absent on older backends. */
+    expired?: number;
+    /** ACTIVE ending today through 15 days ahead. Absent on older backends. */
+    expiringNext15Days?: number;
     expiringNext30Days: number;
   };
   pipeline?: {
