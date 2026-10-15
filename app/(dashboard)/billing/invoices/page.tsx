@@ -257,6 +257,17 @@ export default function InvoicesPage() {
         all.map((inv) => {
           const total = Number(inv.total ?? inv.grandTotal) || 0;
           const paid = Number(inv.amountPaid ?? inv.paidAmount) || 0;
+          // Same instalment the list shows: the first one not yet covered by payments.
+          // Every row carries the three keys (blank when none) — toCsv takes its
+          // header row from the first record, so the key set must not vary.
+          const next = inv.nextInstalment;
+          const nextStatus = !next
+            ? ""
+            : next.overdue
+              ? `Overdue ${Math.abs(next.daysUntil)}d`
+              : next.daysUntil === 0
+                ? "Due today"
+                : `Due in ${next.daysUntil}d`;
           return {
             number: inv.number || inv.invoiceNumber || inv.id,
             status: inv.status || "",
@@ -265,6 +276,9 @@ export default function InvoicesPage() {
               `${inv.athlete?.firstName ?? ""} ${inv.athlete?.lastName ?? ""}`.trim(),
             issueDate: String(inv.issueDate || "").slice(0, 10),
             dueDate: String(inv.dueDate || "").slice(0, 10),
+            nextInstalmentDate: next ? String(next.dueDate || "").slice(0, 10) : "",
+            nextInstalmentAmount: next ? Number(next.amount) || 0 : "",
+            nextInstalmentStatus: nextStatus,
             subtotal: Number(inv.subtotal) || 0,
             vat: Number(inv.taxAmount ?? inv.tax) || 0,
             total,
