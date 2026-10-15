@@ -314,6 +314,46 @@ function statusVariant(status: unknown): "default" | "secondary" | "destructive"
   }
 }
 
+/** Memberships ending within this many days are highlighted in the members list. */
+const EXPIRY_WARN_DAYS = 15;
+
+/**
+ * Whole calendar days left on an ACTIVE membership that ends within the
+ * warning window (0 = today), or null when it isn't expiring soon. Pending,
+ * frozen, expired and cancelled memberships are never flagged: a frozen end
+ * date still moves on unfreeze, and the rest have nothing left to renew.
+ */
+function daysToExpiry(m: Membership | null | undefined): number | null {
+  if (!m || String(m.status || "").toUpperCase() !== "ACTIVE" || !m.endDate) return null;
+  const end = new Date(m.endDate as string);
+  if (Number.isNaN(end.getTime())) return null;
+  const left = differenceInCalendarDays(end, new Date());
+  return left >= 0 && left <= EXPIRY_WARN_DAYS ? left : null;
+}
+
+function expiryLabel(left: number): string {
+  return left === 0 ? "Today" : left === 1 ? "Tomorrow" : `in ${left} days`;
+}
+
+/** Expiry date; amber with a "in N days" chip when it falls in the warning window. */
+function ExpiryDate({ m }: { m: Membership | null | undefined }) {
+  if (!m) return <span className="text-muted-foreground">—</span>;
+  const left = daysToExpiry(m);
+  if (left === null) return <span>{formatDate(m.endDate)}</span>;
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <span className="font-medium text-amber-600 dark:text-amber-400">{formatDate(m.endDate)}</span>
+      <Badge
+        variant="outline"
+        className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        title={`Ends ${formatDate(m.endDate)}`}
+      >
+        Expires {expiryLabel(left)}
+      </Badge>
+    </div>
+  );
+}
+
 /** CRM classification badge — Member reads "active customer", everything else muted. */
 function contactTypeBadge(
   type: Person["contactType"],
@@ -717,6 +757,8 @@ export default function MembersPage() {
               <TableHead>Member</TableHead>
               <TableHead>Contact</TableHead>
               <TableHead>Plan / membership</TableHead>
+              <TableHead className="whitespace-nowrap">Start date</TableHead>
+              <TableHead className="whitespace-nowrap">Expires</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -724,13 +766,13 @@ export default function MembersPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
                   Loading members…
                 </TableCell>
               </TableRow>
             ) : error ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-32 text-center">
+                <TableCell colSpan={7} className="h-32 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <p className="text-destructive">{error}</p>
                     <Button variant="outline" size="sm" onClick={reload}>
@@ -741,7 +783,7 @@ export default function MembersPage() {
               </TableRow>
             ) : people.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-32 text-center">
+                <TableCell colSpan={7} className="h-32 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
                     <UsersMultiple className="h-8 w-8 opacity-40" />
                     <p>
@@ -765,9 +807,17 @@ export default function MembersPage() {
                 const typeBadge = contactTypeBadge(p.contactType);
                 const primaryFrozen =
                   String(primary?.status || "").toUpperCase() === "FROZEN";
+                // Soonest-ending ACTIVE membership inside the warning window. The
+                // row shows the primary membership's dates, so a non-primary one
+                // that is about to lapse is surfaced separately.
+                const soonest = memberships
+                  .map((m) => ({ m, left: daysToExpiry(m) }))
+                  .filter((x): x is { m: Membership; left: number } => x.left !== null)
+                  .sort((a, b) => a.left - b.left)[0];
+                const otherSoon = soonest && soonest.m.id !== primary?.id ? soonest : null;
                 return (
                   <Fragment key={p.key}>
-                    <TableRow>
+                    <TableRow className={soonest ? "bg-amber-500/5" : undefined}>
                       <TableCell>
                         <div className="flex items-center gap-3">
                           {expandable ? (
@@ -852,6 +902,17 @@ export default function MembersPage() {
                             )}
                             {primary && <FreezeSummary m={primary} onOpen={() => setFreezeHistory(primary)} />}
                           </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">
+                        {primary?.startDate ? formatDate(primary.startDate) : "—"}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">
+                        <ExpiryDate m={primary} />
+                        {otherSoon && (
+                          <p className="mt-1 max-w-[11rem] truncate text-xs text-amber-600 dark:text-amber-400">
+                            {otherSoon.m.plan?.name || "Another plan"} · expires {expiryLabel(otherSoon.left)}
+                          </p>
                         )}
                       </TableCell>
                       <TableCell>
@@ -969,15 +1030,18 @@ export default function MembersPage() {
                               <div className="flex flex-wrap items-center gap-2 pl-7">
                                 <span className="text-sm font-medium">{m.plan?.name || "—"}</span>
                                 <Badge variant={statusVariant(m.status)}>{m.status || "—"}</Badge>
-                                <span className="text-xs text-muted-foreground">
-                                  {formatDate(m.startDate)} – {formatDate(m.endDate)}
-                                </span>
                                 {m.trainerName && (
                                   <span className="text-xs text-muted-foreground">PT: {m.trainerName}</span>
                                 )}
                                 <SessionControl m={m} onAdjust={adjustSession} busy={sessionBusy === m.id} />
                                 <FreezeSummary m={m} onOpen={() => setFreezeHistory(m)} />
                               </div>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {formatDate(m.startDate)}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              <ExpiryDate m={m} />
                             </TableCell>
                             <TableCell className="text-muted-foreground">
                               {formatSAR(m.price ?? m.plan?.price)}
@@ -1041,7 +1105,7 @@ export default function MembersPage() {
                       <>
                         <TableRow className="bg-muted/30">
                           <TableCell />
-                          <TableCell colSpan={4}>
+                          <TableCell colSpan={6}>
                             <p className="pl-7 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               Covered by family package ({householdMembers.length})
                             </p>
@@ -1050,7 +1114,7 @@ export default function MembersPage() {
                         {householdMembers.map((hm, i) => (
                           <TableRow key={`${p.key}-hh-${i}`} className="bg-muted/30">
                             <TableCell />
-                            <TableCell colSpan={3}>
+                            <TableCell colSpan={5}>
                               <div className="flex flex-wrap items-center gap-2 pl-7">
                                 <span className="text-sm font-medium">{hm.name || "—"}</span>
                                 <span className="text-xs text-muted-foreground">
