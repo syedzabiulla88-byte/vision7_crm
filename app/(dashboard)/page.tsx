@@ -144,6 +144,57 @@ export default function DashboardPage() {
     );
   }
 
+  // Expiry cards link to the matching Members chip when the viewer can open it.
+  const membersLink = can(JUMP.memberships.perm);
+  const expiryCard = (key: string, status: "EXPIRING" | "EXPIRED", card: ReactNode) =>
+    membersLink ? (
+      <Link
+        key={key}
+        href={`/members?status=${status}`}
+        className="block rounded-xl transition hover:ring-1 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        {card}
+      </Link>
+    ) : (
+      <div key={key}>{card}</div>
+    );
+
+  if (can("dashboard:memberships") && memberships && typeof memberships.expiringNext15Days === "number") {
+    const soon = memberships.expiringNext15Days;
+    stats.push(
+      expiryCard(
+        "expiring-15",
+        "EXPIRING",
+        <StatCard
+          label="Expiring in 15 days"
+          value={num(soon)}
+          hint={soon > 0 ? "Active memberships ending soon — renew them" : "Nothing ending soon"}
+          hue={soon > 0 ? "amber" : "emerald"}
+          icon={<Calendar className="h-6 w-6" />}
+          className="h-full"
+        />,
+      ),
+    );
+  }
+
+  if (can("dashboard:memberships") && memberships && typeof memberships.expired === "number") {
+    const gone = memberships.expired;
+    stats.push(
+      expiryCard(
+        "expired",
+        "EXPIRED",
+        <StatCard
+          label="Expired memberships"
+          value={num(gone)}
+          hint="Past their end date · all time"
+          hue={gone > 0 ? "rose" : "emerald"}
+          icon={<Warning className="h-6 w-6" />}
+          className="h-full"
+        />,
+      ),
+    );
+  }
+
   if (can("dashboard:pipeline") && pipeline) {
     stats.push(
       <StatCard

@@ -409,10 +409,14 @@ export default function MembersPage() {
   const [initialLoaded, setInitialLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  // Deep links (e.g. the dashboard's expiry cards) pre-select a status chip via ?status=.
+  const searchParams = useSearchParams();
+  const urlStatus = (searchParams.get("status") || "").toUpperCase();
+  const initialStatus = (STATUS_LIST as readonly string[]).includes(urlStatus) ? urlStatus : "ALL";
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatus);
   const [typeFilter, setTypeFilter] = useState<"ALL" | "ACADEMY" | "LEISURE">("ALL");
   const [trainerFilter, setTrainerFilter] = useState<string>("");
-  const [sortFilter, setSortFilter] = useState<string>("newest");
+  const [sortFilter, setSortFilter] = useState<string>(initialStatus === "EXPIRING" ? "expiry" : "newest");
   const [coaches, setCoaches] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -432,7 +436,6 @@ export default function MembersPage() {
     id: string; firstName: string; lastName: string; name: string;
     email?: string | null; phone?: string | null; type?: string | null; linkedAthleteId?: string | null;
   } | null>(null);
-  const searchParams = useSearchParams();
   useEffect(() => {
     const cid = searchParams.get("assign");
     if (!cid) return;
