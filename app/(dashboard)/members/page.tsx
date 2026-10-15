@@ -100,13 +100,16 @@ import {
 
 // ─── Domain constants (ported from site/src/app/admin/members/page.js) ──────────
 
-const STATUS_LIST = ["ALL", "ACTIVE", "PENDING", "EXPIRED", "SUSPENDED", "FROZEN", "CANCELLED"] as const;
+// "EXPIRING" is a virtual filter, not a membership status: it asks the server for
+// ACTIVE memberships ending within EXPIRY_WARN_DAYS (see below).
+const STATUS_LIST = ["ALL", "ACTIVE", "EXPIRING", "PENDING", "EXPIRED", "SUSPENDED", "FROZEN", "CANCELLED"] as const;
 
 const SORT_OPTIONS = [
   { value: "default", label: "Default (active first)" },
   { value: "name", label: "Name (A–Z)" },
   { value: "newest", label: "Newest membership" },
   { value: "oldest", label: "Oldest membership" },
+  { value: "expiry", label: "Expiring soonest" },
 ];
 
 const PAGE_SIZE = 20;
@@ -501,7 +504,8 @@ export default function MembersPage() {
         const params: Record<string, unknown> = { page: pageArg, limit: PAGE_SIZE };
         const term = search.trim();
         if (term) params.search = term;
-        if (status !== "ALL") params.status = status;
+        if (status === "EXPIRING") params.expiringInDays = EXPIRY_WARN_DAYS;
+        else if (status !== "ALL") params.status = status;
         if (side !== "ALL") params.type = side;
         if (trainer) params.trainerId = trainer;
         if (sort !== "default") params.sort = sort;
@@ -724,12 +728,20 @@ export default function MembersPage() {
               key={s}
               size="sm"
               variant={statusFilter === s ? "default" : "outline"}
+              className={
+                s === "EXPIRING" && statusFilter !== s
+                  ? "border-amber-500/50 text-amber-700 dark:text-amber-300"
+                  : undefined
+              }
               onClick={() => {
                 setStatusFilter(s);
+                // A renewals worklist reads best soonest-first; undo that when leaving.
+                if (s === "EXPIRING") setSortFilter("expiry");
+                else if (sortFilter === "expiry") setSortFilter("newest");
                 setPage(1);
               }}
             >
-              {s}
+              {s === "EXPIRING" ? `Expiring in ${EXPIRY_WARN_DAYS} days` : s}
             </Button>
           ))}
         </div>
