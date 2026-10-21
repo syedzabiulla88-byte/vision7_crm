@@ -537,15 +537,17 @@ export default function MembersPage() {
     return () => clearTimeout(t);
   }, [query, page, statusFilter, typeFilter, trainerFilter, sortFilter, load]);
 
-  // Coach pool for the trainer filter — loaded once. Uses the low-privilege
-  // staff directory (not the admin-gated /users list) so any staff member can
-  // populate this filter, not just users:view holders.
+  // Trainer pool for the trainer filter — loaded once. Every active staff
+  // member, not just the Coach role: the club's trainers include gym trainers,
+  // physio, managers and reception, most of whom hold other roles. Uses the
+  // low-privilege staff directory (not the admin-gated /users list) so any staff
+  // member can populate this filter, not just users:view holders.
   useEffect(() => {
     api.users
       .directory()
       .then((res: any) => {
         const rows = Array.isArray(res) ? res : res?.data || [];
-        setCoaches(rows.filter((u: any) => u.role === "COACH"));
+        setCoaches(rows);
       })
       .catch(() => setCoaches([]));
   }, []);
@@ -4073,7 +4075,7 @@ function AssignMembershipDialog({
   // Email for the athlete login when the contact has none on file (saved onto
   // the contact before the athlete is provisioned).
   const [athleteEmail, setAthleteEmail] = useState("");
-  // Optional assigned PT trainer — picked from the COACH pool, sent as trainerId.
+  // Optional assigned PT trainer — any staff member, sent as trainerId.
   const [trainerId, setTrainerId] = useState("");
   const [coaches, setCoaches] = useState<any[]>([]);
   // Optional sales rep credited with the sale — any staff member, sent as
@@ -4106,7 +4108,8 @@ function AssignMembershipDialog({
       .then((res: any) => {
         const rows = Array.isArray(res) ? res : res?.data || [];
         setStaff(rows);
-        setCoaches(rows.filter((u: any) => u.role === "COACH"));
+        // Any staff member can be the assigned trainer (see the trainer filter above).
+        setCoaches(rows);
       })
       .catch(() => {
         setStaff([]);
@@ -4636,7 +4639,7 @@ function AssignMembershipDialog({
     label: `${p.name}${p.price != null ? ` — ${formatSAR(p.price)}` : ""}`,
   }));
 
-  // Coach pool as combobox options, with a blank "none" entry at the top.
+  // Trainer pool as combobox options (all staff), with a blank "none" entry at the top.
   const trainerOptions = [
     { value: "", label: "— none —" },
     ...coaches.map((c) => ({ value: c.id, label: c.name || c.email || "(unnamed)" })),
