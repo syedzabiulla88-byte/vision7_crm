@@ -428,6 +428,8 @@ export default function MembersPage() {
     page: number;
     limit: number;
     totalPages: number;
+    /** People per gender over everyone the other filters left (absent on an older backend). */
+    genderCounts?: { all: number; male: number; female: number; unset: number };
   } | null>(null);
   // Which multi-membership person rows are expanded (keyed by Person.key).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -698,7 +700,12 @@ export default function MembersPage() {
             { v: "FEMALE", label: "Female" },
             { v: "UNSET", label: "Not set" },
           ] as const
-        ).map((g) => (
+        ).map((g) => {
+          const counts = meta?.genderCounts;
+          const n = counts
+            ? { ALL: counts.all, MALE: counts.male, FEMALE: counts.female, UNSET: counts.unset }[g.v]
+            : undefined;
+          return (
           <Button
             key={g.v}
             size="sm"
@@ -711,8 +718,14 @@ export default function MembersPage() {
             title={g.v === "UNSET" ? "Members with no gender recorded yet" : undefined}
           >
             {g.label}
+            {n !== undefined && (
+              <span className="ml-1.5 tabular-nums opacity-70" data-testid={`gender-count-${g.v}`}>
+                {n}
+              </span>
+            )}
           </Button>
-        ))}
+          );
+        })}
         <div className="md:ml-auto md:w-56">
           <ComboField
             value={trainerFilter}
