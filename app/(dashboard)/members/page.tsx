@@ -415,6 +415,9 @@ export default function MembersPage() {
   const initialStatus = (STATUS_LIST as readonly string[]).includes(urlStatus) ? urlStatus : "ALL";
   const [statusFilter, setStatusFilter] = useState<string>(initialStatus);
   const [typeFilter, setTypeFilter] = useState<"ALL" | "ACADEMY" | "LEISURE">("ALL");
+  // UNSET = members whose gender was never recorded; kept as its own choice so
+  // they don't silently vanish from both Male and Female.
+  const [genderFilter, setGenderFilter] = useState<"ALL" | "MALE" | "FEMALE" | "UNSET">("ALL");
   const [trainerFilter, setTrainerFilter] = useState<string>("");
   const [sortFilter, setSortFilter] = useState<string>(initialStatus === "EXPIRING" ? "expiry" : "newest");
   const [coaches, setCoaches] = useState<any[]>([]);
@@ -500,6 +503,7 @@ export default function MembersPage() {
       side: "ALL" | "ACADEMY" | "LEISURE" = "ALL",
       trainer = "",
       sort = "default",
+      gender: "ALL" | "MALE" | "FEMALE" | "UNSET" = "ALL",
     ) => {
       setLoading(true);
       setError(null);
@@ -512,6 +516,7 @@ export default function MembersPage() {
         if (side !== "ALL") params.type = side;
         if (trainer) params.trainerId = trainer;
         if (sort !== "default") params.sort = sort;
+        if (gender !== "ALL") params.gender = gender;
         const result = await api.memberships.listGrouped(params);
         const rows: Person[] = Array.isArray(result) ? result : result?.data || [];
         setPeople(rows);
@@ -531,11 +536,11 @@ export default function MembersPage() {
   // status, side or trainer changes — all filtering happens server-side now.
   useEffect(() => {
     const t = setTimeout(
-      () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter),
+      () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter),
       300,
     );
     return () => clearTimeout(t);
-  }, [query, page, statusFilter, typeFilter, trainerFilter, sortFilter, load]);
+  }, [query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter, load]);
 
   // Trainer pool for the trainer filter — loaded once. Every active staff
   // member, not just the Coach role: the club's trainers include gym trainers,
@@ -555,8 +560,8 @@ export default function MembersPage() {
   // Re-query keeping the current filters + page so the list doesn't reset after
   // create / edit / freeze actions.
   const reload = useCallback(
-    () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter),
-    [load, query, page, statusFilter, typeFilter, trainerFilter, sortFilter],
+    () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter),
+    [load, query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter],
   );
 
   const memberLabel = (m: Membership) => displayName(m) || "this membership";
@@ -683,6 +688,29 @@ export default function MembersPage() {
             }}
           >
             {t.label}
+          </Button>
+        ))}
+        <span className="ml-3 mr-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Gender</span>
+        {(
+          [
+            { v: "ALL", label: "All" },
+            { v: "MALE", label: "Male" },
+            { v: "FEMALE", label: "Female" },
+            { v: "UNSET", label: "Not set" },
+          ] as const
+        ).map((g) => (
+          <Button
+            key={g.v}
+            size="sm"
+            variant={genderFilter === g.v ? "default" : "outline"}
+            onClick={() => {
+              setGenderFilter(g.v);
+              setPage(1);
+            }}
+            aria-pressed={genderFilter === g.v}
+            title={g.v === "UNSET" ? "Members with no gender recorded yet" : undefined}
+          >
+            {g.label}
           </Button>
         ))}
         <div className="md:ml-auto md:w-56">
@@ -1646,6 +1674,9 @@ function NewMemberDialog({
           phone: form.phone.trim() || undefined,
           type: "MEMBER",
           source: "admin",
+          // The form requires a gender; it used to be dropped here, leaving every
+          // new leisure member "UNSPECIFIED".
+          gender: form.gender || undefined,
           tags: ["leisure", ...form.interests],
           notes: form.notes.trim() || undefined,
           dob: form.dob ? new Date(form.dob).toISOString() : undefined,
