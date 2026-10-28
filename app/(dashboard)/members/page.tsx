@@ -9,6 +9,7 @@ import { api, uploadFile } from "@/lib/api";
 import { useAsync } from "@/components/hooks/use-async";
 import { provisionAthleteForContact } from "@/lib/athlete-provision";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/csv";
 import { idExpiryStatus, toDateInputValue } from "@/lib/id-expiry";
 import { GATEWAY_LABEL, payLinkGatewayFor } from "@/lib/pay-links";
 import { NATIONALITY_OPTIONS } from "@/lib/nationalities";
@@ -91,6 +92,7 @@ import {
   Copy,
   Trophy,
   RefreshCw,
+  Download,
 } from "@/lib/icons";
 import {
   InstallmentScheduleEditor,
@@ -190,6 +192,47 @@ function toDateInput(value: unknown): string {
 
 type Membership = any;
 
+/** Query for /memberships/grouped from the Members page's filters — shared by the list and the CSV export. */
+function groupedParams(f: {
+  page: number;
+  limit: number;
+  search: string;
+  status: string;
+  side: "ALL" | "ACADEMY" | "LEISURE";
+  trainer: string;
+  sort: string;
+  gender: "ALL" | "MALE" | "FEMALE" | "UNSET";
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = { page: f.page, limit: f.limit };
+  const term = f.search.trim();
+  if (term) params.search = term;
+  if (f.status === "EXPIRING") params.expiringInDays = EXPIRY_WARN_DAYS;
+  else if (f.status !== "ALL") params.status = f.status;
+  if (f.side !== "ALL") params.type = f.side;
+  if (f.trainer) params.trainerId = f.trainer;
+  if (f.sort !== "default") params.sort = f.sort;
+  if (f.gender !== "ALL") params.gender = f.gender;
+  return params;
+}
+
+function genderLabel(g: unknown): string {
+  switch (g) {
+    case "MALE":
+      return "Male";
+    case "FEMALE":
+      return "Female";
+    case "OTHER":
+      return "Other";
+    case "CONFLICT":
+      return "Conflicting records";
+    default:
+      return "Not set";
+  }
+}
+
+/** "2026-11-17" from an ISO timestamp; memberships store date-only values at UTC midnight. */
+const csvDate = (v: unknown) => (v ? String(v).slice(0, 10) : "");
+
 /**
  * A person row from api.memberships.listGrouped — one entry per human, with that
  * person's full membership objects nested under `memberships` (best-status-first).
@@ -197,6 +240,8 @@ type Membership = any;
 interface Person {
   key: string;
   name: string;
+  /** MALE | FEMALE | OTHER | CONFLICT (records disagree) | null (not recorded). */
+  gender?: string | null;
   email: string | null;
   phone: string | null;
   idNumber: string | null;
@@ -510,15 +555,7 @@ export default function MembersPage() {
       setLoading(true);
       setError(null);
       try {
-        const params: Record<string, unknown> = { page: pageArg, limit: PAGE_SIZE };
-        const term = search.trim();
-        if (term) params.search = term;
-        if (status === "EXPIRING") params.expiringInDays = EXPIRY_WARN_DAYS;
-        else if (status !== "ALL") params.status = status;
-        if (side !== "ALL") params.type = side;
-        if (trainer) params.trainerId = trainer;
-        if (sort !== "default") params.sort = sort;
-        if (gender !== "ALL") params.gender = gender;
+        const params = groupedParams({ page: pageArg, limit: PAGE_SIZE, search, status, side, trainer, sort, gender });
         const result = await api.memberships.listGrouped(params);
         const rows: Person[] = Array.isArray(result) ? result : result?.data || [];
         setPeople(rows);
@@ -646,6 +683,64 @@ export default function MembersPage() {
     }
   };
 
+  // Download EVERY membership matching the filters currently on screen (Side, status,
+  // search, trainer, gender), not just the visible page — one row per membership, with
+  // the person's details and gender repeated on each of their rows.
+  const [exporting, setExporting] = useState(false);
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const all: Person[] = [];
+      for (let pg = 1; pg <= 20; pg++) {
+        const result = await api.memberships.listGrouped(
+          groupedParams({
+            page: pg,
+            limit: 500,
+            search: query,
+            status: statusFilter,
+            side: typeFilter,
+            trainer: trainerFilter,
+            sort: sortFilter,
+            gender: genderFilter,
+          }),
+        );
+        const batch: Person[] = Array.isArray(result) ? result : result?.data || [];
+        all.push(...batch);
+        const totalPages = Array.isArray(result) ? 1 : Number(result?.meta?.totalPages) || 1;
+        if (pg >= totalPages || batch.length === 0) break;
+      }
+      const rows = all.flatMap((p) =>
+        (p.memberships?.length ? p.memberships : [null]).map((m: Membership | null) => ({
+          name: p.name || "",
+          phone: p.phone || "",
+          email: p.email || "",
+          gender: genderLabel(p.gender),
+          side: m ? (m.athleteId ? "Academy" : "Leisure") : "",
+          plan: m?.plan?.name || "",
+          status: m?.status || "",
+          startDate: csvDate(m?.startDate),
+          endDate: csvDate(m?.endDate),
+          trainer: m?.trainerName || "",
+        })),
+      );
+      if (!rows.length) {
+        toast.info("Nothing to export");
+        return;
+      }
+      const tag = [
+        typeFilter !== "ALL" ? typeFilter.toLowerCase() : "",
+        genderFilter !== "ALL" ? (genderFilter === "UNSET" ? "gender-not-set" : genderFilter.toLowerCase()) : "",
+        statusFilter !== "ALL" ? statusFilter.toLowerCase() : "",
+      ].filter(Boolean);
+      downloadCsv(`members${tag.length ? "-" + tag.join("-") : ""}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+      toast.success(`Exported ${rows.length} membership row${rows.length === 1 ? "" : "s"} for ${all.length} ${all.length === 1 ? "person" : "people"}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -654,6 +749,10 @@ export default function MembersPage() {
         onRefresh={reload}
         actions={
           <>
+            <Button variant="outline" onClick={handleExportCsv} disabled={exporting || loading}>
+              <Download />
+              {exporting ? "Exporting…" : "Export CSV"}
+            </Button>
             <PermissionGate permission="members:create">
               <Button variant="outline" onClick={() => setShowAddMember(true)}>
                 <Plus />
