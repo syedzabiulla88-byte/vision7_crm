@@ -262,6 +262,9 @@ export const api = {
     freeze: (id: string, data: { freezeDays: number; freezeStartDate?: string }) =>
       apiFetch<any>(`/memberships/${id}/freeze`, { method: "POST", body: JSON.stringify(data) }),
     unfreeze: (id: string) => apiFetch<any>(`/memberships/${id}/unfreeze`, { method: "POST" }),
+    // Correct a freeze's first / last frozen day (YYYY-MM-DD); the membership end date moves by the change in days.
+    editFreeze: (id: string, freezeId: string, data: { startDate: string; endDate: string }) =>
+      apiFetch<any>(`/memberships/${id}/freezes/${freezeId}`, { method: "PATCH", body: JSON.stringify(data) }),
     // Session packs: delta -1 = use a session, +1 = restore one.
     useSession: (id: string, delta = -1) =>
       apiFetch<any>(`/memberships/${id}/use-session`, { method: "POST", body: JSON.stringify({ delta }) }),

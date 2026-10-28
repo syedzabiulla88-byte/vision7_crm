@@ -1303,7 +1303,13 @@ export default function MembersPage() {
         <FreezeHistoryDialog
           membership={freezeHistory}
           memberName={memberLabel(freezeHistory)}
+          canEdit={canEdit}
           onClose={() => setFreezeHistory(null)}
+          onSaved={(updated) => {
+            // Keep the dialog open on the corrected membership and refresh the list behind it.
+            setFreezeHistory((prev: Membership | null) => (prev ? { ...prev, ...updated } : prev));
+            reload();
+          }}
         />
       )}
 
@@ -2891,16 +2897,70 @@ function FreezeSummary({ m, onOpen }: { m: Membership; onOpen: () => void }) {
   );
 }
 
+/** One row of a membership's freeze log, as returned by the API. */
+interface FreezeLogRow {
+  id: string;
+  startDate: string;
+  endDate: string;
+  days: number;
+  usedDays?: number | null;
+  refundedDays?: number | null;
+  endedAt?: string | null;
+  endDateBefore?: string | null;
+  endDateAfter?: string | null;
+  isLegacy?: boolean;
+}
+
 function FreezeHistoryDialog({
   membership,
   memberName,
+  canEdit,
   onClose,
+  onSaved,
 }: {
   membership: Membership;
   memberName: string;
+  canEdit: boolean;
   onClose: () => void;
+  onSaved: (updated: Membership) => void;
 }) {
-  const freezes: any[] = membership.freezes ?? [];
+  const freezes: FreezeLogRow[] = membership.freezes ?? [];
+  // One freeze at a time can be in "edit dates" mode.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = (f: FreezeLogRow) => {
+    setEditingId(f.id);
+    setFrom(toDateInput(f.startDate));
+    setTo(toDateInput(f.endDate));
+  };
+
+  /** What saving would do, for the live preview: days in the window, and the end-date change. */
+  const previewFor = (f: FreezeLogRow) => {
+    if (!from || !to) return null;
+    const days = differenceInCalendarDays(new Date(`${to}T00:00:00Z`), new Date(`${from}T00:00:00Z`)) + 1;
+    if (days < 1) return { days, invalid: true as const };
+    const kept = (Number(f.days) || 0) - (Number(f.refundedDays) || 0);
+    const delta = days - kept;
+    const end = membership.endDate ? addDays(new Date(membership.endDate as string), delta) : null;
+    return { days, delta, end, invalid: false as const };
+  };
+
+  const saveEdit = async (f: FreezeLogRow) => {
+    setSaving(true);
+    try {
+      const updated = await api.memberships.editFreeze(membership.id, f.id, { startDate: from, endDate: to });
+      toast.success("Freeze dates updated");
+      setEditingId(null);
+      onSaved(updated);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not update the freeze");
+    } finally {
+      setSaving(false);
+    }
+  };
   const maxFreezeDays: number | null = membership.plan?.maxFreezeDays ?? null;
   const used = Number(membership.freezeDays) || 0;
   return (
@@ -2944,8 +3004,77 @@ function FreezeHistoryDialog({
                   <span className="font-medium">
                     {formatDate(f.startDate)} → {formatDate(f.endDate)}
                   </span>
-                  <Badge variant={open ? "secondary" : "outline"}>{open ? "Frozen now" : "Ended"}</Badge>
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant={open ? "secondary" : "outline"}>{open ? "Frozen now" : "Ended"}</Badge>
+                    {canEdit && editingId !== f.id && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        onClick={() => startEdit(f)}
+                        title="Edit freeze dates"
+                        aria-label="Edit freeze dates"
+                      >
+                        <SquarePen />
+                      </Button>
+                    )}
+                  </div>
                 </div>
+                {editingId === f.id &&
+                  (() => {
+                    const pv = previewFor(f);
+                    return (
+                      <div className="mt-2 space-y-2 rounded-md bg-muted/40 p-2.5">
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="space-y-1 text-xs text-muted-foreground">
+                            First frozen day
+                            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                          </label>
+                          <label className="space-y-1 text-xs text-muted-foreground">
+                            Last frozen day
+                            <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+                          </label>
+                        </div>
+                        <p className="text-xs">
+                          {!pv ? (
+                            <span className="text-muted-foreground">Pick both dates.</span>
+                          ) : pv.invalid ? (
+                            <span className="text-destructive">The last day can&apos;t be before the first.</span>
+                          ) : (
+                            <>
+                              <span className="font-medium">
+                                {pv.days} day{pv.days === 1 ? "" : "s"}
+                              </span>
+                              {pv.delta !== 0 && pv.end ? (
+                                <span className="text-muted-foreground">
+                                  {" "}
+                                  · membership end date {formatDate(membership.endDate)} →{" "}
+                                  <span className="font-semibold text-foreground">{formatDate(pv.end)}</span> (
+                                  {pv.delta > 0 ? "+" : ""}
+                                  {pv.delta} day{Math.abs(pv.delta) === 1 ? "" : "s"})
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground"> · membership end date unchanged</span>
+                              )}
+                            </>
+                          )}
+                        </p>
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setEditingId(null)} disabled={saving}>
+                            Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => saveEdit(f)}
+                            disabled={saving || !pv || pv.invalid}
+                          >
+                            {saving ? "Saving…" : "Save dates"}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 <p className="mt-1 text-xs text-muted-foreground">
                   {open
                     ? `${f.days} day${f.days === 1 ? "" : "s"} credited`
