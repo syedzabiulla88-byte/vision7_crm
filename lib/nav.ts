@@ -61,6 +61,10 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    label: "Marketing",
+    items: [{ label: "Blog & SEO", href: "/blog", icon: "FileText", permission: "blogs:view" }],
+  },
+  {
     label: "Insights",
     items: [
       { label: "Reports", href: "/reports", icon: "TrendUp", permission: "reports:view" },

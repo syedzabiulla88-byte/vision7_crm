@@ -25,13 +25,14 @@ export const BUSINESS_PERMISSIONS = [
   "audit:view",
   "apps:view",
   "accesscontrol:view",
+  "blogs:view",
 ] as const;
 
 /** Write actions on `mod` that imply `mod:view` (mirrors the backend shim). */
 function writeActions(mod: string): string[] {
   return [
     `${mod}:create`, `${mod}:edit`, `${mod}:delete`, `${mod}:manage`, `${mod}:allocate`,
-    `${mod}:edit_number`, `${mod}:edit_instalment_plan`,
+    `${mod}:edit_number`, `${mod}:edit_instalment_plan`, `${mod}:publish`, `${mod}:assign`,
   ];
 }
 
@@ -49,7 +50,7 @@ const EDIT_IMPLIES: Record<string, string[]> = {
  *   - a `mod:manage` grant satisfies `mod:create` / `mod:edit` / `mod:delete` / `mod:view`;
  *   - a `mod:edit` grant also satisfies that module's EDIT_IMPLIES actions
  *     (e.g. `invoices:edit` satisfies `invoices:edit_number`);
- *   - any write grant (create/edit/delete/manage/allocate) on a module implies `mod:view`.
+ *   - any write grant (create/edit/delete/manage/allocate/publish/assign) on a module implies `mod:view`.
  */
 export function hasPermission(granted: string[] | undefined | null, key?: string | null): boolean {
   if (!key) return true; // ungated

@@ -43,7 +43,7 @@ import {
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
-type PermAction = "view" | "create" | "edit" | "delete" | "manage" | "use" | "allocate" | "revenue";
+type PermAction = "view" | "create" | "edit" | "delete" | "manage" | "use" | "allocate" | "revenue" | "publish" | "assign";
 
 interface Permission {
   key: string;
@@ -56,7 +56,7 @@ interface Permission {
 // Column order for the matrix. The four CRUD actions get fixed leading columns;
 // any module-specific extras (manage/use/allocate) follow, in this order.
 const PRIMARY_ACTIONS: PermAction[] = ["view", "create", "edit", "delete"];
-const EXTRA_ACTIONS: PermAction[] = ["manage", "use", "allocate", "revenue"];
+const EXTRA_ACTIONS: PermAction[] = ["manage", "use", "allocate", "revenue", "publish", "assign"];
 const ACTION_LABEL: Record<PermAction, string> = {
   view: "View",
   create: "Create",
@@ -66,6 +66,8 @@ const ACTION_LABEL: Record<PermAction, string> = {
   use: "Use",
   allocate: "Allocate",
   revenue: "Revenue",
+  publish: "Publish",
+  assign: "Assign",
 };
 
 // The 'dashboard' module is rendered as its own "Dashboard cards" panel rather
