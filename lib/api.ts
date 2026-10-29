@@ -205,6 +205,86 @@ export interface CrmSourceOption {
 }
 
 
+// ─── Blog & SEO ──────────────────────────────────────────────────────────────
+
+export type BlogStatus = "DRAFT" | "IN_REVIEW" | "SCHEDULED" | "PUBLISHED" | "ARCHIVED";
+
+export interface BlogRow {
+  id: string;
+  title: string;
+  slug: string;
+  language: "en" | "ar";
+  status: BlogStatus;
+  excerpt: string | null;
+  category: string | null;
+  tags: string[];
+  coverImageUrl: string | null;
+  wordCount: number;
+  readingMinutes: number;
+  authorId: string | null;
+  authorName: string | null;
+  assignedToId: string | null;
+  assignedTo: { id: string; name: string | null } | null;
+  scheduledAt: string | null;
+  publishedAt: string | null;
+  updatedAt: string;
+  createdAt: string;
+  reviewNote: string | null;
+  metaDescription: string | null;
+  focusKeyword: string | null;
+}
+
+export interface BlogPost extends BlogRow {
+  seoTitle: string | null;
+  canonicalUrl: string | null;
+  ogImageUrl: string | null;
+  coverImageAlt: string | null;
+  noindex: boolean;
+  translationOfId: string | null;
+  previousSlugs: string[];
+  contentJson: unknown;
+  access: {
+    canEdit: boolean;
+    editBlockedReason: string | null;
+    canSubmit: boolean;
+    canPublish: boolean;
+    canAssign: boolean;
+    canDelete: boolean;
+  };
+}
+
+/** Fields the editor sends; any subset is valid on update. */
+export interface BlogInput {
+  title?: string;
+  slug?: string;
+  language?: "en" | "ar";
+  excerpt?: string | null;
+  metaDescription?: string | null;
+  seoTitle?: string | null;
+  focusKeyword?: string | null;
+  canonicalUrl?: string | null;
+  ogImageUrl?: string | null;
+  coverImageUrl?: string | null;
+  coverImageAlt?: string | null;
+  category?: string | null;
+  tags?: string[];
+  noindex?: boolean;
+  translationOfId?: string | null;
+  contentJson?: unknown;
+  assignedToId?: string | null;
+}
+
+export interface BlogList {
+  data: BlogRow[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    counts: Record<BlogStatus, number>;
+  };
+}
+
 export const api = {
   auth: {
     login: (email: string, password: string) =>
@@ -456,6 +536,21 @@ export const api = {
     deleteSlot: (id: string) => apiFetch<any>(`/tours/slots/${id}`, { method: "DELETE" }),
     getConfig: () => apiFetch<any>(`/tours/config`),
     updateConfig: (data: any) => apiFetch<any>(`/tours/config`, { method: "PATCH", body: JSON.stringify(data) }),
+  },
+
+  blog: {
+    list: (params?: Params) => apiFetch<BlogList>(`/blog/posts${qs(params)}`),
+    meta: () => apiFetch<{ categories: string[] }>(`/blog/posts/meta`),
+    get: (id: string) => apiFetch<BlogPost>(`/blog/posts/${id}`),
+    create: (data: BlogInput) =>
+      apiFetch<BlogRow>(`/blog/posts`, { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: BlogInput) =>
+      apiFetch<BlogRow>(`/blog/posts/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    setStatus: (id: string, data: { status: BlogStatus; scheduledAt?: string | null; reviewNote?: string | null }) =>
+      apiFetch<BlogRow>(`/blog/posts/${id}/status`, { method: "POST", body: JSON.stringify(data) }),
+    assign: (id: string, assignedToId: string | null) =>
+      apiFetch<BlogRow>(`/blog/posts/${id}/assign`, { method: "POST", body: JSON.stringify({ assignedToId }) }),
+    remove: (id: string) => apiFetch<{ message: string }>(`/blog/posts/${id}`, { method: "DELETE" }),
   },
 
   uploads: {

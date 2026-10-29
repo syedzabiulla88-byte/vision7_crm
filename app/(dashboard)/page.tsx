@@ -2,10 +2,12 @@
 
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { api, type DashboardOverview } from "@/lib/api";
 import { useAuth } from "@/components/providers/auth-provider";
 import { usePermissions } from "@/components/hooks/use-permissions";
+import { navForPermissions } from "@/lib/nav";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
@@ -70,13 +72,25 @@ const JUMP: Record<string, JumpTarget> = {
 export default function DashboardPage() {
   const { user } = useAuth();
   const { can } = usePermissions();
+  const router = useRouter();
   const firstName = user?.name?.split(" ")[0] || "there";
+
+  // A role without dashboard access (e.g. a content writer) lands on its first
+  // permitted page instead of an empty dashboard that can only show a 403.
+  const canDashboard = can("dashboard:view");
+  const landing = canDashboard
+    ? null
+    : (navForPermissions(user?.permissions).flatMap((g) => g.items)[0]?.href ?? null);
+  useEffect(() => {
+    if (landing && landing !== "/") router.replace(landing);
+  }, [landing, router]);
 
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (landing) return; // redirecting away — nothing to load
     setLoading(true);
     setError(null);
     try {
@@ -87,7 +101,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [landing]);
 
   useEffect(() => {
     load();

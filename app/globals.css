@@ -135,3 +135,23 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ── Blog editor content (TipTap) ─────────────────────────────────────────── */
+.blog-editor-content { font-size: 0.95rem; line-height: 1.75; }
+.blog-editor-content > * + * { margin-top: 0.85em; }
+.blog-editor-content h2 { font-size: 1.5rem; font-weight: 600; line-height: 1.3; margin-top: 1.4em; }
+.blog-editor-content h3 { font-size: 1.25rem; font-weight: 600; line-height: 1.35; margin-top: 1.2em; }
+.blog-editor-content h4 { font-size: 1.05rem; font-weight: 600; margin-top: 1.1em; }
+.blog-editor-content ul { list-style: disc; padding-inline-start: 1.5rem; }
+.blog-editor-content ol { list-style: decimal; padding-inline-start: 1.5rem; }
+.blog-editor-content blockquote { border-inline-start: 3px solid var(--border); padding-inline-start: 1rem; color: var(--muted-foreground); }
+.blog-editor-content a { color: var(--primary); text-decoration: underline; cursor: pointer; }
+.blog-editor-content code { background: var(--muted); border-radius: 4px; padding: 0.1em 0.35em; font-size: 0.88em; }
+.blog-editor-content pre { background: var(--muted); border-radius: 6px; padding: 0.75rem 1rem; overflow-x: auto; }
+.blog-editor-content pre code { background: none; padding: 0; }
+.blog-editor-content hr { border: 0; border-top: 1px solid var(--border); margin: 1.5em 0; }
+.blog-editor-content img { max-width: 100%; height: auto; border-radius: 6px; }
+.blog-editor-content img.ProseMirror-selectednode { outline: 2px solid var(--ring); }
+.blog-editor-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder); color: var(--muted-foreground); float: inline-start; height: 0; pointer-events: none;
+}
