@@ -24,6 +24,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Settings, Save, Eye, Warning, DoorOpen, Wifi, WifiOff, RefreshCw, Download, CreditCard } from "@/lib/icons";
 import { relayHealth, type RelayHealth } from "@/lib/biostar-relay";
+import { chooseRelay, parseRelayUrls } from "@/lib/relay-urls";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -419,21 +420,37 @@ function SettingField({ meta, value, onChange, disabled }: SettingFieldProps) {
 function BiostarRelayCard({ relayUrl }: { relayUrl: string }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<RelayHealth | null>(null);
+  // Every listed relay and how it answered, plus the one the CRM would use.
+  const [rows, setRows] = useState<Array<{ url: string; health: RelayHealth }>>([]);
+  const [using, setUsing] = useState("");
 
-  const url = (relayUrl || "").trim();
+  // The setting may list several relays (comma separated); the CRM uses the first that answers.
+  const urls = parseRelayUrls(relayUrl);
+  const url = urls[0] ?? "";
 
   async function test() {
-    if (!url) {
+    if (urls.length === 0) {
       toast.error("Set the BioStar Relay URL above first, then save and test.");
       return;
     }
     setTesting(true);
     setResult(null);
+    setRows([]);
+    setUsing("");
     try {
-      const health = await relayHealth(url);
-      setResult(health);
-      if (health.ok) toast.success("Relay is online");
-      else toast.error(health.error || "Relay did not respond");
+      const choice = await chooseRelay(
+        urls,
+        (u) => relayHealth(u, 4000),
+        (error): RelayHealth => ({ ok: false, reachable: false, error }),
+      );
+      setResult(choice.health);
+      setRows(choice.results);
+      setUsing(choice.url);
+      if (choice.health?.ok) {
+        toast.success(urls.length > 1 ? `Relay is online — using ${choice.url}` : "Relay is online");
+      } else {
+        toast.error(choice.health?.error || "Relay did not respond");
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Relay unreachable";
       setResult({ ok: false, reachable: false, error: msg });
@@ -455,7 +472,10 @@ function BiostarRelayCard({ relayUrl }: { relayUrl: string }) {
           (CORS + self-signed cert solved there). Set its URL above in{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-[11px]">integrations.biostar.relay_url</code>{" "}
           (e.g. <code className="rounded bg-muted px-1 py-0.5 text-[11px]">https://192.168.1.50:8443</code>),
-          save, then test the connection here.
+          save, then test the connection here. To use several relays, list them separated by commas, e.g.{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-[11px]">https://localhost:8444, https://10.1.101.244:8444</code>
+          : each PC uses the first one that answers, so a PC with its own relay uses it and any other PC falls back
+          to the shared one.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -499,9 +519,40 @@ function BiostarRelayCard({ relayUrl }: { relayUrl: string }) {
           <p className="text-xs text-muted-foreground">BioStar: {result.biostar}</p>
         )}
 
+        {rows.length > 1 && (
+          <div className="space-y-1.5 rounded-md border p-3" aria-label="Relay results">
+            <p className="text-xs font-medium">This PC tried each relay, in order:</p>
+            {rows.map((r) => (
+              <div key={r.url} className="flex flex-wrap items-center gap-2 text-xs">
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "gap-1",
+                    r.health.ok
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "border-destructive/30 bg-destructive/10 text-destructive",
+                  )}
+                >
+                  {r.health.ok ? "Online" : "Offline"}
+                </Badge>
+                <code className="rounded bg-muted px-1 py-0.5 text-[11px]">{r.url}</code>
+                {r.url === using && <span className="text-muted-foreground">in use</span>}
+                {!r.health.ok && r.health.error && (
+                  <span className="text-muted-foreground">{r.health.error.split(". Trust")[0]}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         <p className="text-xs text-muted-foreground">
-          Tip: trust the relay&apos;s certificate once per browser — open{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-[11px]">{url || "https://<relay-ip>:8443"}/relay/health</code>{" "}
+          Tip: trust each relay&apos;s certificate once per browser — open{" "}
+          {(urls.length > 0 ? urls : ["https://<relay-ip>:8443"]).map((u, i) => (
+            <span key={u}>
+              {i > 0 && " and "}
+              <code className="rounded bg-muted px-1 py-0.5 text-[11px]">{u}/relay/health</code>
+            </span>
+          ))}{" "}
           and accept the warning. After that, the CRM&apos;s calls to the relay work.
         </p>
 
