@@ -38,6 +38,7 @@ import {
   type StepResult,
   type BiostarRelay,
 } from "@/lib/biostar-relay";
+import { accessBlockReason } from "@/lib/access-gate";
 import QRCode from "qrcode";
 import {
   Card,
@@ -266,6 +267,14 @@ function AccessControlInner() {
     if (selected) loadDetail(selected);
   }, [selected, loadDetail]);
 
+  // A member with no valid membership (expired, pending, none) can't be given a card or door access.
+  // Staff accounts have no memberships and are never blocked. Revoking stays allowed.
+  const blockReason = selected
+    ? detailLoading
+      ? accessBlockReason(selected.subjectKind, null)
+      : accessBlockReason(selected.subjectKind, detail)
+    : null;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -302,8 +311,11 @@ function AccessControlInner() {
                 selected={selected}
                 canManage={canManage}
                 relay={relay}
+                blockReason={blockReason}
               />
-              {canManage && <BiostarPanel selected={selected} detail={detail} relay={relay} />}
+              {canManage && (
+                <BiostarPanel selected={selected} detail={detail} relay={relay} blockReason={blockReason} />
+              )}
             </>
           )}
         </div>
@@ -609,11 +621,14 @@ function CardsPanel({
   selected,
   canManage,
   relay,
+  blockReason,
 }: {
   detail: MemberDetail | null;
   selected: MemberPick;
   canManage: boolean;
   relay: BiostarRelay;
+  /** Why new access can't be granted (no valid membership), or null. Revoking is still allowed. */
+  blockReason: string | null;
 }) {
   const { relayUrl, online } = relay;
   const userId = stableUserId(selected.subjectKind, selected.subjectId);
@@ -702,11 +717,22 @@ function CardsPanel({
           </div>
           {canManage && canTalkToBiostar && (
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => setFaceAssignOpen(true)}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setFaceAssignOpen(true)}
+                disabled={!!blockReason}
+                title={blockReason ?? undefined}
+              >
                 <ScanLine className="h-4 w-4" />
                 Scan Face
               </Button>
-              <Button size="sm" onClick={() => setAssignOpen(true)}>
+              <Button
+                size="sm"
+                onClick={() => setAssignOpen(true)}
+                disabled={!!blockReason}
+                title={blockReason ?? undefined}
+              >
                 <CreditCard className="h-4 w-4" />
                 Assign card
               </Button>
@@ -715,6 +741,15 @@ function CardsPanel({
         </div>
       </CardHeader>
       <CardContent>
+        {canManage && blockReason && (
+          <div
+            role="alert"
+            className="mb-3 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          >
+            <CircleX className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{blockReason} Existing cards can still be revoked.</span>
+          </div>
+        )}
         {relayUrl === null ? (
           <div className="space-y-2">
             <Skeleton className="h-12 w-full" />
@@ -1232,10 +1267,13 @@ function BiostarPanel({
   selected,
   detail,
   relay,
+  blockReason,
 }: {
   selected: MemberPick;
   detail: MemberDetail | null;
   relay: BiostarRelay;
+  /** Why new access can't be granted (no valid membership), or null. */
+  blockReason: string | null;
 }) {
   const { relayUrl, health, checking, recheck } = relay;
   const [assignOpen, setAssignOpen] = useState(false);
@@ -1250,7 +1288,7 @@ function BiostarPanel({
   const [qrResult, setQrResult] = useState<{ dataUrl: string; cardId: string } | null>(null);
   const [qrError, setQrError] = useState<string | null>(null);
   const issueQrNow = async () => {
-    if (!relayUrl) return;
+    if (!relayUrl || blockReason) return;
     setQrIssuing(true);
     setQrError(null);
     setQrResult(null);
@@ -1355,7 +1393,8 @@ function BiostarPanel({
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => setAssignOpen(true)}
-                disabled={!configured || !health?.ok}
+                disabled={!configured || !health?.ok || !!blockReason}
+                title={blockReason ?? undefined}
               >
                 <DoorOpen className="h-4 w-4" />
                 Set door access
@@ -1363,12 +1402,14 @@ function BiostarPanel({
               <Button
                 variant="outline"
                 onClick={issueQrNow}
-                disabled={!configured || !health?.ok || qrIssuing}
+                disabled={!configured || !health?.ok || qrIssuing || !!blockReason}
+                title={blockReason ?? undefined}
               >
                 {qrIssuing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <DoorOpen className="h-4 w-4" />}
                 Issue QR credential
               </Button>
             </div>
+            {blockReason && <p className="text-xs text-destructive">{blockReason}</p>}
             {health && !health.ok && health.error && (
               <p className="text-xs text-destructive">{health.error}</p>
             )}
