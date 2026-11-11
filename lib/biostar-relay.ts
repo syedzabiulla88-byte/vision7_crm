@@ -12,9 +12,12 @@
 //
 // Responses from `${relayUrl}/api/*` are RAW BioStar JSON (NOT the NestJS envelope).
 // The relay URL is admin-configured via the settings key `integrations.biostar.relay_url`.
+// It may list several relays separated by commas; the CRM uses the first one that answers
+// (see lib/relay-urls.ts), so a PC with its own relay uses it and the others use a shared one.
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { chooseRelay, parseRelayUrls } from "@/lib/relay-urls";
 
 // ─── Stable BioStar user id ────────────────────────────────────────────────────────
 
@@ -34,30 +37,41 @@ export function stableUserId(subjectKind: string, subjectId: string): string {
 
 // ─── Shared relay connection hook ──────────────────────────────────────────────────
 //
-// Reads the configured relay URL once and probes its health, exposing `online`
-// (health.ok) + a `recheck()`. Shared by the Card Access page and the Assign
+// Reads the configured relay address(es) once and probes them all, exposing `online`
+// (the chosen relay's health.ok) + a `recheck()`. When several relays are listed, `relayUrl`
+// is the first one that answers. Shared by the Card Access page and the Assign
 // Membership dialog's QR-issuance flow so both read the same connection state.
 
 export interface BiostarRelay {
-  /** null = still loading; "" = not configured. */
+  /** The relay in use. null = still loading; "" = not configured. */
   relayUrl: string | null;
   health: RelayHealth | null;
   checking: boolean;
   online: boolean;
+  /** Every configured relay and how it answered (empty until probed). */
+  candidates: Array<{ url: string; health: RelayHealth }>;
   recheck: () => void;
 }
 
+/** Long enough for a slow LAN, short enough that an off relay never stalls the page. */
+const PROBE_TIMEOUT_MS = 3500;
+
+const failedHealth = (error: string): RelayHealth => ({ ok: false, reachable: false, error });
+
 export function useBiostarRelay(): BiostarRelay {
+  const [urls, setUrls] = useState<string[] | null>(null); // null = loading
   const [relayUrl, setRelayUrl] = useState<string | null>(null); // null = loading
   const [health, setHealth] = useState<RelayHealth | null>(null);
+  const [candidates, setCandidates] = useState<BiostarRelay["candidates"]>([]);
   const [checking, setChecking] = useState(false);
 
-  const checkHealth = useCallback(async (url: string) => {
+  const probe = useCallback(async (list: string[]) => {
     setChecking(true);
     try {
-      setHealth(await relayHealth(url));
-    } catch {
-      setHealth({ ok: false, reachable: false, error: "Relay unreachable" });
+      const choice = await chooseRelay(list, (u) => relayHealth(u, PROBE_TIMEOUT_MS), failedHealth);
+      setRelayUrl(choice.url);
+      setHealth(choice.health);
+      setCandidates(choice.results);
     } finally {
       setChecking(false);
     }
@@ -66,39 +80,44 @@ export function useBiostarRelay(): BiostarRelay {
   useEffect(() => {
     let active = true;
     (async () => {
-      const url = await getRelayUrl();
+      const list = await getRelayUrls();
       if (!active) return;
-      setRelayUrl(url);
-      if (url) checkHealth(url);
+      setUrls(list);
+      if (list.length === 0) {
+        setRelayUrl("");
+        return;
+      }
+      await probe(list);
     })();
     return () => {
       active = false;
     };
-  }, [checkHealth]);
+  }, [probe]);
 
   const recheck = useCallback(() => {
-    if (relayUrl) checkHealth(relayUrl);
-  }, [relayUrl, checkHealth]);
+    if (urls && urls.length > 0) probe(urls);
+  }, [urls, probe]);
 
-  return { relayUrl, health, checking, online: Boolean(health?.ok), recheck };
+  return { relayUrl, health, checking, online: Boolean(health?.ok), candidates, recheck };
 }
 
 // ─── Relay URL (from app settings) ────────────────────────────────────────────────
 
 /**
- * Read the configured relay URL via the scoped `/settings/relay-url` endpoint.
+ * Read the configured relay address(es) via the scoped `/settings/relay-url` endpoint.
  * The old approach fetched the FULL settings list, which needs settings:manage:
  * no operator role has that, so staff silently got "" here and card access did
  * nothing for them (plus a 403 in the backend log on every visit). The scoped
- * endpoint is open to any signed-in staff member. Returns "" when unset; the
- * trailing slash is trimmed so callers can safely append `/api/...`.
+ * endpoint is open to any signed-in staff member. The setting may list several
+ * relays separated by commas; returns them cleaned (see parseRelayUrls), or []
+ * when unset.
  */
-export async function getRelayUrl(): Promise<string> {
+export async function getRelayUrls(): Promise<string[]> {
   try {
     const { url } = await api.settings.relayUrl();
-    return (url || "").trim().replace(/\/+$/, "");
+    return parseRelayUrls(url);
   } catch {
-    return "";
+    return [];
   }
 }
 
@@ -180,12 +199,14 @@ export interface RelayHealth {
   error?: string;
 }
 
-/** GET `${relayUrl}/relay/health` — used by the Settings "Test connection" button. */
-export async function relayHealth(relayUrl: string): Promise<RelayHealth> {
+/** GET `${relayUrl}/relay/health` — used by the Settings "Test connection" button and the connection probe. */
+export async function relayHealth(relayUrl: string, timeoutMs = 8000): Promise<RelayHealth> {
   const base = (relayUrl || "").trim().replace(/\/+$/, "");
   if (!base) return { ok: false, reachable: false, error: "No relay URL configured" };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${base}/relay/health`, { method: "GET" });
+    const res = await fetch(`${base}/relay/health`, { method: "GET", signal: ctrl.signal });
     if (!res.ok) return { ok: false, reachable: false, error: `Relay returned ${res.status}` };
     const json = (await res.json()) as { ok?: boolean; reachable?: boolean; biostar?: string };
     return {
@@ -194,6 +215,9 @@ export async function relayHealth(relayUrl: string): Promise<RelayHealth> {
       biostar: json?.biostar,
     };
   } catch (err) {
+    if (ctrl.signal.aborted) {
+      return { ok: false, reachable: false, error: `No answer from ${base} (timed out)` };
+    }
     return {
       ok: false,
       reachable: false,
@@ -202,6 +226,8 @@ export async function relayHealth(relayUrl: string): Promise<RelayHealth> {
           ? `${err.message}. Trust the relay's certificate once per browser (open ${base}/relay/health), then retry.`
           : "Relay unreachable",
     };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
