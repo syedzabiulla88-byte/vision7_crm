@@ -38,7 +38,8 @@ import {
   type StepResult,
   type BiostarRelay,
 } from "@/lib/biostar-relay";
-import { accessBlockReason } from "@/lib/access-gate";
+import { accessBlockReason, membershipIsValid } from "@/lib/access-gate";
+import { planDoorSync } from "@/lib/door-sync";
 import QRCode from "qrcode";
 import {
   Card,
@@ -1162,14 +1163,14 @@ function CardsAssignDialog({
 // accesscontrol:manage (the caller already checks; the panel guards again on render).
 
 /**
- * Auto-sync a subject's BioStar access groups to exactly what their current
- * membership(s) grant, whenever staff have this member open and the relay is
- * online — no manual "Set door access" click needed. Runs once per distinct
- * (userId, desired-groups) pair so re-renders don't re-trigger it.
+ * Keep a subject's BioStar door groups in step with their membership, whenever staff have this member
+ * open and the relay is online — no manual "Set door access" click needed. Runs once per distinct
+ * (user, validity, groups the plan grants) so re-renders don't re-trigger it.
  *
- * Deliberately narrow: only touches access_groups (never cards), and skips
- * entirely when the subject has no BioStar presence AND nothing to grant —
- * no point creating an empty user just to represent zero access.
+ * GRANT-ONLY while the membership is valid (see lib/door-sync.ts): it adds the plan's missing groups and
+ * never removes any, so opening a member can't silently cut their access. If the plan grants no door
+ * groups at all it changes nothing and says so ("unconfigured"). Only a membership that is NOT valid
+ * (expired, pending, none) has its door groups removed. Staff (USER) are never touched.
  */
 function useAutoSyncDoorAccess(
   relayUrl: string | null,
@@ -1177,23 +1178,29 @@ function useAutoSyncDoorAccess(
   selected: MemberPick,
   detail: MemberDetail | null,
 ) {
-  const [status, setStatus] = useState<"idle" | "syncing" | "synced" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "syncing" | "synced" | "unconfigured" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  /** True when they hold door groups beyond what the plan grants (kept as-is). */
+  const [hasExtras, setHasExtras] = useState(false);
   const lastSyncKey = useRef<string | null>(null);
 
   const userId = stableUserId(selected.subjectKind, selected.subjectId);
   const desired = Array.from(new Set(detail?.membership?.grantedDoorIds || [])).sort();
+  const valid = membershipIsValid(detail?.membership);
   const validUntil = detail?.membership?.validUntil ?? undefined;
+  // Without this, an expired member with no end date and no plan doors has identical trigger values
+  // before and after their details load, so the sync would never run for them.
+  const hasMembership = Boolean(detail?.membership);
 
   useEffect(() => {
     // Staff (USER) accounts have no memberships at all — their door access is
-    // set manually per job role, not derived from a purchased plan. Auto-sync
+    // set manually per job role, not derived from a purchased plan. Syncing
     // would otherwise compute "0 doors granted" for every staff member and
     // silently wipe their real access the moment their Card Access page is
     // opened. Bug found 2026-08-21: broke a real staff member's access this way.
     if (!relayUrl || !online || !detail?.membership || selected.subjectKind === "USER") return;
 
-    const key = `${userId}:${desired.join(",")}`;
+    const key = `${userId}:${valid ? "valid" : "invalid"}:${desired.join(",")}`;
     if (lastSyncKey.current === key) return; // already handled this exact state
 
     let cancelled = false;
@@ -1204,31 +1211,24 @@ function useAutoSyncDoorAccess(
         const current = await getBiostarUser(relayUrl, userId);
         if (cancelled) return;
 
-        const currentGroups = [...current.accessGroupIds].sort();
-        const inSync =
-          currentGroups.length === desired.length && currentGroups.every((g, i) => g === desired[i]);
+        const plan = planDoorSync({
+          subjectKind: selected.subjectKind,
+          membership: detail.membership,
+          current: { exists: current.exists, groupIds: current.accessGroupIds },
+        });
 
-        if (!current.exists && desired.length === 0) {
-          // Nothing granted, no BioStar presence — nothing to do.
+        if (plan.action === "none") {
           lastSyncKey.current = key;
-          setStatus("idle");
+          setHasExtras(plan.extras);
+          setStatus(plan.reason === "plan-unconfigured" ? "unconfigured" : plan.reason === "in-sync" ? "synced" : "idle");
           return;
         }
-
-        if (inSync) {
-          lastSyncKey.current = key;
-          setStatus("synced");
-          return;
-        }
-
-        const added = desired.filter((g) => !currentGroups.includes(g));
-        const removed = currentGroups.filter((g) => !desired.includes(g));
 
         const result = await assignCardAndAccess({
           relayUrl,
           name: selected.name,
           userId,
-          accessGroupIds: desired,
+          accessGroupIds: plan.groups,
           applyGroups: true,
           expiry: validUntil,
         });
@@ -1236,10 +1236,11 @@ function useAutoSyncDoorAccess(
 
         if (result.every((s) => s.ok)) {
           lastSyncKey.current = key;
+          setHasExtras(false);
           setStatus("synced");
           const parts: string[] = [];
-          if (added.length) parts.push(`granted ${added.length} door group${added.length === 1 ? "" : "s"}`);
-          if (removed.length) parts.push(`revoked ${removed.length} door group${removed.length === 1 ? "" : "s"}`);
+          if (plan.added.length) parts.push(`granted ${plan.added.length} door group${plan.added.length === 1 ? "" : "s"}`);
+          if (plan.removed.length) parts.push(`revoked ${plan.removed.length} door group${plan.removed.length === 1 ? "" : "s"}`);
           if (parts.length) {
             toast.success(`${selected.name}: auto-synced BioStar access — ${parts.join(", ")}.`);
           }
@@ -1258,9 +1259,9 @@ function useAutoSyncDoorAccess(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [relayUrl, online, userId, desired.join(","), validUntil]);
+  }, [relayUrl, online, userId, hasMembership, valid, desired.join(","), validUntil]);
 
-  return { status, error };
+  return { status, error, hasExtras };
 }
 
 function BiostarPanel({
@@ -1439,7 +1440,14 @@ function BiostarPanel({
                   </span>
                 ) : autoSync.status === "synced" ? (
                   <span className="text-emerald-700 dark:text-emerald-400">
-                    ✓ Door access matches their current membership
+                    {autoSync.hasExtras
+                      ? "✓ Has all the doors their membership grants (extra groups kept)"
+                      : "✓ Door access matches their current membership"}
+                  </span>
+                ) : autoSync.status === "unconfigured" ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    This plan has no door groups set, so door access was left as it is. Set them in Plans to grant
+                    access automatically.
                   </span>
                 ) : autoSync.status === "error" ? (
                   <span className="text-amber-600 dark:text-amber-400">

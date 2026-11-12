@@ -14,6 +14,11 @@ export interface DetailLike {
   membership?: GateLike | null;
 }
 
+/** A membership counts as valid when the server says so, else when its status is ACTIVE. */
+export function membershipIsValid(gate: GateLike | null | undefined): boolean {
+  return gate?.valid ?? String(gate?.status ?? "").toUpperCase() === "ACTIVE";
+}
+
 /** Why new access can't be granted to this person, or null when it can. */
 export function accessBlockReason(subjectKind: string, detail: DetailLike | null | undefined): string | null {
   if (subjectKind === "USER") return null;
@@ -21,8 +26,7 @@ export function accessBlockReason(subjectKind: string, detail: DetailLike | null
 
   const gate = detail.membership;
   const status = String(gate?.status ?? "").toUpperCase();
-  const valid = gate?.valid ?? status === "ACTIVE";
-  if (valid) return null;
+  if (membershipIsValid(gate)) return null;
 
   if (status === "EXPIRED") {
     return "This membership has expired. Renew it before assigning a card or door access.";
