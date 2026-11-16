@@ -1,6 +1,7 @@
 "use client";
 
 import { endDateError } from "@/lib/date-range";
+import { orderMemberships } from "@/lib/current-membership";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -954,7 +955,9 @@ export default function MembersPage() {
               </TableRow>
             ) : (
               people.map((p) => {
-                const memberships = p.memberships ?? [];
+                // The row shows the membership they are in NOW (with the end date after
+                // any freeze), not a future-dated renewal.
+                const memberships = orderMemberships(p.memberships ?? []);
                 const primary = memberships[0];
                 const multi = p.membershipCount > 1;
                 const householdMembers = p.householdMembers ?? [];
@@ -1074,8 +1077,8 @@ export default function MembersPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={statusVariant(p.primaryStatus)}>
-                          {p.primaryStatus || "—"}
+                        <Badge variant={statusVariant(primary?.status ?? p.primaryStatus)}>
+                          {primary?.status || p.primaryStatus || "—"}
                         </Badge>
                       </TableCell>
                       <TableCell>
