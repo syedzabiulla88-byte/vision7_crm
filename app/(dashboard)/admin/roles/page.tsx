@@ -480,7 +480,7 @@ function RoleFormDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] grid-cols-[minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <DialogHeader className="border-b border-border p-6">
           <DialogTitle>
             {isEdit ? (isSystem ? "System role" : "Edit role") : "New role"}
@@ -494,7 +494,7 @@ function RoleFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={submit} className="flex max-h-[calc(90vh-9rem)] flex-col">
+        <form onSubmit={submit} className="flex min-w-0 max-h-[calc(90vh-9rem)] flex-col">
           <div className="flex-1 space-y-5 overflow-y-auto p-6">
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <FormField label="Name" htmlFor="role-name" required={!isSystem}>
