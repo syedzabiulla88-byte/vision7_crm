@@ -1,5 +1,6 @@
 "use client";
 
+import { endDateError } from "@/lib/date-range";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -1677,6 +1678,11 @@ function NewMemberDialog({
     // free-plan detection, gateway gating) care about the invoice total.
     const planPrice = primaryPlanPrice + extrasPrice;
 
+    const rangeErr = endDateError(form.startDate, form.endDate);
+    if (rangeErr) {
+      toast.error(rangeErr);
+      return;
+    }
     // Validate the deposit before any network call: must be > 0 and < the plan total.
     const depositNum = Number(form.depositAmount);
     if (planPrice > 0 && form.billingMode === "deposit") {
@@ -2193,9 +2199,14 @@ function NewMemberDialog({
                   <Input
                     id="nm-end"
                     type="date"
+                    min={form.startDate || undefined}
+                    aria-invalid={!!endDateError(form.startDate, form.endDate)}
                     value={form.endDate}
                     onChange={(e) => set("endDate", e.target.value)}
                   />
+                  {endDateError(form.startDate, form.endDate) && (
+                    <p className="mt-1 text-xs text-destructive">{endDateError(form.startDate, form.endDate)}</p>
+                  )}
                 </Field>
               </div>
 
@@ -2609,8 +2620,14 @@ function EditMembershipDialog({
       .finally(() => setLoading(false));
   }, []);
 
+  const dateError = endDateError(form.startDate, form.endDate);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (dateError) {
+      toast.error(dateError);
+      return;
+    }
     setSaving(true);
     try {
       await api.memberships.update(membership.id, {
@@ -2679,9 +2696,12 @@ function EditMembershipDialog({
                   <Input
                     id="em-end"
                     type="date"
+                    min={form.startDate || undefined}
+                    aria-invalid={!!dateError}
                     value={form.endDate}
                     onChange={(e) => set("endDate", e.target.value)}
                   />
+                  {dateError && <p className="mt-1 text-xs text-destructive">{dateError}</p>}
                 </Field>
               </div>
 
@@ -2710,7 +2730,7 @@ function EditMembershipDialog({
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || loading}>
+            <Button type="submit" disabled={saving || loading || !!dateError}>
               {saving ? "Saving…" : "Save changes"}
             </Button>
           </DialogFooter>
