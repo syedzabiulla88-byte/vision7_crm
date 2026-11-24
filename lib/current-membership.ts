@@ -20,3 +20,16 @@ export function isCurrent(m: M, now: Date = new Date()): boolean {
 export function orderMemberships<T extends M>(list: T[], now: Date = new Date()): T[] {
   return [...list].sort((a, b) => Number(!isCurrent(a, now)) - Number(!isCurrent(b, now)));
 }
+
+/**
+ * Status to SHOW on a badge. A membership stored as ACTIVE whose start date is still in the
+ * future is not in force yet (the door gate already treats it as PENDING), so the list must
+ * not call it ACTIVE. Everything else is shown as stored.
+ */
+export function displayStatus(m: M, now: Date = new Date()): string {
+  const s = String(m.status || "").toUpperCase();
+  if (s === "ACTIVE" && m.startDate && new Date(m.startDate as string).getTime() > now.getTime()) {
+    return "PENDING";
+  }
+  return s;
+}
