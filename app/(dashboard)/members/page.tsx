@@ -1,7 +1,7 @@
 "use client";
 
 import { endDateError } from "@/lib/date-range";
-import { orderMemberships } from "@/lib/current-membership";
+import { orderMemberships, displayStatus } from "@/lib/current-membership";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -1050,8 +1050,8 @@ export default function MembersPage() {
                             <div className="flex items-center gap-2">
                               <span>{primary?.plan?.name || "—"}</span>
                               {primary && (
-                                <Badge variant={statusVariant(primary.status)}>
-                                  {primary.status || "—"}
+                                <Badge variant={statusVariant(displayStatus(primary))}>
+                                  {displayStatus(primary) || "—"}
                                 </Badge>
                               )}
                             </div>
@@ -1077,8 +1077,8 @@ export default function MembersPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={statusVariant(primary?.status ?? p.primaryStatus)}>
-                          {primary?.status || p.primaryStatus || "—"}
+                        <Badge variant={statusVariant(primary ? displayStatus(primary) : p.primaryStatus)}>
+                          {(primary ? displayStatus(primary) : p.primaryStatus) || "—"}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -1190,7 +1190,7 @@ export default function MembersPage() {
                             <TableCell colSpan={2}>
                               <div className="flex flex-wrap items-center gap-2 pl-7">
                                 <span className="text-sm font-medium">{m.plan?.name || "—"}</span>
-                                <Badge variant={statusVariant(m.status)}>{m.status || "—"}</Badge>
+                                <Badge variant={statusVariant(displayStatus(m))}>{displayStatus(m) || "—"}</Badge>
                                 {m.trainerName && (
                                   <span className="text-xs text-muted-foreground">PT: {m.trainerName}</span>
                                 )}
