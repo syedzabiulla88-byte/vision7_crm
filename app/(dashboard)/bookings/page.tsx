@@ -52,6 +52,8 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
+import { malaebBadge, MALAEB_TONE_CLASS } from "@/lib/malaeb-badge";
+
 type BookingStatus = "PENDING" | "CONFIRMED" | "COMPLETED" | "CANCELLED";
 type ViewMode = "day" | "week" | "month";
 
@@ -89,6 +91,7 @@ interface Booking {
   totalPrice?: number | string | null;
   currency?: string | null;
   notes?: string | null;
+  externalSource?: string | null;
 }
 
 interface Facility {
@@ -190,6 +193,16 @@ function StatusBadge({ status }: { status: string | undefined }) {
   return (
     <Badge variant="outline" className={statusClasses(status)}>
       {String(status || "").toUpperCase()}
+    </Badge>
+  );
+}
+
+function MalaebTag({ booking }: { booking: { externalSource?: string | null } }) {
+  const m = malaebBadge(booking);
+  if (!m) return null;
+  return (
+    <Badge variant="outline" title={m.title} className={MALAEB_TONE_CLASS[m.tone]}>
+      {m.label}
     </Badge>
   );
 }
@@ -527,6 +540,11 @@ function DayView({
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{b.facility?.name || "—"}</p>
             <p className="truncate text-xs text-muted-foreground">{b.customerName || "—"}</p>
+            {malaebBadge(b) && (
+              <div className="mt-1">
+                <MalaebTag booking={b} />
+              </div>
+            )}
           </div>
           <span className="text-sm tabular-nums text-muted-foreground">
             {Number(b.totalPrice) > 0 ? formatSAR(b.totalPrice, b.currency || "SAR") : "—"}
@@ -784,8 +802,9 @@ function BookingDetailDialog({
                   {booking.facility?.name || "Booking"}
                 </DialogTitle>
                 <DialogDescription className="sr-only">Booking details and status controls.</DialogDescription>
-                <div className="pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-1">
                   <StatusBadge status={booking.status} />
+                  <MalaebTag booking={booking} />
                 </div>
               </DialogHeader>
 
