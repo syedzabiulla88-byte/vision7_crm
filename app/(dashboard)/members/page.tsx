@@ -202,6 +202,7 @@ function groupedParams(f: {
   status: string;
   side: "ALL" | "ACADEMY" | "LEISURE";
   trainer: string;
+  plan: string;
   sort: string;
   gender: "ALL" | "MALE" | "FEMALE" | "UNSET";
 }): Record<string, unknown> {
@@ -212,6 +213,7 @@ function groupedParams(f: {
   else if (f.status !== "ALL") params.status = f.status;
   if (f.side !== "ALL") params.type = f.side;
   if (f.trainer) params.trainerId = f.trainer;
+  if (f.plan) params.planId = f.plan;
   if (f.sort !== "default") params.sort = f.sort;
   if (f.gender !== "ALL") params.gender = f.gender;
   return params;
@@ -466,6 +468,9 @@ export default function MembersPage() {
   // they don't silently vanish from both Male and Female.
   const [genderFilter, setGenderFilter] = useState<"ALL" | "MALE" | "FEMALE" | "UNSET">("ALL");
   const [trainerFilter, setTrainerFilter] = useState<string>("");
+  // Plan / membership filter: shows only people holding a membership on that plan.
+  const [planFilter, setPlanFilter] = useState<string>("");
+  const [planList, setPlanList] = useState<any[]>([]);
   const [sortFilter, setSortFilter] = useState<string>(initialStatus === "EXPIRING" ? "expiry" : "newest");
   const [coaches, setCoaches] = useState<any[]>([]);
   const [query, setQuery] = useState("");
@@ -551,13 +556,14 @@ export default function MembersPage() {
       status = "ALL",
       side: "ALL" | "ACADEMY" | "LEISURE" = "ALL",
       trainer = "",
+      plan = "",
       sort = "default",
       gender: "ALL" | "MALE" | "FEMALE" | "UNSET" = "ALL",
     ) => {
       setLoading(true);
       setError(null);
       try {
-        const params = groupedParams({ page: pageArg, limit: PAGE_SIZE, search, status, side, trainer, sort, gender });
+        const params = groupedParams({ page: pageArg, limit: PAGE_SIZE, search, status, side, trainer, plan, sort, gender });
         const result = await api.memberships.listGrouped(params);
         const rows: Person[] = Array.isArray(result) ? result : result?.data || [];
         setPeople(rows);
@@ -577,11 +583,11 @@ export default function MembersPage() {
   // status, side or trainer changes — all filtering happens server-side now.
   useEffect(() => {
     const t = setTimeout(
-      () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter),
+      () => load(query, page, statusFilter, typeFilter, trainerFilter, planFilter, sortFilter, genderFilter),
       300,
     );
     return () => clearTimeout(t);
-  }, [query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter, load]);
+  }, [query, page, statusFilter, typeFilter, trainerFilter, planFilter, sortFilter, genderFilter, load]);
 
   // Trainer pool for the trainer filter — loaded once. Every active staff
   // member, not just the Coach role: the club's trainers include gym trainers,
@@ -598,11 +604,24 @@ export default function MembersPage() {
       .catch(() => setCoaches([]));
   }, []);
 
+  // Plan pool for the plan filter — loaded once, alphabetical.
+  useEffect(() => {
+    api.plans
+      .list({ limit: 1000 })
+      .then((res: any) => {
+        const rows = Array.isArray(res) ? res : res?.data || [];
+        setPlanList(
+          [...rows].sort((a: any, b: any) => String(a.name || "").localeCompare(String(b.name || ""))),
+        );
+      })
+      .catch(() => setPlanList([]));
+  }, []);
+
   // Re-query keeping the current filters + page so the list doesn't reset after
   // create / edit / freeze actions.
   const reload = useCallback(
-    () => load(query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter),
-    [load, query, page, statusFilter, typeFilter, trainerFilter, sortFilter, genderFilter],
+    () => load(query, page, statusFilter, typeFilter, trainerFilter, planFilter, sortFilter, genderFilter),
+    [load, query, page, statusFilter, typeFilter, trainerFilter, planFilter, sortFilter, genderFilter],
   );
 
   const memberLabel = (m: Membership) => displayName(m) || "this membership";
@@ -702,6 +721,7 @@ export default function MembersPage() {
             status: statusFilter,
             side: typeFilter,
             trainer: trainerFilter,
+            plan: planFilter,
             sort: sortFilter,
             gender: genderFilter,
           }),
@@ -827,7 +847,21 @@ export default function MembersPage() {
           </Button>
           );
         })}
-        <div className="md:ml-auto md:w-56">
+        <div className="md:ml-auto md:w-64">
+          <ComboField
+            value={planFilter}
+            onChange={(v) => {
+              setPlanFilter(v);
+              setPage(1);
+            }}
+            options={[
+              { value: "", label: "All plans" },
+              ...planList.map((pl) => ({ value: pl.id, label: pl.name || "(unnamed plan)" })),
+            ]}
+            placeholder="All plans"
+          />
+        </div>
+        <div className="md:w-56">
           <ComboField
             value={trainerFilter}
             onChange={(v) => {
