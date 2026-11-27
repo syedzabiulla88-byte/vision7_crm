@@ -13,6 +13,7 @@ import { usePermissions } from "@/components/hooks/use-permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -113,6 +114,10 @@ export default function InvoicesPage() {
     invoice: Invoice;
   } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  // Void dialog (invoices with money paid): refund, cancel, void in Zoho; the number stays used.
+  const [voidTarget, setVoidTarget] = useState<Invoice | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [voiding, setVoiding] = useState(false);
   // Record-payment dialog target (null = closed).
   const [paying, setPaying] = useState<Invoice | null>(null);
   const [page, setPage] = useState(1);
@@ -561,7 +566,6 @@ export default function InvoicesPage() {
                           <div className="flex justify-end">
                             {(() => {
                               const isSent = ["SENT", "PARTIAL", "OVERDUE"].includes(status);
-                              const isPaid = status === "PAID";
                               const isCancelled = status === "CANCELLED";
                               return (
                                 <DropdownMenu>
@@ -665,8 +669,8 @@ export default function InvoicesPage() {
                                         Push to Zoho
                                       </DropdownMenuItem>
                                     )}
-                                    {!isPaid && !isCancelled && canDelete && <DropdownMenuSeparator />}
-                                    {!isPaid && !isCancelled && canDelete && (
+                                    {!isCancelled && canEdit && <DropdownMenuSeparator />}
+                                    {!isCancelled && canEdit && (Number(inv.amountPaid ?? inv.paidAmount) || 0) <= 0 && (
                                       <DropdownMenuItem
                                         variant="destructive"
                                         onClick={() =>
@@ -675,6 +679,18 @@ export default function InvoicesPage() {
                                       >
                                         <CloseCircle className="h-4 w-4" />
                                         Cancel
+                                      </DropdownMenuItem>
+                                    )}
+                                    {!isCancelled && canEdit && (Number(inv.amountPaid ?? inv.paidAmount) || 0) > 0 && (
+                                      <DropdownMenuItem
+                                        variant="destructive"
+                                        onClick={() => {
+                                          setVoidReason("");
+                                          setVoidTarget(inv);
+                                        }}
+                                      >
+                                        <CloseCircle className="h-4 w-4" />
+                                        Void
                                       </DropdownMenuItem>
                                     )}
                                     {canDelete && (
@@ -746,6 +762,56 @@ export default function InvoicesPage() {
         onConfirm={runConfirm}
         loading={confirmBusy}
       />
+
+      <Dialog open={!!voidTarget} onOpenChange={(o) => !voiding && !o && setVoidTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Void invoice {voidTarget ? invoiceNo(voidTarget) : ""}?</DialogTitle>
+            <DialogDescription>
+              This records a full refund of what was paid, cancels the invoice and voids it in Zoho
+              Books. The invoice keeps its number, so the series stays unbroken. The refund is recorded
+              here only — return the money through the payment provider or in cash yourself. Any
+              membership linked to this invoice is not changed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="list-void-reason">Reason (required)</Label>
+            <Textarea
+              id="list-void-reason"
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="e.g. Entered on the wrong customer"
+              rows={3}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={voiding} onClick={() => setVoidTarget(null)}>
+              Keep invoice
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={voiding || voidReason.trim().length < 5}
+              onClick={async () => {
+                if (!voidTarget) return;
+                setVoiding(true);
+                try {
+                  await api.invoices.void(voidTarget.id, voidReason.trim());
+                  toast.success("Invoice voided");
+                  setVoidTarget(null);
+                  await load();
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Could not void the invoice");
+                } finally {
+                  setVoiding(false);
+                }
+              }}
+            >
+              {voiding ? "Voiding…" : "Void invoice"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PaymentDialog
         invoice={paying}
