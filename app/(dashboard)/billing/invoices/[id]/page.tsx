@@ -57,7 +57,6 @@ import {
   type Payment,
 } from "../_shared";
 import { GATEWAY_LABEL, type PayLinkGateway } from "@/lib/pay-links";
-import { isIssuedInvoice, MIN_RENUMBER_REASON } from "@/lib/invoice-number";
 import {
   InstallmentScheduleEditor,
   InstallmentScheduleTable,
@@ -70,11 +69,21 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const { can } = usePermissions();
   const canEdit = can("invoices:edit");
   const canEditNumber = can("invoices:edit_number");
-  const canRenumberIssued = can("invoices:renumber_issued");
   const canEditInstalmentPlan = can("invoices:edit_instalment_plan");
   const [numberDialogOpen, setNumberDialogOpen] = useState(false);
   const [datesDialogOpen, setDatesDialogOpen] = useState(false);
-  const canDelete = can("invoices:delete");
+  // Deleting is limited to the owner account; everyone else cancels or voids instead.
+  const [ownerCanDelete, setOwnerCanDelete] = useState(false);
+  useEffect(() => {
+    api.invoices
+      .canDelete()
+      .then((r) => setOwnerCanDelete(!!r.canDelete))
+      .catch(() => setOwnerCanDelete(false));
+  }, []);
+  const canDelete = can("invoices:delete") && ownerCanDelete;
+  const [voidOpen, setVoidOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
+  const [voiding, setVoiding] = useState(false);
   const canRecordPayment = can("payments:create");
   const canManageRefund = can("refunds:manage");
 
@@ -88,7 +97,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [editingNumber, setEditingNumber] = useState(false);
   const [newNumber, setNewNumber] = useState("");
   const [savingNumber, setSavingNumber] = useState(false);
-  const [numberReason, setNumberReason] = useState("");
 
   // Confirmation dialogs
   const [confirm, setConfirm] = useState<
@@ -145,10 +153,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     if (!invoice || savingNumber) return;
     setSavingNumber(true);
     try {
-      await api.invoices.setNumber(id, newNumber, numberReason.trim() || undefined);
+      await api.invoices.setNumber(id, newNumber);
       toast.success("Invoice number updated");
       setEditingNumber(false);
-      setNumberReason("");
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update invoice number");
@@ -342,7 +349,20 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             Reopen
           </Button>
         )}
-        {!isPaid && !isCancelled && canEdit && (
+        {paid > 0 && !isCancelled && canEdit && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setVoidReason("");
+              setVoidOpen(true);
+            }}
+            className="text-destructive hover:text-destructive"
+          >
+            <CloseCircle className="h-4 w-4" />
+            Void Invoice
+          </Button>
+        )}
+        {paid <= 0 && !isCancelled && canEdit && (
           <Button
             variant="outline"
             onClick={() => setConfirm("cancel")}
@@ -357,7 +377,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             variant="outline"
             onClick={() => {
               setNewNumber(invoice.number || "");
-              setNumberReason("");
               setEditingNumber(true);
             }}
           >
@@ -769,26 +788,62 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               placeholder="INV-2026-0058"
             />
           </div>
-          <IssuedNumberNotice
-            issued={isIssuedInvoice(invoice)}
-            canOverride={canRenumberIssued}
-            reason={numberReason}
-            onReason={setNumberReason}
-          />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditingNumber(false)}>
               Cancel
             </Button>
+            <Button type="button" onClick={handleSetNumber} disabled={savingNumber}>
+              {savingNumber ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Void: refund what was paid, cancel, void in Zoho — the number stays used */}
+      <Dialog open={voidOpen} onOpenChange={(o) => !voiding && setVoidOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Void invoice {invoice.number}?</DialogTitle>
+            <DialogDescription>
+              This records a full refund of {formatSAR(paid)} on the invoice, cancels it and voids it
+              in Zoho Books. The invoice keeps its number, so the series stays unbroken. The refund is
+              recorded here only — return the money through the payment provider or in cash yourself.
+              Any membership linked to this invoice is not changed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="void-reason">Reason (required)</Label>
+            <Textarea
+              id="void-reason"
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="e.g. Entered on the wrong customer"
+              rows={3}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={voiding} onClick={() => setVoidOpen(false)}>
+              Keep invoice
+            </Button>
             <Button
               type="button"
-              onClick={handleSetNumber}
-              disabled={
-                savingNumber ||
-                (isIssuedInvoice(invoice) &&
-                  (!canRenumberIssued || numberReason.trim().length < MIN_RENUMBER_REASON))
-              }
+              variant="destructive"
+              disabled={voiding || voidReason.trim().length < 5}
+              onClick={async () => {
+                setVoiding(true);
+                try {
+                  await api.invoices.void(id, voidReason.trim());
+                  toast.success("Invoice voided");
+                  setVoidOpen(false);
+                  await load();
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Could not void the invoice");
+                } finally {
+                  setVoiding(false);
+                }
+              }}
             >
-              {savingNumber ? "Saving…" : "Save"}
+              {voiding ? "Voiding…" : "Void invoice"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -801,8 +856,6 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         onOpenChange={setNumberDialogOpen}
         invoiceId={invoice.id}
         current={invoiceNo(invoice)}
-        issued={isIssuedInvoice(invoice)}
-        canOverride={canRenumberIssued}
         onSaved={load}
       />
       <EditDatesDialog
@@ -876,9 +929,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         description={
           paid > 0 || payments.length > 0 || ["PAID", "PARTIAL"].includes(status)
             ? `This invoice has payment(s) recorded${paid > 0 ? ` (${formatSAR(paid)})` : ""}. Deleting it permanently removes the invoice AND its payment records — this cannot be undone.`
-            : isIssuedInvoice(invoice)
-              ? "This invoice has been issued. To keep the numbering unbroken it should be Cancelled, not deleted. Deleting only works for the newest invoice within 30 minutes of creating it, or for an administrator."
-              : "Delete this invoice? This cannot be undone."
+            : "Delete this invoice? This cannot be undone."
         }
         confirmLabel="Delete"
         variant="destructive"
@@ -1186,47 +1237,6 @@ function RefundDialog({
 }
 
 /**
- * Shown inside both edit-number dialogs. Once an invoice is issued (paid / sent)
- * its number is held by the customer, Zoho and the payment provider, so changing
- * it needs a special permission and a written reason, which goes into the audit log.
- */
-function IssuedNumberNotice({
-  issued,
-  canOverride,
-  reason,
-  onReason,
-}: {
-  issued: boolean;
-  canOverride: boolean;
-  reason: string;
-  onReason: (v: string) => void;
-}) {
-  if (!issued) return null;
-  if (!canOverride) {
-    return (
-      <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-        This invoice has already been issued, so its number can no longer be changed. Ask an administrator.
-      </p>
-    );
-  }
-  return (
-    <div className="space-y-2">
-      <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
-        This invoice is already issued. Renumbering it leaves the customer&apos;s copy and any payment reference on the
-        old number. The change is recorded in the audit log.
-      </p>
-      <Label htmlFor="inv-number-reason">Reason (required)</Label>
-      <Input
-        id="inv-number-reason"
-        value={reason}
-        onChange={(e) => onReason(e.target.value)}
-        placeholder="e.g. typo, corrected per accountant"
-      />
-    </div>
-  );
-}
-
-/**
  * Edit the invoice number. The backend validates the INV-YYYY-NNNN format and
  * uniqueness, renames the Zoho Books mirror FIRST (refusing to change anything
  * if Zoho declines), and raises the numbering sequence when the new number is
@@ -1237,20 +1247,15 @@ function EditNumberDialog({
   onOpenChange,
   invoiceId,
   current,
-  issued,
-  canOverride,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   invoiceId: string;
   current: string;
-  issued: boolean;
-  canOverride: boolean;
   onSaved: () => void;
 }) {
   const [value, setValue] = useState(current);
-  const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (open) setValue(current);
@@ -1259,9 +1264,8 @@ function EditNumberDialog({
   const save = async () => {
     setSaving(true);
     try {
-      await api.invoices.setNumber(invoiceId, value.trim(), reason.trim() || undefined);
+      await api.invoices.setNumber(invoiceId, value.trim());
       toast.success("Invoice number updated");
-      setReason("");
       onOpenChange(false);
       onSaved();
     } catch (err) {
@@ -1272,13 +1276,7 @@ function EditNumberDialog({
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) setReason("");
-        onOpenChange(v);
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Edit invoice number</DialogTitle>
@@ -1297,20 +1295,11 @@ function EditNumberDialog({
             className="font-mono"
           />
         </div>
-        <IssuedNumberNotice issued={issued} canOverride={canOverride} reason={reason} onReason={setReason} />
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            onClick={save}
-            disabled={
-              saving ||
-              !value.trim() ||
-              (issued && (!canOverride || reason.trim().length < MIN_RENUMBER_REASON))
-            }
-          >
+          <Button type="button" onClick={save} disabled={saving || !value.trim()}>
             {saving ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

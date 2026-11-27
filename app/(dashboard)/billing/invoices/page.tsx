@@ -47,7 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Pagination } from "@/components/shared/pagination";
-import { shortGap, isIssuedInvoice } from "@/lib/invoice-number";
+import { shortGap } from "@/lib/invoice-number";
 import {
   Plus,
   Eye,
@@ -90,7 +90,15 @@ const PAGE_SIZE = 20;
 export default function InvoicesPage() {
   const { can } = usePermissions();
   const canEdit = can("invoices:edit");
-  const canDelete = can("invoices:delete");
+  // Deleting is limited to the owner account; everyone else cancels or voids instead.
+  const [ownerCanDelete, setOwnerCanDelete] = useState(false);
+  useEffect(() => {
+    api.invoices
+      .canDelete()
+      .then((r) => setOwnerCanDelete(!!r.canDelete))
+      .catch(() => setOwnerCanDelete(false));
+  }, []);
+  const canDelete = can("invoices:delete") && ownerCanDelete;
   const canRecordPayment = can("payments:create");
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -718,9 +726,7 @@ export default function InvoicesPage() {
           confirm?.type === "delete"
             ? (["PAID", "PARTIAL"].includes(String(confirm.invoice?.status || "").toUpperCase())
                 ? `Invoice ${invoiceNo(confirm.invoice)} has recorded payment(s). Deleting it permanently removes the invoice AND its payment records — this cannot be undone.`
-                : isIssuedInvoice(confirm.invoice)
-                  ? `Invoice ${invoiceNo(confirm.invoice)} has been issued. To keep the numbering unbroken it should be Cancelled, not deleted. Deleting only works for the newest invoice within 30 minutes of creating it, or for an administrator.`
-                  : `Delete invoice ${invoiceNo(confirm.invoice)}? This cannot be undone.`)
+                : `Delete invoice ${invoiceNo(confirm.invoice)}? This cannot be undone.`)
             : confirm?.type === "cancel"
               ? `Cancel invoice ${
                   confirm ? invoiceNo(confirm.invoice) : ""
