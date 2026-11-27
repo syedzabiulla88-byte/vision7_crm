@@ -412,8 +412,15 @@ export const api = {
     cancel: (id: string) => apiFetch<any>(`/invoices/${id}/cancel`, { method: "POST" }),
     // Edit the invoice number to match an external record — renamed in Zoho
     // first if mirrored there; refuses (no local change) if Zoho rejects it.
-    setNumber: (id: string, number: string) =>
-      apiFetch<any>(`/invoices/${id}/number`, { method: "PATCH", body: JSON.stringify({ number }) }),
+    // `reason` is required by the server once the invoice has been issued (paid / sent),
+    // and only holders of invoices:renumber_issued may change an issued invoice at all.
+    setNumber: (id: string, number: string, reason?: string) =>
+      apiFetch<any>(`/invoices/${id}/number`, { method: "PATCH", body: JSON.stringify({ number, ...(reason ? { reason } : {}) }) }),
+    // Numbers missing from the year's series (minus ones marked known in Settings).
+    numberGaps: (year?: number) =>
+      apiFetch<{ year: number; invoiceCount: number; gaps: string[]; acknowledged: string[] }>(
+        `/invoices/number-gaps${year ? `?year=${year}` : ""}`,
+      ),
     // Due date / agreement signed date / instalment schedule only — gated by
     // invoices:edit_instalment_plan, narrower than the general update() below.
     updateInstalmentPlan: (id: string, data: any) =>

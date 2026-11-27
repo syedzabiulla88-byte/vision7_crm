@@ -47,6 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Pagination } from "@/components/shared/pagination";
+import { shortGap, isIssuedInvoice } from "@/lib/invoice-number";
 import {
   Plus,
   Eye,
@@ -115,6 +116,15 @@ export default function InvoicesPage() {
   } | null>(null);
 
   const [exporting, setExporting] = useState(false);
+
+  // Numbers missing from this year's invoice series (e.g. a deleted or renumbered invoice).
+  const [numberGaps, setNumberGaps] = useState<string[]>([]);
+  useEffect(() => {
+    api.invoices
+      .numberGaps()
+      .then((r) => setNumberGaps(r.gaps || []))
+      .catch(() => setNumberGaps([]));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -316,6 +326,20 @@ export default function InvoicesPage() {
           </>
         }
       />
+
+      {numberGaps.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+          <p className="font-medium">
+            {numberGaps.length === 1 ? "1 invoice number is" : `${numberGaps.length} invoice numbers are`} missing from this
+            year&apos;s series: {numberGaps.slice(0, 12).map(shortGap).join(", ")}
+            {numberGaps.length > 12 ? ` and ${numberGaps.length - 12} more` : ""}.
+          </p>
+          <p className="mt-1 text-xs opacity-80">
+            A deleted or renumbered invoice leaves a gap. Once you know why, add the number under Settings → Invoices →
+            &ldquo;known missing numbers&rdquo; and it stops showing here.
+          </p>
+        </div>
+      )}
 
       <Card>
         <CardContent className="space-y-4">
@@ -694,7 +718,9 @@ export default function InvoicesPage() {
           confirm?.type === "delete"
             ? (["PAID", "PARTIAL"].includes(String(confirm.invoice?.status || "").toUpperCase())
                 ? `Invoice ${invoiceNo(confirm.invoice)} has recorded payment(s). Deleting it permanently removes the invoice AND its payment records — this cannot be undone.`
-                : `Delete invoice ${invoiceNo(confirm.invoice)}? This cannot be undone.`)
+                : isIssuedInvoice(confirm.invoice)
+                  ? `Invoice ${invoiceNo(confirm.invoice)} has been issued. To keep the numbering unbroken it should be Cancelled, not deleted. Deleting only works for the newest invoice within 30 minutes of creating it, or for an administrator.`
+                  : `Delete invoice ${invoiceNo(confirm.invoice)}? This cannot be undone.`)
             : confirm?.type === "cancel"
               ? `Cancel invoice ${
                   confirm ? invoiceNo(confirm.invoice) : ""

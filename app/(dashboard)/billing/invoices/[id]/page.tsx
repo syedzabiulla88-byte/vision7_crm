@@ -57,6 +57,7 @@ import {
   type Payment,
 } from "../_shared";
 import { GATEWAY_LABEL, type PayLinkGateway } from "@/lib/pay-links";
+import { isIssuedInvoice, MIN_RENUMBER_REASON } from "@/lib/invoice-number";
 import {
   InstallmentScheduleEditor,
   InstallmentScheduleTable,
@@ -69,6 +70,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const { can } = usePermissions();
   const canEdit = can("invoices:edit");
   const canEditNumber = can("invoices:edit_number");
+  const canRenumberIssued = can("invoices:renumber_issued");
   const canEditInstalmentPlan = can("invoices:edit_instalment_plan");
   const [numberDialogOpen, setNumberDialogOpen] = useState(false);
   const [datesDialogOpen, setDatesDialogOpen] = useState(false);
@@ -86,6 +88,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
   const [editingNumber, setEditingNumber] = useState(false);
   const [newNumber, setNewNumber] = useState("");
   const [savingNumber, setSavingNumber] = useState(false);
+  const [numberReason, setNumberReason] = useState("");
 
   // Confirmation dialogs
   const [confirm, setConfirm] = useState<
@@ -142,9 +145,10 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
     if (!invoice || savingNumber) return;
     setSavingNumber(true);
     try {
-      await api.invoices.setNumber(id, newNumber);
+      await api.invoices.setNumber(id, newNumber, numberReason.trim() || undefined);
       toast.success("Invoice number updated");
       setEditingNumber(false);
+      setNumberReason("");
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update invoice number");
@@ -353,6 +357,7 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
             variant="outline"
             onClick={() => {
               setNewNumber(invoice.number || "");
+              setNumberReason("");
               setEditingNumber(true);
             }}
           >
@@ -764,11 +769,25 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
               placeholder="INV-2026-0058"
             />
           </div>
+          <IssuedNumberNotice
+            issued={isIssuedInvoice(invoice)}
+            canOverride={canRenumberIssued}
+            reason={numberReason}
+            onReason={setNumberReason}
+          />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditingNumber(false)}>
               Cancel
             </Button>
-            <Button type="button" onClick={handleSetNumber} disabled={savingNumber}>
+            <Button
+              type="button"
+              onClick={handleSetNumber}
+              disabled={
+                savingNumber ||
+                (isIssuedInvoice(invoice) &&
+                  (!canRenumberIssued || numberReason.trim().length < MIN_RENUMBER_REASON))
+              }
+            >
               {savingNumber ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
@@ -782,6 +801,8 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         onOpenChange={setNumberDialogOpen}
         invoiceId={invoice.id}
         current={invoiceNo(invoice)}
+        issued={isIssuedInvoice(invoice)}
+        canOverride={canRenumberIssued}
         onSaved={load}
       />
       <EditDatesDialog
@@ -855,7 +876,9 @@ export default function InvoiceDetailPage({ params }: { params: Promise<{ id: st
         description={
           paid > 0 || payments.length > 0 || ["PAID", "PARTIAL"].includes(status)
             ? `This invoice has payment(s) recorded${paid > 0 ? ` (${formatSAR(paid)})` : ""}. Deleting it permanently removes the invoice AND its payment records — this cannot be undone.`
-            : "Delete this invoice? This cannot be undone."
+            : isIssuedInvoice(invoice)
+              ? "This invoice has been issued. To keep the numbering unbroken it should be Cancelled, not deleted. Deleting only works for the newest invoice within 30 minutes of creating it, or for an administrator."
+              : "Delete this invoice? This cannot be undone."
         }
         confirmLabel="Delete"
         variant="destructive"
@@ -1163,6 +1186,47 @@ function RefundDialog({
 }
 
 /**
+ * Shown inside both edit-number dialogs. Once an invoice is issued (paid / sent)
+ * its number is held by the customer, Zoho and the payment provider, so changing
+ * it needs a special permission and a written reason, which goes into the audit log.
+ */
+function IssuedNumberNotice({
+  issued,
+  canOverride,
+  reason,
+  onReason,
+}: {
+  issued: boolean;
+  canOverride: boolean;
+  reason: string;
+  onReason: (v: string) => void;
+}) {
+  if (!issued) return null;
+  if (!canOverride) {
+    return (
+      <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+        This invoice has already been issued, so its number can no longer be changed. Ask an administrator.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+        This invoice is already issued. Renumbering it leaves the customer&apos;s copy and any payment reference on the
+        old number. The change is recorded in the audit log.
+      </p>
+      <Label htmlFor="inv-number-reason">Reason (required)</Label>
+      <Input
+        id="inv-number-reason"
+        value={reason}
+        onChange={(e) => onReason(e.target.value)}
+        placeholder="e.g. typo, corrected per accountant"
+      />
+    </div>
+  );
+}
+
+/**
  * Edit the invoice number. The backend validates the INV-YYYY-NNNN format and
  * uniqueness, renames the Zoho Books mirror FIRST (refusing to change anything
  * if Zoho declines), and raises the numbering sequence when the new number is
@@ -1173,15 +1237,20 @@ function EditNumberDialog({
   onOpenChange,
   invoiceId,
   current,
+  issued,
+  canOverride,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   invoiceId: string;
   current: string;
+  issued: boolean;
+  canOverride: boolean;
   onSaved: () => void;
 }) {
   const [value, setValue] = useState(current);
+  const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (open) setValue(current);
@@ -1190,8 +1259,9 @@ function EditNumberDialog({
   const save = async () => {
     setSaving(true);
     try {
-      await api.invoices.setNumber(invoiceId, value.trim());
+      await api.invoices.setNumber(invoiceId, value.trim(), reason.trim() || undefined);
       toast.success("Invoice number updated");
+      setReason("");
       onOpenChange(false);
       onSaved();
     } catch (err) {
@@ -1202,7 +1272,13 @@ function EditNumberDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) setReason("");
+        onOpenChange(v);
+      }}
+    >
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Edit invoice number</DialogTitle>
@@ -1221,11 +1297,20 @@ function EditNumberDialog({
             className="font-mono"
           />
         </div>
+        <IssuedNumberNotice issued={issued} canOverride={canOverride} reason={reason} onReason={setReason} />
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button type="button" onClick={save} disabled={saving || !value.trim()}>
+          <Button
+            type="button"
+            onClick={save}
+            disabled={
+              saving ||
+              !value.trim() ||
+              (issued && (!canOverride || reason.trim().length < MIN_RENUMBER_REASON))
+            }
+          >
             {saving ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>
